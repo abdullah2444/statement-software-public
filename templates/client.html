@@ -1,0 +1,1426 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <title>{{ client.name }} Statement</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css') }}">
+    <style>
+      @keyframes row-saved {
+        0% { background: #d4edda; }
+        100% { background: transparent; }
+      }
+      .row-just-saved {
+        animation: row-saved 2s ease-out;
+      }
+    </style>
+    <script>
+      function renderExtractedText(text) {
+        return text
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/^## (.+)$/gm, '<h3 class="lb-section-title">$1</h3>')
+          .replace(/^### (.+)$/gm, '<h4 class="lb-section-subtitle">$1</h4>')
+          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+          .replace(/\n/g, '<br>');
+      }
+      function copyTextFromElement(btn, el) {
+        const raw = el.dataset.rawText || el.innerText;
+        navigator.clipboard.writeText(raw).then(() => {
+          btn.textContent = 'Copied!';
+          btn.classList.add('copied');
+          setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+        });
+      }
+      window._extractedTextCache = {};
+      window.addEventListener('DOMContentLoaded', () => {
+        const hash = window.location.hash;
+        const sharedEditor = document.querySelector('#shared-editor-row');
+        const sharedForm = document.querySelector('#shared-editor-form');
+        const bottomAnchor = document.querySelector('#page-bottom');
+        const historyDropdown = document.querySelector('[data-history-dropdown]');
+        const historyToggle = document.querySelector('[data-history-toggle]');
+        const historyTimestamps = document.querySelectorAll('[data-utc-timestamp]');
+        const exchangeDropdown = document.querySelector('[data-exchange-dropdown]');
+        const exchangeToggle = document.querySelector('[data-exchange-toggle]');
+        const exchangeForm = document.querySelector('#balance-exchange-form');
+        const sharedCommissionRow = document.querySelector('#shared-commission-row');
+        const sharedCommissionForm = document.querySelector('#shared-commission-form');
+        const addForm = document.querySelector('#entry-new form');
+        const defaultProfitAccountId = {{ default_profit_account_id|tojson }};
+        const setValue = (name, value) => {
+          const field = sharedForm.querySelector(`[name="${name}"]`);
+          if (field) field.value = value ?? '';
+        };
+        const setCommissionValue = (name, value) => {
+          const field = sharedCommissionForm?.querySelector(`[name="${name}"]`);
+          if (field) field.value = value ?? '';
+        };
+        const updateProfitControls = (form) => {
+          if (!form) return;
+          const categoryField = form.querySelector('[name="category_hint"]');
+          const toggleField = form.querySelector('[name="add_to_company_profit"]');
+          const accountField = form.querySelector('[name="profit_expense_account_id"]');
+          const section = form.querySelector('[data-profit-link-section]');
+          if (!categoryField || !toggleField || !accountField || !section) return;
+          const isCommission = categoryField.value === 'commission';
+          section.style.display = isCommission ? '' : 'none';
+          if (!isCommission) {
+            toggleField.checked = false;
+            accountField.disabled = true;
+            return;
+          }
+          if (toggleField.checked && !accountField.value && defaultProfitAccountId) {
+            accountField.value = String(defaultProfitAccountId);
+          }
+          accountField.disabled = !toggleField.checked;
+        };
+        const renderCommissionAction = (displayRow) => {
+          const actionsWrap = displayRow?.querySelector('.actions-wrap');
+          const editLink = actionsWrap?.querySelector('[data-edit-open]');
+          if (!actionsWrap || !editLink) return;
+          const existing = actionsWrap.querySelector('[data-role="commission-action"]');
+          if (existing) existing.remove();
+
+          const isCommissionRow = !!displayRow.dataset.commissionSourceEntryId;
+          const hasCommissionChild = !!displayRow.dataset.commissionChildId;
+          const canAutoCommission = displayRow.dataset.direction === 'OUT' && !isCommissionRow && !hasCommissionChild;
+
+          let commissionNode = null;
+          if (canAutoCommission) {
+            commissionNode = document.createElement('a');
+            commissionNode.href = '#entry-' + displayRow.dataset.entryId;
+            commissionNode.dataset.commissionOpen = displayRow.dataset.entryId;
+            commissionNode.dataset.role = 'commission-action';
+            commissionNode.className = 'text-action';
+            commissionNode.textContent = 'Auto Commission';
+            commissionNode.addEventListener('click', (event) => {
+              event.preventDefault();
+              openCommission(displayRow.dataset.entryId);
+            });
+          } else if (isCommissionRow) {
+            commissionNode = document.createElement('span');
+            commissionNode.dataset.role = 'commission-action';
+            commissionNode.className = 'action-status';
+            commissionNode.textContent = 'Commission Row';
+          } else if (hasCommissionChild) {
+            commissionNode = document.createElement('span');
+            commissionNode.dataset.role = 'commission-action';
+            commissionNode.className = 'action-status';
+            commissionNode.textContent = 'Commission Exists';
+          }
+
+          if (commissionNode) {
+            actionsWrap.insertBefore(commissionNode, editLink);
+          }
+        };
+        const resetInlineRows = () => {
+          document.querySelectorAll('.edit-row.is-open').forEach((row) => row.classList.remove('is-open'));
+          document.querySelectorAll('.display-row.is-editing').forEach((row) => row.classList.remove('is-editing'));
+        };
+        const openEditor = (entryId) => {
+          resetInlineRows();
+          const displayRow = document.querySelector(`#entry-${entryId}`);
+          if (!sharedEditor || !sharedForm || !displayRow) return;
+          const sourceNoField = sharedForm.querySelector('[data-role="source-no"]');
+          setValue('entry_id', displayRow.dataset.entryId);
+          if (sourceNoField) sourceNoField.value = displayRow.dataset.sourceNo ?? '';
+          setValue('entry_date', displayRow.dataset.entryDate);
+          setValue('description', displayRow.dataset.description);
+          setValue('currency', displayRow.dataset.currency);
+          setValue('direction', displayRow.dataset.direction);
+          setValue('amount', displayRow.dataset.amount);
+          setValue('kind', displayRow.dataset.kind);
+          setValue('category_hint', displayRow.dataset.categoryHint);
+          setValue('transfer_group', displayRow.dataset.transferGroup);
+          const profitToggle = sharedForm.querySelector('[name="add_to_company_profit"]');
+          const profitAccountField = sharedForm.querySelector('[name="profit_expense_account_id"]');
+          if (profitToggle) {
+            profitToggle.checked = !!displayRow.dataset.profitExpenseEntryId;
+          }
+          if (profitAccountField) {
+            profitAccountField.value = displayRow.dataset.profitExpenseAccountId || (defaultProfitAccountId ? String(defaultProfitAccountId) : '');
+          }
+          updateProfitControls(sharedForm);
+          sharedForm.action = `/entries/${entryId}/save`;
+          displayRow.insertAdjacentElement('afterend', sharedEditor);
+          sharedEditor.classList.add('is-open');
+          displayRow.classList.add('is-editing');
+          sharedEditor.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        };
+        const openCommission = (entryId) => {
+          const displayRow = document.querySelector(`#entry-${entryId}`);
+          if (!sharedCommissionRow || !sharedCommissionForm || !displayRow) return;
+          resetInlineRows();
+          const sourceField = sharedCommissionForm.querySelector('[data-role="commission-source"]');
+          setCommissionValue('source_entry_id', displayRow.dataset.entryId);
+          setCommissionValue('commission_date', displayRow.dataset.entryDate);
+          setCommissionValue('percentage', '');
+          setCommissionValue('note', '');
+          if (sourceField) {
+            sourceField.value = `#${displayRow.dataset.sourceNo} · ${displayRow.dataset.description}`;
+          }
+          displayRow.insertAdjacentElement('afterend', sharedCommissionRow);
+          sharedCommissionRow.classList.add('is-open');
+          displayRow.classList.add('is-editing');
+          sharedCommissionRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        };
+        document.querySelectorAll('[data-edit-open]').forEach((button) => {
+          button.addEventListener('click', (event) => {
+            event.preventDefault();
+            openEditor(button.dataset.editOpen);
+          });
+        });
+        document.querySelectorAll('[data-commission-open]').forEach((button) => {
+          button.addEventListener('click', (event) => {
+            event.preventDefault();
+            openCommission(button.dataset.commissionOpen);
+          });
+        });
+
+        document.querySelectorAll('[data-edit-cancel]').forEach((button) => {
+          button.addEventListener('click', (event) => {
+            event.preventDefault();
+            const editRow = button.closest('.edit-row');
+            const displayRow = editRow ? editRow.previousElementSibling : null;
+            if (editRow) editRow.classList.remove('is-open');
+            if (displayRow) {
+              displayRow.classList.remove('is-editing');
+              displayRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            }
+          });
+        });
+        document.querySelectorAll('[data-commission-cancel]').forEach((button) => {
+          button.addEventListener('click', (event) => {
+            event.preventDefault();
+            const editRow = button.closest('.edit-row');
+            const displayRow = editRow ? editRow.previousElementSibling : null;
+            if (editRow) editRow.classList.remove('is-open');
+            if (displayRow) {
+              displayRow.classList.remove('is-editing');
+              displayRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            }
+          });
+        });
+
+        // AJAX save — smooth update without page reload
+        sharedForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(sharedForm);
+            const entryId = formData.get('entry_id');
+            const displayRow = document.querySelector('#entry-' + entryId);
+            if (!displayRow) { sharedForm.submit(); return; }
+            const isCommissionMutation =
+              displayRow.dataset.categoryHint === 'commission' ||
+              formData.get('category_hint') === 'commission' ||
+              !!displayRow.dataset.profitExpenseEntryId ||
+              formData.get('add_to_company_profit') === '1';
+            if (isCommissionMutation) {
+              sharedForm.submit();
+              return;
+            }
+
+            fetch(sharedForm.action, {
+                method: 'POST',
+                body: formData,
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            })
+            .then(r => {
+                if (!r.ok) throw new Error('Server error');
+                return r.json();
+            })
+            .then(data => {
+                if (!data.ok) throw new Error('Save failed');
+                const e = data.entry;
+
+                // Update data attributes
+                displayRow.dataset.entryDate = e.entry_date;
+                displayRow.dataset.description = e.description;
+                displayRow.dataset.currency = e.currency;
+                displayRow.dataset.direction = e.direction;
+                displayRow.dataset.amount = e.amount;
+                displayRow.dataset.kind = e.kind;
+                displayRow.dataset.categoryHint = e.category_hint;
+                displayRow.dataset.transferGroup = e.transfer_group;
+                displayRow.dataset.commissionSourceEntryId = e.commission_source_entry_id || '';
+                displayRow.dataset.profitExpenseEntryId = e.profit_expense_entry_id || '';
+                displayRow.dataset.profitExpenseAccountId = e.profit_expense_account_id || '';
+                displayRow.dataset.imagePath = e.image_path;
+                renderCommissionAction(displayRow);
+
+                // Update visible cells
+                const cells = displayRow.querySelectorAll('td');
+                cells[0].textContent = e.entry_date;
+
+                // Update description cell (keep structure for image thumb)
+                const descDiv = cells[2].querySelector('.desc-with-image') || cells[2];
+                const descText = descDiv.childNodes[0];
+                if (descText && descText.nodeType === 3) {
+                    descText.textContent = e.description + ' ';
+                } else {
+                    const tn = document.createTextNode(e.description + ' ');
+                    descDiv.insertBefore(tn, descDiv.firstChild);
+                }
+
+                // Detect view mode and update amount cells
+                const headers = document.querySelectorAll('thead th');
+                const isSplit = headers.length > 10;
+
+                const sym = e.currency === 'USD' ? '$' : '¥';
+                const formatted = sym + parseFloat(e.amount).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+                if (!isSplit) {
+                    cells[3].textContent = e.currency;
+                    if (e.direction === 'IN') {
+                        cells[4].textContent = formatted;
+                        cells[4].className = 'money-in';
+                        cells[5].textContent = '';
+                        cells[5].className = 'money-out';
+                    } else {
+                        cells[4].textContent = '';
+                        cells[4].className = 'money-in';
+                        cells[5].textContent = formatted;
+                        cells[5].className = 'money-out';
+                    }
+                }
+
+                // Close editor
+                sharedEditor.classList.remove('is-open');
+                displayRow.classList.remove('is-editing');
+
+                // Highlight animation
+                displayRow.classList.add('row-just-saved');
+                displayRow.addEventListener('animationend', function handler() {
+                    displayRow.classList.remove('row-just-saved');
+                    displayRow.removeEventListener('animationend', handler);
+                });
+
+                // Scroll the saved row into view
+                displayRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            })
+            .catch(() => {
+                // Fallback to normal form submit on error
+                sharedForm.submit();
+            });
+        });
+        [sharedForm, addForm].forEach((form) => {
+          if (!form) return;
+          form.querySelector('[name="category_hint"]')?.addEventListener('change', () => updateProfitControls(form));
+          form.querySelector('[name="add_to_company_profit"]')?.addEventListener('change', () => updateProfitControls(form));
+          updateProfitControls(form);
+        });
+
+        document.querySelectorAll('[data-confirm-delete]').forEach((form) => {
+          form.addEventListener('submit', (event) => {
+            if (!confirm('Delete this entry? This cannot be undone.')) {
+              event.preventDefault();
+            }
+          });
+        });
+
+        if (historyToggle && historyDropdown) {
+          historyToggle.addEventListener('click', (event) => {
+            event.preventDefault();
+            historyDropdown.classList.toggle('is-open');
+          });
+
+          document.addEventListener('click', (event) => {
+            if (!historyDropdown.contains(event.target)) {
+              historyDropdown.classList.remove('is-open');
+            }
+          });
+        }
+
+        historyTimestamps.forEach((element) => {
+          const rawValue = element.dataset.utcTimestamp;
+          if (!rawValue) return;
+          const parsed = new Date(rawValue);
+          if (Number.isNaN(parsed.getTime())) return;
+          const formatted = new Intl.DateTimeFormat(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+            hour: 'numeric',
+            minute: '2-digit',
+            second: '2-digit',
+            timeZoneName: 'short',
+          }).format(parsed);
+          element.textContent = formatted;
+          element.title = `UTC ${rawValue}`;
+        });
+
+        if (exchangeToggle && exchangeDropdown) {
+          exchangeToggle.addEventListener('click', (event) => {
+            event.preventDefault();
+            exchangeDropdown.classList.toggle('is-open');
+          });
+
+          document.addEventListener('click', (event) => {
+            if (!exchangeDropdown.contains(event.target)) {
+              exchangeDropdown.classList.remove('is-open');
+            }
+          });
+        }
+
+        if (exchangeForm) {
+          const usdInput = exchangeForm.querySelector('[name="usd_amount"]');
+          const cnyInput = exchangeForm.querySelector('[name="cny_amount"]');
+          const rateInput = exchangeForm.querySelector('[name="exchange_rate"]');
+          const feeToggle = exchangeForm.querySelector('[name="apply_fee"]');
+          const feeButton = exchangeForm.querySelector('[data-apply-fee]');
+          const feePreview = exchangeForm.querySelector('[data-fee-preview]');
+
+          const recalcFromRate = () => {
+            const usd = parseFloat(usdInput?.value || '0') || 0;
+            const rate = parseFloat(rateInput?.value || '0') || 0;
+            if (cnyInput && usd > 0 && rate > 0) {
+              let cny = usd * rate;
+              if (feeToggle?.checked) cny = cny * 0.996;
+              cnyInput.value = cny.toFixed(2);
+            }
+            if (feePreview && feeToggle) {
+              const fee = feeToggle.checked && usd > 0 && rate > 0 ? (usd * rate * 0.004) : 0;
+              feePreview.textContent = fee > 0 ? `Fee deducted from RMB: ¥${fee.toFixed(2)}` : 'Fee deducted from RMB: ¥0.00';
+            }
+          };
+
+          usdInput?.addEventListener('input', recalcFromRate);
+          rateInput?.addEventListener('input', recalcFromRate);
+          feeToggle?.addEventListener('change', recalcFromRate);
+          feeButton?.addEventListener('click', (event) => {
+            event.preventDefault();
+            if (feeToggle) feeToggle.checked = true;
+            recalcFromRate();
+          });
+          recalcFromRate();
+
+          // FX Reference Rate for Exchange Popover
+          const exchangeRateRef = document.getElementById('exchange-fx-rate');
+          const exchangeSourceRef = document.getElementById('exchange-fx-source');
+          const useLiveRateBtn = document.getElementById('exchange-use-live-rate');
+
+          let liveRate = null;
+
+          const sourceLabels = {
+            "moneyconvert": "MoneyConvert (hourly)",
+            "exchangerate-api": "ExchangeRate-API (daily)",
+            "stored": "Stored rate (app DB)"
+          };
+
+          function fetchLiveRate() {
+            fetch('/api/fx-rate?from=USD&to=CNY')
+              .then(r => r.json())
+              .then(data => {
+                if (data.rate) {
+                  liveRate = data.rate;
+                  if (exchangeRateRef) {
+                    exchangeRateRef.textContent = 'Live: 1 USD = ' + data.rate.toFixed(4) + ' CNY';
+                  }
+                  if (exchangeSourceRef) {
+                    exchangeSourceRef.textContent = sourceLabels[data.source] || data.source;
+                  }
+                }
+              })
+              .catch(() => {});
+          }
+
+          const fxToggle = document.querySelector('[data-exchange-toggle]');
+          if (fxToggle) {
+            fxToggle.addEventListener('click', fetchLiveRate);
+          }
+          fetchLiveRate();
+
+          if (useLiveRateBtn) {
+            useLiveRateBtn.addEventListener('click', function(e) {
+              e.preventDefault();
+              if (liveRate && rateInput) {
+                rateInput.value = liveRate.toFixed(4);
+                recalcFromRate();
+              }
+            });
+          }
+        }
+
+        // --- Image Upload: Add Form ---
+        const addDropZone = document.getElementById('add-drop-zone');
+        const addImageInput = document.getElementById('add-image-input');
+        const addImagePreview = document.getElementById('add-image-preview');
+        const addDropPlaceholder = document.getElementById('add-drop-placeholder');
+        const addImageRemove = document.getElementById('add-image-remove');
+        const addParseAI = document.getElementById('add-parse-ai');
+        const addParseStatus = document.getElementById('add-parse-status');
+
+        function showAddPreview(file) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            addImagePreview.src = e.target.result;
+            addImagePreview.style.display = 'block';
+            addDropPlaceholder.style.display = 'none';
+            addImageRemove.style.display = 'inline-flex';
+            addParseAI.style.display = 'inline-flex';
+          };
+          reader.readAsDataURL(file);
+        }
+
+        if (addDropZone && addImageInput) {
+          addDropZone.addEventListener('click', (e) => {
+            if (e.target.closest('.image-remove-btn') || e.target.closest('.parse-ai-btn') || e.target.closest('.image-preview')) return;
+            addImageInput.click();
+          });
+          addImageInput.addEventListener('change', () => {
+            if (addImageInput.files[0]) showAddPreview(addImageInput.files[0]);
+          });
+          addDropZone.addEventListener('dragover', (e) => { e.preventDefault(); addDropZone.classList.add('drag-over'); });
+          addDropZone.addEventListener('dragleave', () => addDropZone.classList.remove('drag-over'));
+          addDropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            addDropZone.classList.remove('drag-over');
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('image/')) {
+              const dt = new DataTransfer();
+              dt.items.add(file);
+              addImageInput.files = dt.files;
+              showAddPreview(file);
+            }
+          });
+        }
+
+        if (addImageRemove) {
+          addImageRemove.addEventListener('click', () => {
+            addImageInput.value = '';
+            addImagePreview.style.display = 'none';
+            addImagePreview.src = '';
+            addDropPlaceholder.style.display = '';
+            addImageRemove.style.display = 'none';
+            addParseAI.style.display = 'none';
+            addTextPanel.style.display = 'none';
+            addParseStatus.textContent = '';
+          });
+        }
+
+        // --- AI Parse ---
+        if (addParseAI) {
+          addParseAI.addEventListener('click', async () => {
+            const hasFile = addImageInput.files[0];
+            const hasPreload = !hasFile && addImagePreview.src && addImagePreview.style.display !== 'none';
+            if (!hasFile && !hasPreload) return;
+            addParseStatus.innerHTML = '<div class="parse-progress-wrap"><div class="parse-progress-bar"></div></div> <span class="parse-progress-text">Parsing image…</span>';
+            addParseStatus.className = 'parse-status parse-loading';
+            const bar = addParseStatus.querySelector('.parse-progress-bar');
+            bar.style.animation = 'parse-fill 8s ease-out forwards';
+            addParseAI.disabled = true;
+            const fd = new FormData();
+            if (hasFile) {
+              fd.append('image', addImageInput.files[0]);
+            } else {
+              fd.append('image_url', addImagePreview.src);
+            }
+            try {
+              const resp = await fetch('/api/parse-image', { method: 'POST', body: fd });
+              const result = await resp.json();
+              if (result.error) {
+                addParseStatus.textContent = 'Error: ' + result.error;
+              } else if (result.ok && result.data) {
+                const d = result.data;
+                const form = addDropZone.closest('form');
+                if (d.date) form.querySelector('[name="entry_date"]').value = d.date;
+                if (d.currency) form.querySelector('[name="currency"]').value = d.currency;
+                if (d.direction) form.querySelector('[name="direction"]').value = d.direction;
+                if (d.amount) form.querySelector('[name="amount"]').value = d.amount;
+                // Build description: recipient + card last 4, fallback to base description
+                let desc = '';
+                const extras = [];
+                if (d.recipient_name) extras.push(d.recipient_name);
+                if (d.card_last4) extras.push('*' + d.card_last4);
+                desc = extras.length ? extras.join(' ') : (d.description || '');
+                if (desc) form.querySelector('[name="description"]').value = desc;
+                addParseStatus.textContent = 'Parsed successfully! Review the fields.';
+                addParseStatus.className = 'parse-status parse-success';
+                // Cache extracted text for lightbox view
+                if (d.extracted_text && addImagePreview.src) {
+                  window._extractedTextCache[addImagePreview.src] = d.extracted_text;
+                }
+              }
+            } catch (err) {
+              addParseStatus.textContent = 'Parse failed: ' + err.message;
+            }
+            addParseAI.disabled = false;
+          });
+        }
+
+        // --- Image in Inline Editor ---
+        const editCurrentImage = document.getElementById('edit-current-image');
+        const editImageInput = document.getElementById('edit-image-input');
+        const editRemoveImageField = document.getElementById('edit-remove-image');
+        const editImageRemoveBtn = document.getElementById('edit-image-remove-btn');
+        const editImageChangeBtn = document.getElementById('edit-image-change-btn');
+
+        const origOpenEditor = openEditor;
+        // Override openEditor to also handle image
+        const openEditorWithImage = (entryId) => {
+          origOpenEditor(entryId);
+          const displayRow = document.querySelector(`#entry-${entryId}`);
+          if (!displayRow) return;
+          const imagePath = displayRow.dataset.imagePath;
+          editRemoveImageField.value = '0';
+          editImageInput.value = '';
+          if (imagePath) {
+            editCurrentImage.src = '/uploads/' + imagePath;
+            editCurrentImage.style.display = 'block';
+            editImageRemoveBtn.style.display = 'inline-flex';
+            editImageChangeBtn.style.display = 'inline-flex';
+            editImageInput.style.display = 'none';
+          } else {
+            editCurrentImage.style.display = 'none';
+            editCurrentImage.src = '';
+            editImageRemoveBtn.style.display = 'none';
+            editImageChangeBtn.style.display = 'none';
+            editImageInput.style.display = '';
+          }
+
+          // --- Link Transfer button logic ---
+          // Find the closest matching row (by table position) with same description,
+          // opposite currency (USD↔CNY), and no existing transfer group.
+          const linkBtn = document.getElementById('link-transfer-btn');
+          if (linkBtn) {
+            const currentDesc = (displayRow.dataset.description || '').toLowerCase().trim();
+            const currentCurrency = displayRow.dataset.currency;
+            const currentGroup = displayRow.dataset.transferGroup;
+            const currentId = displayRow.dataset.entryId;
+            const isCommissionRow = !!displayRow.dataset.commissionSourceEntryId;
+            let partner = null;
+            if (!currentGroup && !isCommissionRow && (currentCurrency === 'USD' || currentCurrency === 'CNY')) {
+              const targetCurrency = currentCurrency === 'USD' ? 'CNY' : 'USD';
+              const allRows = Array.from(document.querySelectorAll('.display-row'));
+              const currentIdx = allRows.findIndex(r => r.dataset.entryId === currentId);
+              let bestDist = Infinity;
+              allRows.forEach((row, idx) => {
+                if (row.dataset.entryId === currentId) return;
+                if (row.dataset.transferGroup) return;
+                if (row.dataset.commissionSourceEntryId) return;
+                if (row.dataset.currency !== targetCurrency) return;
+                if ((row.dataset.description || '').toLowerCase().trim() !== currentDesc) return;
+                const dist = Math.abs(idx - currentIdx);
+                if (dist < bestDist) {
+                  bestDist = dist;
+                  partner = row;
+                }
+              });
+            }
+            if (partner) {
+              linkBtn.textContent = 'Link with #' + partner.dataset.sourceNo + ' (' + partner.dataset.currency + ')';
+              linkBtn.dataset.partnerId = partner.dataset.entryId;
+              linkBtn.dataset.currentId = currentId;
+              linkBtn.style.display = '';
+            } else {
+              linkBtn.style.display = 'none';
+            }
+          }
+        };
+
+        // Re-bind edit buttons with new handler
+        document.querySelectorAll('[data-edit-open]').forEach((button) => {
+          const clone = button.cloneNode(true);
+          button.parentNode.replaceChild(clone, button);
+          clone.addEventListener('click', (event) => {
+            event.preventDefault();
+            openEditorWithImage(clone.dataset.editOpen);
+          });
+        });
+
+        // --- Link Transfer click handler ---
+        document.getElementById('link-transfer-btn').addEventListener('click', function(e) {
+          e.preventDefault();
+          const btn = e.currentTarget;
+          const currentId = btn.dataset.currentId;
+          const partnerId = btn.dataset.partnerId;
+          const body = JSON.stringify({
+            entry_id_1: parseInt(currentId),
+            entry_id_2: parseInt(partnerId)
+          });
+          fetch('/api/link-transfer', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: body
+          }).then(r => r.json()).then(data => {
+            if (data.ok) {
+              const group = data.transfer_group || '';
+              // Update both rows' data attributes and Type column
+              const row1 = document.querySelector('#entry-' + currentId);
+              const row2 = document.querySelector('#entry-' + partnerId);
+              if (row1) row1.dataset.transferGroup = group;
+              if (row2) row2.dataset.transferGroup = group;
+
+              // Update Type column with exchange rate from response
+              if (data.entries) {
+                data.entries.forEach(function(ent) {
+                  if (!ent) return;
+                  const row = document.querySelector('#entry-' + ent.id);
+                  if (!row) return;
+                  // Find the Type cell (second to last before Actions)
+                  const cells = row.querySelectorAll('td');
+                  const typeCell = cells[cells.length - 2]; // Type is before Actions
+                  if (typeCell && ent.exchange_rate) {
+                    typeCell.innerHTML = '<span class="type-badge is-fx">FX @ ' + parseFloat(ent.exchange_rate).toFixed(4) + '</span>';
+                  }
+                });
+              }
+
+              // Close the editor
+              sharedEditor.classList.remove('is-open');
+              if (row1) row1.classList.remove('is-editing');
+
+              // Highlight both rows
+              [row1, row2].forEach(function(row) {
+                if (!row) return;
+                row.classList.add('row-just-saved');
+                row.addEventListener('animationend', function handler() {
+                  row.classList.remove('row-just-saved');
+                  row.removeEventListener('animationend', handler);
+                });
+              });
+
+              // Hide the link button (now linked)
+              btn.style.display = 'none';
+
+              // Scroll first row into view
+              if (row1) row1.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            } else {
+              alert(data.error || 'Failed to link');
+            }
+          }).catch(() => alert('Network error'));
+        });
+
+        if (editImageChangeBtn) {
+          editImageChangeBtn.addEventListener('click', () => {
+            editImageInput.style.display = '';
+            editImageInput.click();
+          });
+          editImageInput.addEventListener('change', () => {
+            if (editImageInput.files[0]) {
+              const reader = new FileReader();
+              reader.onload = (e) => {
+                editCurrentImage.src = e.target.result;
+                editCurrentImage.style.display = 'block';
+                editImageRemoveBtn.style.display = 'inline-flex';
+                editImageChangeBtn.style.display = 'inline-flex';
+                editImageInput.style.display = 'none';
+              };
+              reader.readAsDataURL(editImageInput.files[0]);
+            }
+          });
+        }
+
+        if (editImageRemoveBtn) {
+          editImageRemoveBtn.addEventListener('click', () => {
+            editCurrentImage.style.display = 'none';
+            editCurrentImage.src = '';
+            editImageRemoveBtn.style.display = 'none';
+            editImageChangeBtn.style.display = 'none';
+            editRemoveImageField.value = '1';
+            editImageInput.value = '';
+            editImageInput.style.display = '';
+          });
+        }
+
+        if (hash && hash.startsWith('#entry-')) {
+          const target = document.querySelector(hash);
+          if (target) target.scrollIntoView({ block: 'center' });
+        } else if (bottomAnchor) {
+          bottomAnchor.scrollIntoView({ block: 'end' });
+        }
+
+      });
+    </script>
+  </head>
+  <body>
+    {% if g.user %}
+    {% include '_nav.html' %}
+    {% endif %}
+    <main class="shell">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      {% for cat, msg in messages %}
+      <div style="padding:10px 16px;border-radius:8px;margin-bottom:12px;font-size:0.9rem;{% if cat == 'error' %}background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;{% else %}background:#d1fae5;color:#065f46;border:1px solid #6ee7b7;{% endif %}">{{ msg }}</div>
+      {% endfor %}
+      {% endif %}
+      {% endwith %}
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Client Statement</p>
+          <h1>{{ client.name }}</h1>
+        </div>
+        <div class="hero-actions">
+          <a class="button ghost" href="{{ url_for('index') }}">Back</a>
+          <a class="button ghost" href="{{ url_for('print_statement', client_id=client.id) }}" target="_blank">Print</a>
+          <a class="button ghost" href="{{ url_for('export_pdf', client_id=client.id) }}">Export PDF</a>
+          <a class="button ghost" href="{{ url_for('export_statement', client_id=client.id) }}">Export CSV</a>
+          <a class="button ghost" href="{{ url_for('export_statement_xlsx', client_id=client.id) }}">Export Excel</a>
+          <div class="history-dropdown" data-exchange-dropdown>
+            <a class="button secondary" href="#" data-exchange-toggle>Exchange USD &rarr; RMB</a>
+            <div class="history-popover exchange-popover">
+              <div class="history-popover-head">Exchange USD to RMB</div>
+              <form method="post" action="{{ url_for('exchange_balance', client_id=client.id) }}" id="balance-exchange-form" class="form-grid">
+                <input type="hidden" name="return_page" value="{{ page }}">
+                <input type="hidden" name="return_per_page" value="{{ per_page_raw }}">
+                <label>
+                  <span>Available USD</span>
+                  <input type="text" value="{{ (current_usd_balance, 'USD')|money_with_symbol }}" disabled>
+                </label>
+                <label>
+                  <span>Available RMB</span>
+                  <input type="text" value="{{ (current_cny_balance, 'CNY')|money_with_symbol }}" disabled>
+                </label>
+                <label>
+                  <span>Date</span>
+                  <input type="date" name="exchange_date" required value="{{ default_date }}">
+                </label>
+                <label>
+                  <span>USD Amount</span>
+                  <input type="number" step="0.01" name="usd_amount" required>
+                </label>
+                <label>
+                  <span>Exchange Rate</span>
+                  <input type="number" step="0.0001" name="exchange_rate" placeholder="Optional">
+                  <div class="live-rate-row">
+                    <button type="button" id="exchange-use-live-rate" class="button ghost" style="padding:4px 10px;font-size:0.76rem;min-height:auto;">Use live rate</button>
+                  </div>
+                  <div id="exchange-fx-ref" style="font-size:12px;color:#61717c;margin-top:4px;">
+                    <span id="exchange-fx-rate"></span>
+                    <span id="exchange-fx-source" style="display:inline-block;font-size:10px;padding:2px 7px;border-radius:4px;margin-left:6px;background:#eef4f3;color:#4a6670;border:1px solid #d7e0e2;"></span>
+                  </div>
+                </label>
+                <label>
+                  <span>RMB Amount</span>
+                  <input type="number" step="0.01" name="cny_amount" placeholder="Auto-calculated from rate">
+                </label>
+                <label class="full">
+                  <span>Note</span>
+                  <input type="text" name="exchange_note" placeholder="USD to RMB exchange">
+                </label>
+                <div class="exchange-tools full">
+                  <label class="checkline">
+                    <input type="checkbox" name="apply_fee" value="1">
+                    <span>Deduct 0.4% exchange fee from RMB</span>
+                  </label>
+                  <button class="button ghost" type="button" data-apply-fee>+0.4% Fee</button>
+                  <span class="fee-preview" data-fee-preview>Fee deducted from RMB: &yen;0.00</span>
+                </div>
+                <div class="full">
+                  <button class="button secondary" type="submit">Create Exchange</button>
+                </div>
+              </form>
+            </div>
+          </div>
+          <div class="history-dropdown" data-history-dropdown>
+            <a class="button ghost" href="#" data-history-toggle>History</a>
+            <div class="history-popover">
+              <div class="history-popover-head">Recent Changes</div>
+              {% if recent_events %}
+              <div class="history-list compact">
+                {% for event in recent_events %}
+                <div class="history-item {% if event.undone %}is-undone{% endif %}">
+                  <strong>{{ event.action|capitalize }}</strong>
+                  <span>{{ event.description or 'No description' }}</span>
+                  <small><span data-utc-timestamp="{{ event.created_at }}">{{ event.created_at }}</span>{% if event.undone %} &middot; undone{% endif %}</small>
+                </div>
+                {% endfor %}
+              </div>
+              {% else %}
+              <div class="history-empty">No recent changes.</div>
+              {% endif %}
+            </div>
+          </div>
+          {% if latest_event %}
+          <form method="post" action="{{ url_for('undo_last_change', client_id=client.id) }}" class="inline-delete">
+            <input type="hidden" name="return_page" value="{{ page }}">
+            <input type="hidden" name="return_per_page" value="{{ per_page_raw }}">
+            <button class="button ghost" type="submit">Undo</button>
+          </form>
+          {% endif %}
+        </div>
+      </section>
+
+      <section class="balance-strip">
+        <div class="balance-card">
+          <p class="balance-label">USD Balance</p>
+          <p class="balance-value {% if current_usd_balance < 0 %}is-negative{% elif current_usd_balance == 0 %}is-zero{% endif %}">{{ (current_usd_balance, 'USD')|money_with_symbol }}</p>
+        </div>
+        <div class="balance-card">
+          <p class="balance-label">CNY Balance</p>
+          <p class="balance-value {% if current_cny_balance < 0 %}is-negative{% elif current_cny_balance == 0 %}is-zero{% endif %}">{{ (current_cny_balance, 'CNY')|money_with_symbol }}</p>
+        </div>
+        <div class="balance-card">
+          <p class="balance-label">Total Entries</p>
+          <p class="balance-value">{{ total_rows }}</p>
+        </div>
+      </section>
+
+      <section class="card form-card">
+        <div class="section-head">
+          <h2>Filters</h2>
+        </div>
+        <form method="get" class="form-grid filters-grid">
+          <input type="hidden" name="view" value="{{ view_mode }}">
+          <input type="hidden" name="per_page" value="{{ per_page_raw }}">
+          <label>
+            <span>Search</span>
+            <input type="text" name="q" value="{{ filters.q }}" placeholder="Search all fields...">
+          </label>
+          <label>
+            <span>Currency</span>
+            <select name="currency">
+              <option value="">All</option>
+              {% for value in ['USD', 'CNY'] %}
+              <option value="{{ value }}" {% if filters.currency == value %}selected{% endif %}>{{ value }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            <span>Category</span>
+            <select name="category">
+              <option value="">All</option>
+              {% for value, label in category_options %}
+              <option value="{{ value }}" {% if filters.category == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            <span>Date From</span>
+            <input type="date" name="date_from" value="{{ filters.date_from }}">
+          </label>
+          <label>
+            <span>Date To</span>
+            <input type="date" name="date_to" value="{{ filters.date_to }}">
+          </label>
+          <div class="filter-actions">
+            <button class="button secondary" type="submit">Filter</button>
+            <a class="button ghost" href="{{ url_for('client_statement', client_id=client.id) }}">Clear</a>
+          </div>
+        </form>
+      </section>
+
+      <section class="view-toggle">
+        <span>View:</span>
+        <a class="button {% if view_mode != 'combined' %}ghost{% endif %}" href="{{ url_for('client_statement', client_id=client.id, page=page, per_page=per_page_raw, view='combined', q=filters.q, currency=filters.currency, category=filters.category, date_from=filters.date_from, date_to=filters.date_to) }}">Combined</a>
+        <a class="button {% if view_mode != 'split' %}ghost{% endif %}" href="{{ url_for('client_statement', client_id=client.id, page=page, per_page=per_page_raw, view='split', q=filters.q, currency=filters.currency, category=filters.category, date_from=filters.date_from, date_to=filters.date_to) }}">Client Style</a>
+      </section>
+
+      <section class="card" id="table-top">
+        <div class="table-scroll-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>#</th>
+              <th>Description</th>
+              {% if view_mode == 'split' %}
+              <th>USD In</th>
+              <th>USD Out</th>
+              <th>RMB In</th>
+              <th>RMB Out</th>
+              {% else %}
+              <th>Currency</th>
+              <th>In</th>
+              <th>Out</th>
+              {% endif %}
+              <th>USD Bal</th>
+              <th>CNY Bal</th>
+              <th>Type</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              <tr
+                id="entry-{{ row.id }}"
+                class="display-row"
+                data-entry-id="{{ row.id }}"
+                data-source-no="{{ row.source_no }}"
+                data-entry-date="{{ row.entry_date }}"
+                data-description="{{ row.description }}"
+                data-currency="{{ row.currency }}"
+                data-direction="{{ row.direction }}"
+                data-amount="{{ row.amount }}"
+                data-kind="{{ row.kind }}"
+                data-category-hint="{{ row.category_hint }}"
+                data-transfer-group="{{ row.transfer_group or '' }}"
+                data-commission-source-entry-id="{{ row.commission_source_entry_id or '' }}"
+                data-commission-child-id="{{ row.commission_child_id or '' }}"
+                data-profit-expense-entry-id="{{ row.profit_expense_entry_id or '' }}"
+                data-profit-expense-account-id="{{ row.profit_expense_account_id or '' }}"
+                data-image-path="{{ row.image_path or '' }}"
+              >
+                <td>{{ row.entry_date }}</td>
+                <td>{{ row.source_no }}</td>
+                <td>
+                  <div class="desc-with-image">
+                    {{ row.description }}
+                    {% if row.image_path %}
+                    <span class="image-thumb-link" title="Click to enlarge" data-lightbox-src="{{ url_for('serve_upload', filename=row.image_path) }}">
+                      <img src="{{ url_for('serve_upload', filename=row.image_path) }}" class="row-image-thumb" alt="proof">
+                    </span>
+                    {% endif %}
+                  </div>
+                  <div class="row-meta">
+                    {% for value, label in category_options %}
+                      {% if row.category_hint == value and value != 'uncategorized' %}
+                      <small>{{ label }}</small>
+                      {% endif %}
+                    {% endfor %}
+                    {% if row.commission_source_entry_id %}
+                    <small class="linked-note">Commission from #{{ row.commission_source_source_no }}</small>
+                    {% elif row.commission_child_id %}
+                    <small class="linked-note">Commission entry #{{ row.commission_child_source_no }} already exists</small>
+                    {% endif %}
+                    {% if row.profit_expense_account_name %}
+                    <small class="linked-note">Company profit &rarr; {{ row.profit_expense_account_name }}</small>
+                    {% endif %}
+                  </div>
+                </td>
+                {% if view_mode == 'split' %}
+                <td class="money-in">{% if row.currency == 'USD' and row.direction == 'IN' %}{{ (row.amount, 'USD')|money_with_symbol }}{% endif %}</td>
+                <td class="money-out">{% if row.currency == 'USD' and row.direction == 'OUT' %}{{ (row.amount, 'USD')|money_with_symbol }}{% endif %}</td>
+                <td class="money-in">{% if row.currency == 'CNY' and row.direction == 'IN' %}{{ (row.amount, 'CNY')|money_with_symbol }}{% endif %}</td>
+                <td class="money-out">{% if row.currency == 'CNY' and row.direction == 'OUT' %}{{ (row.amount, 'CNY')|money_with_symbol }}{% endif %}</td>
+                {% else %}
+                <td>{{ row.currency }}</td>
+                <td class="money-in">{% if row.direction == 'IN' %}{{ (row.amount, row.currency)|money_with_symbol }}{% endif %}</td>
+                <td class="money-out">{% if row.direction == 'OUT' %}{{ (row.amount, row.currency)|money_with_symbol }}{% endif %}</td>
+                {% endif %}
+                <td class="{% if row.running_usd < 0 %}balance-negative{% elif row.running_usd == 0 %}balance-zero{% endif %}">{{ (row.running_usd, 'USD')|money_with_symbol }}</td>
+                <td class="{% if row.running_cny < 0 %}balance-negative{% elif row.running_cny == 0 %}balance-zero{% endif %}">{{ (row.running_cny, 'CNY')|money_with_symbol }}</td>
+                <td>
+                  <div class="type-stack">
+                    {% if row.exchange_rate %}
+                    <span class="type-badge is-fx">FX @ {{ '%.4f'|format(row.exchange_rate) }}</span>
+                    {% else %}
+                      {% for value, label in type_options %}
+                        {% if row.kind == value %}<span class="type-badge">{{ label }}</span>{% endif %}
+                      {% endfor %}
+                    {% endif %}
+                    {% if row.commission_source_entry_id %}
+                    <span class="type-badge is-commission">Commission</span>
+                    {% elif row.commission_child_id %}
+                    <span class="type-badge is-commission-source">Has Commission</span>
+                    {% endif %}
+                  </div>
+                </td>
+                <td class="actions-cell">
+                  <div class="actions-wrap">
+                    {% if row.can_auto_commission %}
+                    <a href="#entry-{{ row.id }}" data-commission-open="{{ row.id }}" data-role="commission-action" class="text-action">Auto Commission</a>
+                    {% elif row.commission_source_entry_id %}
+                    <span class="action-status" data-role="commission-action">Commission Row</span>
+                    {% elif row.commission_child_id %}
+                    <span class="action-status" data-role="commission-action">Commission Exists</span>
+                    {% endif %}
+                    <a href="#entry-{{ row.id }}" data-edit-open="{{ row.id }}" class="text-action">Edit</a>
+                    <form method="post" action="{{ url_for('delete_entry', entry_id=row.id) }}" class="inline-delete" data-confirm-delete>
+                      <input type="hidden" name="return_page" value="{{ page }}">
+                      <input type="hidden" name="return_per_page" value="{{ per_page_raw }}">
+                      <button type="submit" class="text-action delete-action">Del</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+            <tr class="edit-row" id="shared-editor-row">
+              <td colspan="{% if view_mode == 'split' %}11{% else %}10{% endif %}">
+                <form method="post" id="shared-editor-form" class="inline-edit-form" enctype="multipart/form-data">
+                  <input type="hidden" name="entry_id" value="">
+                  <input type="hidden" name="return_page" value="{{ page }}">
+                  <input type="hidden" name="return_per_page" value="{{ per_page_raw }}">
+                  <input type="hidden" name="remove_image" id="edit-remove-image" value="0">
+                  <label>
+                    <span>Date</span>
+                    <input type="date" name="entry_date" required>
+                  </label>
+                  <label>
+                    <span>No.</span>
+                    <input type="number" value="" data-role="source-no" disabled>
+                  </label>
+                  <label class="edit-wide">
+                    <span>Description</span>
+                    <input type="text" name="description" required>
+                  </label>
+                  <label>
+                    <span>Currency</span>
+                    <select name="currency">
+                      {% for value in ['USD', 'CNY'] %}
+                      <option value="{{ value }}">{{ value }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Direction</span>
+                    <select name="direction">
+                      {% for value in ['IN', 'OUT'] %}
+                      <option value="{{ value }}">{{ value }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label>
+                      <span>Amount</span>
+                      <input type="number" step="0.01" name="amount" required>
+                    </label>
+                  <label>
+                    <span>Entry Type</span>
+                    <select name="kind">
+                      {% for value, label in type_options %}
+                      <option value="{{ value }}">{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Category</span>
+                    <select name="category_hint">
+                      {% for value, label in category_options %}
+                      <option value="{{ value }}">{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Transfer Group</span>
+                    <input type="text" name="transfer_group" placeholder="Transfer group">
+                  </label>
+                  <div class="edit-wide" data-profit-link-section style="display:none;">
+                    <label class="checkline">
+                      <input type="checkbox" name="add_to_company_profit" value="1">
+                      <span>Add to company profit</span>
+                    </label>
+                    <label>
+                      <span>Expense Account</span>
+                      <select name="profit_expense_account_id">
+                        <option value="">Choose expense account</option>
+                        {% for account in commission_expense_accounts %}
+                        <option value="{{ account.id }}">{{ account.name }}{% if account.currency_label %} ({{ account.currency_label }}){% endif %}</option>
+                        {% endfor %}
+                      </select>
+                    </label>
+                    <p class="field-help">Creates or updates a linked IN profit entry in Expense Accounts. Default account: {{ default_profit_expense_account_name }}.</p>
+                  </div>
+                  <div class="edit-image-section">
+                    <span class="edit-image-label">Image</span>
+                    <div class="edit-image-row">
+                      <img id="edit-current-image" class="edit-image-thumb" style="display:none; cursor: zoom-in;" data-lightbox-edit>
+                      <input type="file" name="image" accept="image/*" id="edit-image-input" style="display:none;">
+                      <button type="button" class="text-action" id="edit-image-change-btn" style="display:none;">Change</button>
+                      <button type="button" class="text-action delete-action" id="edit-image-remove-btn" style="display:none;">Remove</button>
+                    </div>
+                  </div>
+                  <div class="edit-actions">
+                    <button type="button" id="link-transfer-btn" class="button secondary" style="display:none">Link Transfer</button>
+                    <button class="button secondary" type="submit">Save</button>
+                    <a class="button ghost" href="#table-top" data-edit-cancel>Cancel</a>
+                  </div>
+                </form>
+              </td>
+            </tr>
+            <tr class="edit-row" id="shared-commission-row">
+              <td colspan="{% if view_mode == 'split' %}11{% else %}10{% endif %}">
+                <form method="post" action="{{ url_for('create_commission', client_id=client.id) }}" id="shared-commission-form" class="inline-edit-form commission-inline-form">
+                  <input type="hidden" name="source_entry_id" value="">
+                  <input type="hidden" name="return_page" value="{{ page }}">
+                  <input type="hidden" name="return_per_page" value="{{ per_page_raw }}">
+                  <label class="edit-wide">
+                    <span>Source OUT Entry</span>
+                    <input type="text" value="" data-role="commission-source" disabled>
+                  </label>
+                  <label>
+                    <span>Date</span>
+                    <input type="date" name="commission_date" required value="{{ default_date }}">
+                  </label>
+                  <label>
+                    <span>Commission %</span>
+                    <input type="number" step="0.01" min="0.01" name="percentage" placeholder="e.g. 2.5" required>
+                  </label>
+                  <label class="edit-wide">
+                    <span>Note</span>
+                    <input type="text" name="note" placeholder="Commission - source description">
+                  </label>
+                  <div class="edit-actions">
+                    <button class="button secondary" type="submit">Create Commission</button>
+                    <a class="button ghost" href="#table-top" data-commission-cancel>Cancel</a>
+                  </div>
+                </form>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+      </section>
+
+      <section class="pager">
+        <div class="pager-info">
+          <span>Page {{ page }} / {{ total_pages }}</span>
+          <span>&middot;</span>
+          <span>{{ total_rows }} rows</span>
+        </div>
+        <div class="pager-actions">
+          {% if per_page != 'all' and page > 1 %}
+          <a class="button ghost" href="{{ url_for('client_statement', client_id=client.id, page=page-1, per_page=per_page_raw, q=filters.q, currency=filters.currency, category=filters.category, date_from=filters.date_from, date_to=filters.date_to) }}">Newer</a>
+          {% endif %}
+          <form method="get" class="pager-jump">
+            <input type="hidden" name="q" value="{{ filters.q }}">
+            <input type="hidden" name="currency" value="{{ filters.currency }}">
+            <input type="hidden" name="category" value="{{ filters.category }}">
+            <input type="hidden" name="date_from" value="{{ filters.date_from }}">
+            <input type="hidden" name="date_to" value="{{ filters.date_to }}">
+            <span>Lines</span>
+            <select name="per_page" style="width:auto;">
+              {% for value, label in [('10','10'), ('25','25'), ('50','50'), ('all','All')] %}
+              <option value="{{ value }}" {% if per_page_raw == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            <button class="button ghost" type="submit">Apply</button>
+          </form>
+          {% if per_page != 'all' %}
+          <form method="get" class="pager-jump">
+            <input type="hidden" name="per_page" value="{{ per_page_raw }}">
+            <input type="hidden" name="q" value="{{ filters.q }}">
+            <input type="hidden" name="currency" value="{{ filters.currency }}">
+            <input type="hidden" name="category" value="{{ filters.category }}">
+            <input type="hidden" name="date_from" value="{{ filters.date_from }}">
+            <input type="hidden" name="date_to" value="{{ filters.date_to }}">
+            <span>Go to</span>
+            <input type="number" name="page" min="1" max="{{ total_pages }}" value="{{ page }}">
+            <button class="button ghost" type="submit">Go</button>
+          </form>
+          {% endif %}
+          {% if per_page != 'all' and page < total_pages %}
+          <a class="button ghost" href="{{ url_for('client_statement', client_id=client.id, page=page+1, per_page=per_page_raw, q=filters.q, currency=filters.currency, category=filters.category, date_from=filters.date_from, date_to=filters.date_to) }}">Older</a>
+          {% endif %}
+        </div>
+      </section>
+
+      <section class="workbench">
+        <section class="card form-card" id="entry-new">
+          <div class="section-head">
+            <h2>Add Statement Row</h2>
+          </div>
+          <form method="post" action="{{ url_for('add_entry', client_id=client.id) }}" enctype="multipart/form-data" class="add-entry-layout">
+            <input type="hidden" name="return_page" value="{{ page }}">
+            <input type="hidden" name="return_per_page" value="{{ per_page_raw }}">
+            {% if quick_submit_id and quick_submit %}
+            <input type="hidden" name="quick_submit_id" value="{{ quick_submit_id }}">
+            <input type="hidden" name="existing_image_path" value="{{ quick_submit.image_path }}">
+            {% endif %}
+
+            <!-- Left: Image Upload -->
+            <div class="image-upload-panel">
+              <div class="image-drop-zone" id="add-drop-zone">
+                <div class="drop-zone-placeholder" id="add-drop-placeholder">
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+                  <span>Drop image or click to upload</span>
+                  <small>Receipt / invoice / proof (optional)</small>
+                </div>
+                <img id="add-image-preview" class="image-preview" data-lightbox-edit style="display:none; cursor:zoom-in;">
+                <input type="file" name="image" accept="image/*" id="add-image-input" class="file-input-hidden">
+                <button type="button" class="button ghost image-remove-btn" id="add-image-remove" style="display:none;">Remove</button>
+              </div>
+              <button type="button" class="button ghost parse-ai-btn" id="add-parse-ai" style="display:none;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                Parse with AI
+              </button>
+              <div class="parse-status" id="add-parse-status"></div>
+            </div>
+
+            <!-- Right: Form Fields -->
+            <div class="form-fields-panel">
+              <div class="form-grid add-grid">
+                <label>
+                  <span>No.</span>
+                  <input type="number" value="{{ total_rows + 1 }}" disabled>
+                </label>
+                <label>
+                  <span>Date</span>
+                  <input type="date" name="entry_date" required value="{{ default_date }}">
+                </label>
+                <label class="full">
+                  <span>Description</span>
+                  <input type="text" name="description" required>
+                </label>
+                <label>
+                  <span>Currency</span>
+                  <select name="currency">
+                    <option value="USD">USD</option>
+                    <option value="CNY">CNY</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Direction</span>
+                  <select name="direction">
+                    <option value="IN">IN</option>
+                    <option value="OUT">OUT</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Amount</span>
+                  <input type="number" step="0.01" name="amount" required>
+                </label>
+                <label>
+                  <span>Entry Type</span>
+                  <select name="kind">
+                    {% for value, label in type_options %}
+                    <option value="{{ value }}">{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label>
+                  <span>Category</span>
+                  <select name="category_hint">
+                    {% for value, label in category_options %}
+                    <option value="{{ value }}">{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label>
+                  <span>Transfer Group</span>
+                  <input type="text" name="transfer_group">
+                </label>
+                <div class="full" data-profit-link-section style="display:none;">
+                  <label class="checkline">
+                    <input type="checkbox" name="add_to_company_profit" value="1">
+                    <span>Add to company profit</span>
+                  </label>
+                  <label>
+                    <span>Expense Account</span>
+                    <select name="profit_expense_account_id">
+                      <option value="">Choose expense account</option>
+                      {% for account in commission_expense_accounts %}
+                      <option value="{{ account.id }}" {% if default_profit_account_id and account.id == default_profit_account_id %}selected{% endif %}>{{ account.name }}{% if account.currency_label %} ({{ account.currency_label }}){% endif %}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <p class="field-help">Use this to mirror the commission into Expense Accounts as an IN profit entry. Default account: {{ default_profit_expense_account_name }}.</p>
+                </div>
+                <div class="full">
+                  <p class="field-help">Regular is a normal statement row. FX / Transfer is for currency exchange or moving money between wallets/accounts.</p>
+                  <button class="button" type="submit">Add Statement Row</button>
+                </div>
+              </div>
+            </div>
+          </form>
+        </section>
+      </section>
+      <div id="page-bottom"></div>
+    </main>
+    <div id="image-lightbox" class="lightbox-overlay" style="display:none;">
+      <div class="lightbox-content">
+        <div class="lightbox-image-side">
+          <img id="lightbox-img" src="" alt="proof">
+        </div>
+        <div id="lightbox-text-panel" class="lightbox-text-panel" style="display:none;">
+          <div class="lightbox-text-header">
+            <span>Extracted Text</span>
+            <button id="lightbox-copy-btn" class="lightbox-btn" title="Copy all text">Copy</button>
+          </div>
+          <div id="lightbox-text-content" class="lightbox-text-content"></div>
+        </div>
+      </div>
+      <button class="lightbox-close-btn" title="Close">&times;</button>
+    </div>
+    <script>
+      (function() {
+        const lb = document.getElementById('image-lightbox');
+        const lbImg = document.getElementById('lightbox-img');
+        const textPanel = document.getElementById('lightbox-text-panel');
+        const textContent = document.getElementById('lightbox-text-content');
+        const copyBtn = document.getElementById('lightbox-copy-btn');
+        const closeBtn = lb.querySelector('.lightbox-close-btn');
+
+        let currentImgSrc = '';
+        // Cache extracted text keyed by image src
+        window._extractedTextCache = window._extractedTextCache || {};
+
+
+        function openLightbox(src) {
+          currentImgSrc = src;
+          lbImg.src = src;
+          const cached = window._extractedTextCache[src];
+          if (cached) {
+            textContent.innerHTML = renderExtractedText(cached);
+            textContent.dataset.rawText = cached;
+            textPanel.style.display = 'flex';
+
+          } else {
+            textPanel.style.display = 'none';
+            textContent.innerHTML = '';
+
+          }
+          lb.style.display = 'flex';
+        }
+
+        function closeLightbox() {
+          lb.style.display = 'none';
+          currentImgSrc = '';
+        }
+
+        copyBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          copyTextFromElement(copyBtn, textContent);
+        });
+
+        closeBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          closeLightbox();
+        });
+
+        // Capture-phase delegation
+        document.addEventListener('click', function(e) {
+          const thumb = e.target.closest('[data-lightbox-src]');
+          if (thumb) {
+            e.stopImmediatePropagation(); e.preventDefault(); e.stopPropagation();
+            openLightbox(thumb.dataset.lightboxSrc);
+            return false;
+          }
+          const editImg = e.target.closest('[data-lightbox-edit]');
+          if (editImg && editImg.src) {
+            e.stopImmediatePropagation(); e.preventDefault(); e.stopPropagation();
+            openLightbox(editImg.src);
+            return false;
+          }
+          // Close on overlay background click (not on content)
+          if (e.target === lb) {
+            closeLightbox();
+          }
+        }, true);
+
+        document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeLightbox(); });
+      })();
+
+      // --- Quick Submit pre-load ---
+      {% if quick_submit and quick_submit.image_path %}
+      (function() {
+        const preview = document.getElementById('add-image-preview');
+        const placeholder = document.getElementById('add-drop-placeholder');
+        const parseBtn = document.getElementById('add-parse-ai');
+        const removeBtn = document.getElementById('add-image-remove');
+        const form = document.getElementById('entry-new').querySelector('form');
+        if (preview && placeholder) {
+          preview.src = '{{ url_for("serve_upload", filename=quick_submit.image_path) }}';
+          preview.style.display = 'block';
+          placeholder.style.display = 'none';
+          if (parseBtn) parseBtn.style.display = 'inline-flex';
+          if (removeBtn) removeBtn.style.display = 'inline-flex';
+          // Pre-fill description and amount from quick submit
+          {% if quick_submit.description %}
+          const descField = form.querySelector('[name="description"]');
+          if (descField) descField.value = {{ quick_submit.description|tojson }};
+          {% endif %}
+          {% if quick_submit.amount %}
+          const amtField = form.querySelector('[name="amount"]');
+          if (amtField) amtField.value = {{ quick_submit.amount|tojson }};
+          {% endif %}
+          // Scroll to the add-entry form
+          setTimeout(function() {
+            document.getElementById('entry-new').scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 300);
+        }
+      })();
+      {% endif %}
+    </script>
+  {% include '_calculator.html' %}
+  </body>
+</html>

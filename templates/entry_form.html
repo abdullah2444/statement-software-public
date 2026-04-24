@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% if entry %}Edit Entry{% else %}New Entry{% endif %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css') }}">
+  </head>
+  <body>
+    <main class="shell shell-narrow">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Statement Entry</p>
+          <h1>{{ client.name }}</h1>
+        </div>
+        <a class="button secondary" href="{{ url_for('client_statement', client_id=client.id) }}">Back</a>
+      </section>
+      <section class="card form-card">
+        <form method="post" class="form-grid two-up">
+          <label>
+            <span>Source No</span>
+            <input type="number" name="source_no" required value="{{ entry.source_no if entry else '' }}">
+          </label>
+          <label>
+            <span>Date</span>
+            <input type="date" name="entry_date" required value="{{ entry.entry_date if entry else '' }}">
+          </label>
+          <label class="full">
+            <span>Description</span>
+            <input type="text" name="description" required value="{{ entry.description if entry else '' }}">
+          </label>
+          <label>
+            <span>Currency</span>
+            <select name="currency">
+              {% for value in ['USD', 'CNY'] %}
+              <option value="{{ value }}" {% if entry and entry.currency == value %}selected{% endif %}>{{ value }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            <span>Direction</span>
+            <select name="direction">
+              {% for value in ['IN', 'OUT'] %}
+              <option value="{{ value }}" {% if entry and entry.direction == value %}selected{% endif %}>{{ value }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            <span>Amount</span>
+            <input type="number" step="0.01" name="amount" required value="{{ entry.amount if entry else '' }}">
+          </label>
+          <label>
+            <span>Kind</span>
+            <select name="kind">
+              {% for value in ['movement', 'transfer'] %}
+              <option value="{{ value }}" {% if entry and entry.kind == value %}selected{% endif %}>{{ value }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            <span>Category</span>
+            <select name="category_hint">
+              {% for value, label in category_options %}
+              <option value="{{ value }}" {% if entry and entry.category_hint == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            <span>Transfer Group</span>
+            <input type="text" name="transfer_group" value="{{ entry.transfer_group if entry else '' }}">
+          </label>
+          <div class="full">
+            <button class="button" type="submit">{% if entry %}Save Entry{% else %}Add Entry{% endif %}</button>
+          </div>
+        </form>
+      </section>
+    </main>
+  </body>
+</html>

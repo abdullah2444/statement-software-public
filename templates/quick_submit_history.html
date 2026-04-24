@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <title>Quick Submit History</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css') }}">
+    <style>
+      .qs-list { display: flex; flex-direction: column; gap: 12px; margin-top: 20px; }
+      .qs-card {
+        display: flex;
+        gap: 16px;
+        padding: 14px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        align-items: flex-start;
+      }
+      .qs-card.is-processed { opacity: .65; }
+      .qs-thumb {
+        width: 80px;
+        height: 80px;
+        object-fit: cover;
+        border-radius: 10px;
+        flex-shrink: 0;
+        cursor: pointer;
+        border: 1px solid var(--line);
+      }
+      .qs-info { flex: 1; min-width: 0; }
+      .qs-info-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+      .qs-client { font-weight: 700; font-size: 15px; color: var(--ink); }
+      .status-pill {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        padding: 2px 8px;
+        border-radius: 8px;
+      }
+      .status-pill.pending { background: #fef3cd; color: #856404; }
+      .status-pill.processed { background: var(--green-bg); color: var(--green); }
+      .qs-desc { font-size: 13px; color: var(--muted); margin: 2px 0; }
+      .qs-meta { font-size: 12px; color: var(--muted); }
+      .qs-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+      .qs-actions form { display: inline; }
+      .qs-actions .button { padding: 6px 14px; font-size: 13px; }
+      .flash-msg { padding: 10px 14px; border-radius: 10px; margin-bottom: 12px; font-size: 14px; }
+      .flash-success { background: var(--green-bg); color: var(--green); }
+      .flash-error { background: var(--red-bg); color: var(--red); }
+      .qs-empty { text-align: center; padding: 48px 16px; color: var(--muted); font-size: 15px; }
+
+      /* Lightbox */
+      .qs-lightbox { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 1000; align-items: center; justify-content: center; }
+      .qs-lightbox.open { display: flex; }
+      .qs-lightbox img { max-width: 90vw; max-height: 90vh; object-fit: contain; border-radius: 8px; }
+      .qs-lightbox-close { position: absolute; top: 16px; right: 20px; background: none; border: none; color: #fff; font-size: 32px; cursor: pointer; }
+
+      @media (max-width: 600px) {
+        .qs-card { flex-direction: column; align-items: stretch; }
+        .qs-thumb { width: 100%; height: 180px; }
+      }
+    </style>
+  </head>
+  <body>
+    {% if g.user %}
+    <div style="display:flex;align-items:center;gap:16px;justify-content:flex-end;padding:8px 24px;font-size:13px;color:#6b7280;">
+      <span>{{ g.user.username }}</span>
+      <a href="{{ url_for('index') }}" style="color:#103a46;text-decoration:none;font-weight:600;">Home</a>
+      <form method="POST" action="{{ url_for('logout') }}" style="display:inline;margin:0;">
+        {{ csrf_input() }}
+        <button type="submit" style="background:none;border:none;color:#103a46;font:inherit;font-weight:600;cursor:pointer;padding:0;">Logout</button>
+      </form>
+    </div>
+    {% endif %}
+
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">{{ brand_name }} Control Room</p>
+          <h1>Quick Submit History</h1>
+        </div>
+        <div class="hero-actions">
+          <a class="button" href="{{ url_for('quick_submit_page') }}">New Quick Submit</a>
+          <a class="button ghost" href="{{ url_for('index') }}">Back to Home</a>
+        </div>
+      </section>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      {% for cat, msg in messages %}
+      <div class="flash-msg flash-{{ cat }}">{{ msg }}</div>
+      {% endfor %}
+      {% endif %}
+      {% endwith %}
+
+      {% if submissions %}
+      <div class="qs-list">
+        {% for s in submissions %}
+        <div class="qs-card {% if s.status == 'processed' %}is-processed{% endif %}">
+          <img class="qs-thumb" src="{{ url_for('serve_upload', filename=s.image_path) }}" alt="receipt" data-full="{{ url_for('serve_upload', filename=s.image_path) }}">
+          <div class="qs-info">
+            <div class="qs-info-top">
+              <span class="qs-client">{{ s.client_name or 'Unknown' }}</span>
+              <span class="status-pill {{ s.status }}">{{ s.status }}</span>
+            </div>
+            {% if s.description or s.amount %}
+            <div class="qs-desc">
+              {% if s.description %}{{ s.description }}{% endif %}
+              {% if s.amount %} {% if s.description %}&middot;{% endif %} {{ "{:,.2f}".format(s.amount) }}{% endif %}
+            </div>
+            {% endif %}
+            <div class="qs-meta">
+              {{ s.created_at }} &middot; by {{ s.created_by or 'unknown' }}
+              {% if s.processed_at %} &middot; processed {{ s.processed_at }}{% endif %}
+            </div>
+            <div class="qs-actions">
+              {% if s.status == 'pending' %}
+              <form method="POST" action="{{ url_for('quick_submit_process', submit_id=s.id) }}">
+                {{ csrf_input() }}
+                <button type="submit" class="button">Process</button>
+              </form>
+              {% endif %}
+              <form method="POST" action="{{ url_for('quick_submit_delete', submit_id=s.id) }}" onsubmit="return confirm('Delete this submission?')">
+                {{ csrf_input() }}
+                <button type="submit" class="button ghost danger">Delete</button>
+              </form>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="qs-empty">No submissions yet. Tap "New Quick Submit" to upload an image.</div>
+      {% endif %}
+    </main>
+
+    <!-- Lightbox for full image view -->
+    <div class="qs-lightbox" id="lightbox">
+      <button class="qs-lightbox-close" id="lightbox-close">&times;</button>
+      <img id="lightbox-img">
+    </div>
+
+    <script>
+      const lightbox = document.getElementById('lightbox');
+      const lightboxImg = document.getElementById('lightbox-img');
+
+      document.querySelectorAll('.qs-thumb').forEach(thumb => {
+        thumb.addEventListener('click', () => {
+          lightboxImg.src = thumb.dataset.full;
+          lightbox.classList.add('open');
+        });
+      });
+
+      document.getElementById('lightbox-close').addEventListener('click', () => lightbox.classList.remove('open'));
+      lightbox.addEventListener('click', e => { if (e.target === lightbox) lightbox.classList.remove('open'); });
+    </script>
+  </body>
+</html>

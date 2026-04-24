@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <title>Company Expenses</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css') }}">
+    <style>
+      .user-bar {
+        display: flex; align-items: center; gap: 16px;
+        justify-content: flex-end; padding: 8px 24px;
+        font-size: 13px; color: #6b7280;
+      }
+      .user-bar a,
+      .user-bar .nav-link-button { color: #1d4ed8; text-decoration: none; font-weight: 500; }
+      .user-bar a:hover,
+      .user-bar .nav-link-button:hover { text-decoration: underline; }
+
+      .shell { position: relative; }
+      .shell::before {
+        content: ""; position: fixed; inset: 0;
+        background:
+          radial-gradient(circle at top left, rgba(29,78,216,0.08), transparent 24%),
+          linear-gradient(180deg, #f8fafc 0%, #f3f6fb 100%);
+        z-index: -1;
+      }
+
+      .page-header {
+        display: flex; align-items: center; justify-content: space-between;
+        margin-bottom: 24px; padding: 24px 32px;
+        background: linear-gradient(135deg, #ffffff 0%, #f7faff 100%);
+        border: 1px solid #e2e8f0;
+        border-radius: 16px; color: #0f172a;
+        box-shadow: 0 12px 28px rgba(15,23,42,0.05);
+      }
+      .page-header h1 { font-size: 1.6rem; font-weight: 700; }
+      .page-header a { color: #1d4ed8; text-decoration: none; font-size: 0.9rem; font-weight: 600; }
+      .page-header a:hover { color: #1e40af; }
+
+      .create-form {
+        background: rgba(255,255,255,0.98); border-radius: 14px; padding: 24px 28px;
+        margin-bottom: 24px; border: 1px solid #e5e7eb;
+        box-shadow: 0 10px 24px rgba(15,23,42,0.06);
+      }
+      .create-form h3 { margin-bottom: 16px; font-size: 1rem; color: #1a1a1a; }
+      .create-form .form-row {
+        display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;
+      }
+      .create-form input[type="text"] {
+        padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
+        font-size: 0.9rem; min-width: 240px;
+      }
+      .create-form .currency-checks {
+        display: flex; gap: 12px; align-items: center;
+      }
+      .create-form .currency-checks label {
+        display: flex; gap: 4px; align-items: center;
+        font-size: 0.85rem; color: #374151; cursor: pointer;
+      }
+      .create-form button {
+        padding: 10px 20px; border: none; border-radius: 10px;
+        background: #1d4ed8; color: white; font-weight: 600;
+        font-size: 0.88rem; cursor: pointer;
+      }
+      .create-form button:hover { background: #1e40af; }
+
+      .accounts-grid {
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: 16px;
+      }
+      .account-card {
+        background: rgba(255,255,255,0.98); border-radius: 14px; padding: 20px 24px;
+        border: 1px solid #e5e7eb; box-shadow: 0 10px 24px rgba(15,23,42,0.06);
+        text-decoration: none; color: inherit; transition: box-shadow 0.15s, transform 0.15s;
+      }
+      .account-card:hover { box-shadow: 0 16px 34px rgba(15,23,42,0.08); transform: translateY(-1px); }
+      .account-card h3 { font-size: 1.1rem; color: #1d4ed8; margin-bottom: 8px; }
+      .account-card .meta { font-size: 0.8rem; color: #6b7280; margin-bottom: 12px; }
+      .account-card .balances { display: flex; gap: 16px; flex-wrap: wrap; }
+      .account-card .bal-item {
+        display: flex; flex-direction: column; gap: 2px;
+      }
+      .bal-item .cur-label { font-size: 0.7rem; text-transform: uppercase; color: #9ca3af; letter-spacing: 0.05em; }
+      .bal-item .cur-value { font-size: 1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+      .bal-item .cur-value.negative { color: #dc2626; }
+      .bal-item .cur-value.positive { color: #059669; }
+
+      .empty-state {
+        text-align: center; padding: 48px 24px; color: #9ca3af;
+        font-size: 0.95rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      {% include '_nav.html' %}
+
+      <div class="content-wrap" style="max-width: 1100px; margin: 0 auto; padding: 0 20px 40px;">
+        <div class="page-header">
+          <div>
+            <h1>Company Expenses</h1>
+            <p style="opacity:0.7; font-size:0.88rem; margin-top:4px;">Track internal company costs: rent, salaries, insurance, and more.</p>
+          </div>
+          <a href="{{ url_for('index') }}">&larr; Back to Dashboard</a>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% for category, message in messages %}
+            <div style="padding:12px 16px; margin-bottom:16px; border-radius:8px; font-size:0.9rem;
+              {% if category == 'error' %}background:#fef2f2; color:#dc2626; border:1px solid #fecaca;{% else %}background:#f0fdf4; color:#059669; border:1px solid #bbf7d0;{% endif %}">
+              {{ message }}
+            </div>
+          {% endfor %}
+        {% endwith %}
+
+        <div class="create-form">
+          <h3>Create New Expense Account</h3>
+          <form method="post" action="{{ url_for('expense_account_new') }}">
+            <div class="form-row">
+              <input type="text" name="name" placeholder="Account name (e.g. Office, Cairo Branch)" required>
+              <div class="currency-checks">
+                {% for cur in all_currencies %}
+                  <label>
+                    <input type="checkbox" name="currencies" value="{{ cur }}" {% if cur == 'CNY' %}checked{% endif %}>
+                    {{ cur }}
+                  </label>
+                {% endfor %}
+              </div>
+              <button type="submit">Create Account</button>
+            </div>
+          </form>
+        </div>
+
+        {% if accounts %}
+          <div class="accounts-grid">
+            {% for acc in accounts %}
+              <a class="account-card" href="{{ url_for('expense_account_view', account_id=acc.id) }}">
+                <h3>{{ acc.name }}</h3>
+                <div class="meta">{{ acc.entry_count }} entr{{ 'ies' if acc.entry_count != 1 else 'y' }}</div>
+                <div class="balances">
+                  {% for cur in acc.currencies %}
+                    {% set bal = acc.totals.get(cur, {}) %}
+                    <div class="bal-item">
+                      <span class="cur-label">{{ cur }}</span>
+                      <span class="cur-value {% if bal.get('balance', 0) < -0.005 %}negative{% elif bal.get('balance', 0) > 0.005 %}positive{% endif %}">
+                        {{ "{:,.2f}".format(bal.get('balance', 0)) }}
+                      </span>
+                    </div>
+                  {% endfor %}
+                </div>
+              </a>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="empty-state">
+            <p>No expense accounts yet. Create one above to get started.</p>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </body>
+</html>

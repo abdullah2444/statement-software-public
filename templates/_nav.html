@@ -1,0 +1,202 @@
+<style>
+  .user-bar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 16px;
+    padding: 8px 24px;
+    font-size: 13px;
+    color: #6b7280;
+  }
+  .user-bar a,
+  .user-bar .nav-link-button {
+    color: #103a46;
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .user-bar a:hover,
+  .user-bar .nav-link-button:hover {
+    text-decoration: underline;
+  }
+  .nav-link-form {
+    display: inline-flex;
+    align-items: center;
+    margin: 0;
+  }
+  .nav-link-button {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+    text-decoration: none;
+  }
+  .mobile-drawer .nav-link-form {
+    display: block;
+  }
+  .mobile-drawer .mobile-drawer-logout {
+    margin-top: auto;
+  }
+  .mobile-drawer .nav-link-button {
+    display: block;
+    padding: 14px 18px;
+    text-align: left;
+    width: 100%;
+  }
+</style>
+<script>
+window.statementSoftwareCsrfToken = {{ csrf_token()|tojson }};
+(function() {
+  function appendCsrfToken(form) {
+    if (!form || !window.statementSoftwareCsrfToken) return;
+    var method = (form.getAttribute('method') || 'GET').toUpperCase();
+    if (method === 'GET') return;
+    var existing = form.querySelector('input[name="csrf_token"]');
+    if (existing) {
+      existing.value = window.statementSoftwareCsrfToken;
+      return;
+    }
+    var input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'csrf_token';
+    input.value = window.statementSoftwareCsrfToken;
+    form.appendChild(input);
+  }
+
+  function ensureCsrfFields(root) {
+    (root || document).querySelectorAll('form').forEach(appendCsrfToken);
+  }
+
+  function isUnsafeMethod(method) {
+    method = (method || 'GET').toUpperCase();
+    return !['GET', 'HEAD', 'OPTIONS', 'TRACE'].includes(method);
+  }
+
+  function isSameOrigin(url) {
+    try {
+      return new URL(url, window.location.href).origin === window.location.origin;
+    } catch (err) {
+      return true;
+    }
+  }
+
+  var originalFetch = window.fetch;
+  window.fetch = function(resource, init) {
+    var options = init ? Object.assign({}, init) : {};
+    var method = options.method || 'GET';
+    var target = typeof resource === 'string' ? resource : ((resource && resource.url) || window.location.href);
+    if (window.statementSoftwareCsrfToken && isUnsafeMethod(method) && isSameOrigin(target)) {
+      var headers = new Headers(options.headers || (resource && resource.headers) || {});
+      if (!headers.has('X-CSRF-Token')) headers.set('X-CSRF-Token', window.statementSoftwareCsrfToken);
+      if (!headers.has('X-Requested-With')) headers.set('X-Requested-With', 'XMLHttpRequest');
+      options.headers = headers;
+    }
+    return originalFetch(resource, options);
+  };
+
+  var originalOpen = XMLHttpRequest.prototype.open;
+  var originalSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(method, url) {
+    this._statementSoftwareMethod = method;
+    this._statementSoftwareUrl = url;
+    return originalOpen.apply(this, arguments);
+  };
+  XMLHttpRequest.prototype.send = function() {
+    if (window.statementSoftwareCsrfToken && isUnsafeMethod(this._statementSoftwareMethod) && isSameOrigin(this._statementSoftwareUrl || window.location.href)) {
+      this.setRequestHeader('X-CSRF-Token', window.statementSoftwareCsrfToken);
+      this.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+    }
+    return originalSend.apply(this, arguments);
+  };
+
+  function bootCsrf() {
+    ensureCsrfFields(document);
+    if (!document.body || window._statementSoftwareCsrfObserver) return;
+    var observer = new MutationObserver(function(mutations) {
+      mutations.forEach(function(mutation) {
+        mutation.addedNodes.forEach(function(node) {
+          if (node.nodeType === 1) ensureCsrfFields(node);
+        });
+      });
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    window._statementSoftwareCsrfObserver = observer;
+  }
+
+  window.appendCsrfToken = appendCsrfToken;
+  window.ensureCsrfFields = ensureCsrfFields;
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootCsrf, { once: true });
+  } else {
+    bootCsrf();
+  }
+})();
+</script>
+<!-- Desktop navigation -->
+<div class="user-bar desktop-only">
+  <span>{{ g.user.username if g.user else session.get('username', '') }}</span>
+  <a href="{{ url_for('index') }}">Dashboard</a>
+  {% set is_admin = (g.user.role == 'admin') if g.user else (session.get('role') == 'admin') %}
+  {% if is_admin %}
+  <a href="{{ url_for('admin_users') }}">Users</a>
+  <a href="{{ url_for('admin_tokens') }}">API Tokens</a>
+  <a href="{{ url_for('settings_page') }}">Settings</a>
+  {% endif %}
+  <a href="{{ url_for('expense_list') }}">Expenses</a>
+  <a href="{{ url_for('change_password') }}">Password</a>
+  <form method="post" action="{{ url_for('logout') }}" class="nav-link-form">
+    <button type="submit" class="nav-link-button">Logout</button>
+  </form>
+</div>
+
+<!-- Mobile navigation -->
+<div class="mobile-nav mobile-only">
+  <div class="mobile-nav-bar">
+    <button class="hamburger" id="mobile-menu-toggle" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+    <span class="mobile-title">{{ brand_name }}</span>
+    <span class="mobile-user">{{ g.user.username if g.user else session.get('username', '') }}</span>
+  </div>
+  <div class="mobile-drawer" id="mobile-drawer">
+    <div class="mobile-drawer-overlay" id="mobile-drawer-overlay"></div>
+    <nav class="mobile-drawer-panel">
+      <div class="mobile-drawer-header">
+        <span>{{ g.user.username if g.user else session.get('username', '') }}</span>
+        <button id="mobile-drawer-close" aria-label="Close menu">&times;</button>
+      </div>
+      <a href="{{ url_for('index') }}">Dashboard</a>
+      <a href="{{ url_for('expense_list') }}">Expenses</a>
+      {% set is_admin = (g.user.role == 'admin') if g.user else (session.get('role') == 'admin') %}
+      {% if is_admin %}
+      <a href="{{ url_for('admin_users') }}">Users</a>
+      <a href="{{ url_for('admin_tokens') }}">API Tokens</a>
+      <a href="{{ url_for('settings_page') }}">Settings</a>
+      {% endif %}
+      <a href="{{ url_for('change_password') }}">Change Password</a>
+      <form method="post" action="{{ url_for('logout') }}" class="nav-link-form mobile-drawer-logout">
+        <button type="submit" class="nav-link-button">Logout</button>
+      </form>
+    </nav>
+  </div>
+</div>
+
+<script>
+(function() {
+  var toggle = document.getElementById('mobile-menu-toggle');
+  var drawer = document.getElementById('mobile-drawer');
+  var overlay = document.getElementById('mobile-drawer-overlay');
+  var closeBtn = document.getElementById('mobile-drawer-close');
+  if (!toggle || !drawer) return;
+  function open() { drawer.classList.add('is-open'); document.body.style.overflow = 'hidden'; }
+  function close() { drawer.classList.remove('is-open'); document.body.style.overflow = ''; }
+  toggle.addEventListener('click', open);
+  if (overlay) overlay.addEventListener('click', close);
+  if (closeBtn) closeBtn.addEventListener('click', close);
+  drawer.querySelectorAll('a, button[type="submit"]').forEach(function(item) {
+    item.addEventListener('click', close);
+  });
+})();
+</script>

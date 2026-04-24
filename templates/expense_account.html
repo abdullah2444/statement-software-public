@@ -1,0 +1,1057 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <title>{{ account.name }} - Expenses</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css') }}">
+    <style>
+      @keyframes row-saved { 0% { background: #d4edda; } 100% { background: transparent; } }
+      .row-just-saved { animation: row-saved 2s ease-out; }
+
+      .user-bar {
+        display: flex; align-items: center; gap: 16px;
+        justify-content: flex-end; padding: 8px 24px;
+        font-size: 13px; color: #6b7280;
+      }
+      .user-bar a,
+      .user-bar .nav-link-button { color: #1d4ed8; text-decoration: none; font-weight: 500; }
+      .user-bar a:hover,
+      .user-bar .nav-link-button:hover { text-decoration: underline; }
+
+      .shell { position: relative; }
+      .shell::before {
+        content: ""; position: fixed; inset: 0;
+        background:
+          radial-gradient(circle at top left, rgba(29,78,216,0.08), transparent 24%),
+          linear-gradient(180deg, #f8fafc 0%, #f3f6fb 100%);
+        z-index: -1;
+      }
+
+      .page-header {
+        display: flex; align-items: center; justify-content: space-between;
+        margin-bottom: 24px; padding: 24px 32px;
+        background: linear-gradient(135deg, #ffffff 0%, #f7faff 100%);
+        border: 1px solid #e2e8f0;
+        border-radius: 16px; color: #0f172a;
+        box-shadow: 0 12px 28px rgba(15,23,42,0.05);
+      }
+      .page-header h1 { font-size: 1.4rem; font-weight: 700; }
+      .page-header .nav-links { display: flex; gap: 16px; }
+      .page-header a { color: #1d4ed8; text-decoration: none; font-size: 0.85rem; font-weight: 600; }
+      .page-header a:hover { color: #1e40af; }
+
+      .card {
+        background: rgba(255,255,255,0.98); border-radius: 14px; padding: 20px 24px;
+        margin-bottom: 20px; border: 1px solid #e5e7eb;
+        box-shadow: 0 10px 24px rgba(15,23,42,0.06);
+      }
+      .card h3 { font-size: 1rem; color: #1a1a1a; margin-bottom: 12px; }
+
+      .summary-bar {
+        display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 20px;
+      }
+      .summary-item {
+        background: rgba(255,255,255,0.98); border-radius: 12px; padding: 16px 20px;
+        border: 1px solid #e5e7eb; box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        min-width: 160px;
+      }
+      .summary-item .label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: #9ca3af; margin-bottom: 4px; }
+      .summary-item .values { display: flex; gap: 12px; }
+      .summary-item .val { font-size: 0.85rem; }
+      .summary-item .val strong { font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+      .summary-item .val.negative strong { color: #dc2626; }
+      .summary-item .val.positive strong { color: #059669; }
+
+      /* Settings & Actions row */
+      .actions-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 20px; }
+      .actions-row form { display: inline-flex; gap: 8px; align-items: center; }
+      .actions-row input[type="text"] { padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.85rem; }
+      .actions-row button, .btn {
+        padding: 8px 14px; border: 1px solid #d1d5db; border-radius: 8px;
+        background: white; font-size: 0.82rem; cursor: pointer; color: #374151;
+        text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
+      }
+      .actions-row button:hover, .btn:hover { background: #f3f4f6; }
+      .btn-danger { color: #dc2626; border-color: #fca5a5; }
+      .btn-danger:hover { background: #fef2f2; }
+      .btn-primary { background: #1d4ed8; color: white; border-color: #1d4ed8; }
+      .btn-primary:hover { background: #1e40af; }
+
+      /* Filter */
+      .filter-bar {
+        display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;
+        margin-bottom: 16px;
+      }
+      .filter-bar label { font-size: 0.75rem; color: #6b7280; display: flex; flex-direction: column; gap: 3px; }
+      .filter-bar input, .filter-bar select {
+        padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.85rem;
+      }
+      .filter-bar input[type="text"] { min-width: 180px; }
+
+      /* Table */
+      .table-wrap { overflow-x: auto; margin-bottom: 20px; }
+      table.expense-table {
+        width: 100%; border-collapse: collapse; font-size: 0.88rem;
+      }
+      table.expense-table th {
+        text-align: left; padding: 10px 12px; font-size: 0.73rem;
+        text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280;
+        background: #f8f9fb; border-bottom: 2px solid #e5e7eb;
+        white-space: nowrap;
+      }
+      table.expense-table th.amt, table.expense-table th.bal { text-align: right; }
+      table.expense-table td {
+        padding: 8px 12px; border-bottom: 1px solid #f0f2f5;
+        vertical-align: middle;
+      }
+      table.expense-table td.amt { text-align: right; font-variant-numeric: tabular-nums; }
+      table.expense-table td.bal { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+      table.expense-table td.no { text-align: center; color: #9ca3af; font-size: 0.82rem; }
+      table.expense-table tr:hover td { background: #f8fafc; }
+
+      .money-in { color: #059669; }
+      .money-out { color: #374151; }
+      .negative { color: #dc2626; }
+      .positive { color: #059669; }
+      .zero { color: #9ca3af; }
+
+      .cat-badge {
+        display: inline-block; padding: 2px 8px; border-radius: 99px;
+        font-size: 0.72rem; font-weight: 500; background: #f3f4f6; color: #6b7280;
+      }
+      .recurring-badge {
+        display: inline-block; padding: 1px 6px; border-radius: 4px;
+        font-size: 0.65rem; background: #ede9fe; color: #7c3aed;
+        margin-left: 4px;
+      }
+      .linked-statement-badge {
+        display: inline-block; padding: 1px 6px; border-radius: 4px;
+        font-size: 0.65rem; background: #dbeafe; color: #1d4ed8;
+        margin-left: 4px;
+      }
+      .linked-entry-note {
+        display: block; margin-top: 4px; font-size: 0.74rem; color: #64748b;
+      }
+      .linked-entry-note a {
+        color: #1d4ed8; text-decoration: none;
+      }
+      .linked-entry-note a:hover {
+        text-decoration: underline;
+      }
+      .readonly-entry {
+        font-size: 0.75rem; color: #64748b;
+      }
+
+      /* Display row with click-to-edit */
+      .display-row { cursor: pointer; }
+      .display-row.is-editing { background: #eef2ff !important; }
+      .display-row.is-editing td { background: #eef2ff !important; }
+
+      /* Inline editor */
+      .edit-row { display: none; }
+      .edit-row.is-open { display: table-row; }
+      .edit-row td { background: #f0f4ff; padding: 12px; }
+      .edit-form-grid {
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: 10px; margin-bottom: 10px;
+      }
+      .edit-form-grid label { font-size: 0.75rem; color: #6b7280; display: flex; flex-direction: column; gap: 3px; }
+      .edit-form-grid input, .edit-form-grid select {
+        padding: 6px 8px; border: 1px solid #c7d2fe; border-radius: 6px; font-size: 0.85rem;
+      }
+      .edit-actions { display: flex; gap: 8px; }
+
+      /* Add entry form */
+      .add-entry-form {
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: 10px; align-items: flex-end;
+      }
+      .add-entry-form label { font-size: 0.75rem; color: #6b7280; display: flex; flex-direction: column; gap: 3px; }
+      .add-entry-form input, .add-entry-form select {
+        padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.85rem;
+      }
+
+      /* Currency settings */
+      .currency-toggles { display: flex; gap: 12px; align-items: center; }
+      .currency-toggles label { display: flex; gap: 4px; align-items: center; font-size: 0.85rem; cursor: pointer; }
+
+      /* Templates section */
+      .templates-section { margin-top: 8px; }
+      .template-list { margin-bottom: 16px; }
+      .template-item {
+        display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+        border: 1px solid #e5e7eb; border-radius: 10px; margin-bottom: 8px;
+        background: white; flex-wrap: wrap;
+      }
+      .template-item.inactive { opacity: 0.5; }
+      .template-item .tpl-info { flex: 1; min-width: 200px; }
+      .template-item .tpl-info strong { font-size: 0.9rem; }
+      .template-item .tpl-meta { font-size: 0.78rem; color: #6b7280; }
+      .template-item .tpl-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+      .template-item .tpl-actions form { display: inline; }
+
+      .collapsible-header {
+        cursor: pointer; display: flex; align-items: center; gap: 8px;
+        user-select: none;
+      }
+      .collapsible-header .toggle-icon { transition: transform 0.2s; font-size: 0.8rem; }
+      .collapsible-header.is-open .toggle-icon { transform: rotate(90deg); }
+      .collapsible-body { display: none; }
+      .collapsible-body.is-open { display: block; }
+
+      /* Import section */
+      .import-section input[type="file"] { font-size: 0.85rem; }
+
+      /* Export buttons */
+      .export-btns { display: flex; gap: 8px; }
+
+      @media (max-width: 768px) {
+        .page-header { flex-direction: column; gap: 12px; padding: 16px; }
+        .summary-bar { flex-direction: column; }
+        .actions-row { flex-direction: column; align-items: stretch; gap: 10px; }
+        .actions-row form { width: 100%; flex-wrap: wrap; }
+        .actions-row input[type="text"] { flex: 1; min-width: 0; }
+        .filter-bar { flex-direction: column; }
+        .edit-form-grid { grid-template-columns: 1fr; }
+        .add-entry-form { grid-template-columns: 1fr; }
+        .edit-actions { display: flex; gap: 8px; width: 100%; }
+        .edit-actions button { flex: 1; }
+        .export-btns { flex-wrap: wrap; }
+        .export-btns a { flex: 1; text-align: center; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      {% include '_nav.html' %}
+
+      <div class="content-wrap" style="max-width: 1200px; margin: 0 auto; padding: 0 20px 40px;">
+        <div class="page-header">
+          <div>
+            <h1>{{ account.name }}</h1>
+            <p style="opacity:0.7; font-size:0.82rem; margin-top:4px;">{{ rows|length }} expense entr{{ 'ies' if rows|length != 1 else 'y' }}</p>
+          </div>
+          <div class="nav-links">
+            <a href="{{ url_for('expense_list') }}">&larr; All Accounts</a>
+            <a href="{{ url_for('index') }}">Dashboard</a>
+          </div>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% for category, message in messages %}
+            <div style="padding:12px 16px; margin-bottom:16px; border-radius:8px; font-size:0.9rem;
+              {% if category == 'error' %}background:#fef2f2; color:#dc2626; border:1px solid #fecaca;{% else %}background:#f0fdf4; color:#059669; border:1px solid #bbf7d0;{% endif %}">
+              {{ message }}
+            </div>
+          {% endfor %}
+        {% endwith %}
+
+        <!-- Summary balances -->
+        <div class="summary-bar">
+          {% for cur in currencies %}
+            {% set t = totals.get(cur, {}) %}
+            <div class="summary-item">
+              <div class="label">{{ cur }} Balance</div>
+              <div class="values">
+                <div class="val {% if t.get('balance', 0) < -0.005 %}negative{% elif t.get('balance', 0) > 0.005 %}positive{% endif %}">
+                  <strong>{{ currency_symbol(cur) }}{{ "{:,.2f}".format(t.get('balance', 0)) }}</strong>
+                </div>
+              </div>
+              <div style="font-size:0.75rem; color:#9ca3af; margin-top:4px;">
+                In: {{ currency_symbol(cur) }}{{ "{:,.2f}".format(t.get('in', 0)) }} /
+                Out: {{ currency_symbol(cur) }}{{ "{:,.2f}".format(t.get('out', 0)) }}
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+
+        <!-- Actions row -->
+        <div class="actions-row">
+          <!-- Rename -->
+          <form method="post" action="{{ url_for('expense_account_rename', account_id=account.id) }}">
+            <input type="text" name="name" value="{{ account.name }}" required class="rename-input">
+            <button type="submit">Rename</button>
+          </form>
+
+          <!-- Currency settings -->
+          <form method="post" action="{{ url_for('expense_account_settings', account_id=account.id) }}" class="currency-form">
+            <span style="font-size:0.82rem; color:#6b7280;">Currencies:</span>
+            <div class="currency-toggles">
+              {% for cur in all_currencies %}
+                <label>
+                  <input type="checkbox" name="currencies" value="{{ cur }}"
+                    {% if cur in currencies %}checked{% endif %}>
+                  {{ cur }}
+                </label>
+              {% endfor %}
+            </div>
+            <button type="submit">Update</button>
+          </form>
+
+          <!-- Undo -->
+          {% if latest_event %}
+            <form method="post" action="{{ url_for('expense_undo', account_id=account.id) }}">
+              <button type="submit" onclick="return confirm('Undo last action?')">Undo</button>
+            </form>
+          {% endif %}
+
+          <!-- Export buttons -->
+          <div class="export-btns">
+            <a href="{{ url_for('expense_export_csv', account_id=account.id) }}" class="btn">CSV</a>
+            <a href="{{ url_for('expense_export_xlsx', account_id=account.id) }}" class="btn">XLSX</a>
+            <a href="{{ url_for('expense_export_pdf', account_id=account.id) }}" class="btn">PDF</a>
+          </div>
+
+          <!-- Delete -->
+          {% if session.get('role') == 'admin' %}
+            <form method="post" action="{{ url_for('expense_account_delete', account_id=account.id) }}"
+              onsubmit="return confirm('Delete this expense account and ALL its entries? This cannot be undone.')">
+              <button type="submit" class="btn-danger" style="padding:6px 14px; border:1px solid #fca5a5; border-radius:6px; background:white; cursor:pointer;">Delete Account</button>
+            </form>
+          {% endif %}
+        </div>
+
+        <!-- Filters -->
+        <div class="card">
+          <form method="get" action="{{ url_for('expense_account_view', account_id=account.id) }}">
+            <div class="filter-bar">
+              <label>
+                Search
+                <input type="text" name="q" value="{{ filters.q }}" placeholder="Description...">
+              </label>
+              <label>
+                Category
+                <select name="category">
+                  <option value="">All</option>
+                  {% for code, label in expense_categories %}
+                    <option value="{{ code }}" {% if filters.category == code %}selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>
+                From
+                <input type="date" name="date_from" value="{{ filters.date_from }}">
+              </label>
+              <label>
+                To
+                <input type="date" name="date_to" value="{{ filters.date_to }}">
+              </label>
+              <div class="filter-btns">
+                <button type="submit" class="btn-primary" style="padding:6px 14px; border:none; border-radius:6px; background:#1d4ed8; color:white; cursor:pointer;">Filter</button>
+                <a href="{{ url_for('expense_account_view', account_id=account.id) }}" class="btn">Clear</a>
+              </div>
+            </div>
+          </form>
+        </div>
+
+        <!-- Entry table -->
+        <div class="card" id="table-top">
+          <div class="table-wrap">
+            <table class="expense-table">
+              <thead>
+                <tr>
+                  <th class="col-seq">#</th>
+                  <th>Date</th>
+                  <th>Description</th>
+                  <th>Category</th>
+                  {% for cur in currencies %}
+                    <th class="amt">{{ currency_symbol(cur) }} In</th>
+                    <th class="amt">{{ currency_symbol(cur) }} Out</th>
+                    <th class="bal">{{ currency_symbol(cur) }} Bal</th>
+                  {% endfor %}
+                  <th class="col-actions"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in rows %}
+                <tr class="display-row" id="entry-{{ row.id }}"
+                  data-entry-id="{{ row.id }}"
+                  data-entry-date="{{ row.entry_date }}"
+                  data-description="{{ row.description }}"
+                  data-currency="{{ row.currency }}"
+                  data-direction="{{ row.direction }}"
+                  data-amount="{{ row.amount }}"
+                  data-category="{{ row.category }}"
+                  data-seq-no="{{ row.seq_no }}"
+                  data-linked-statement-entry-id="{{ row.linked_statement_entry_id or '' }}"
+                  data-linked-statement-client-id="{{ row.linked_statement_client_id or '' }}"
+                  data-linked-statement-client-name="{{ row.linked_statement_client_name or '' }}"
+                  data-linked-statement-source-no="{{ row.linked_statement_source_no or '' }}"
+                  data-edit-open="{{ row.id }}">
+                  <td class="no">{{ row.seq_no }}</td>
+                  <td>{{ row.entry_date }}</td>
+                  <td>
+                    {{ row.description }}
+                    {% if row.is_recurring %}<span class="recurring-badge">Recurring</span>{% endif %}
+                    {% if row.linked_statement_entry_id %}
+                    <span class="linked-statement-badge">Linked from statement</span>
+                    <small class="linked-entry-note">
+                      {% if row.linked_statement_client_id and row.linked_statement_source_no %}
+                      <a href="{{ url_for('client_statement', client_id=row.linked_statement_client_id) }}#entry-{{ row.linked_statement_entry_id }}">{{ row.linked_statement_client_name or 'Client' }} row #{{ row.linked_statement_source_no }}</a>
+                      {% else %}
+                      Edit from the client statement page
+                      {% endif %}
+                    </small>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% set ns = namespace(cat_label=row.category) %}
+                    {% for code, label in expense_categories %}
+                      {% if code == row.category %}{% set ns.cat_label = label %}{% endif %}
+                    {% endfor %}
+                    <span class="cat-badge">{{ ns.cat_label }}</span>
+                  </td>
+                  {% for cur in currencies %}
+                    <td class="amt money-in">{% if row.currency == cur and row.direction == 'IN' %}{{ currency_symbol(cur) }}{{ "{:,.2f}".format(row.amount) }}{% endif %}</td>
+                    <td class="amt money-out">{% if row.currency == cur and row.direction == 'OUT' %}{{ currency_symbol(cur) }}{{ "{:,.2f}".format(row.amount) }}{% endif %}</td>
+                    <td class="bal {% if row.running_balances.get(cur, 0) < -0.005 %}negative{% elif row.running_balances.get(cur, 0) > 0.005 %}positive{% else %}zero{% endif %}">
+                      {{ currency_symbol(cur) }}{{ "{:,.2f}".format(row.running_balances.get(cur, 0)) }}
+                    </td>
+                  {% endfor %}
+                  <td>
+                    {% if row.linked_statement_entry_id %}
+                    <span class="readonly-entry">Edit in statement</span>
+                    {% else %}
+                    <form method="post" action="{{ url_for('expense_delete_entry', entry_id=row.id) }}" style="display:inline;"
+                      onsubmit="event.stopPropagation(); return confirm('Delete this entry?')">
+                      <button type="submit" style="background:none; border:none; color:#dc2626; cursor:pointer; font-size:0.8rem;" onclick="event.stopPropagation();">Del</button>
+                    </form>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          {% if not rows %}
+            <div style="text-align:center; padding:32px; color:#9ca3af; font-size:0.9rem;">
+              No expense entries yet. Add one below.
+            </div>
+          {% endif %}
+        </div>
+
+        <!-- Shared inline editor (hidden, moved into place by JS) -->
+        <table style="display:none;">
+          <tr class="edit-row" id="shared-editor-row">
+            <td colspan="{{ 4 + currencies|length * 3 + 1 }}">
+              <form id="shared-editor-form" method="post" enctype="multipart/form-data">
+                <input type="hidden" name="entry_id">
+                <div class="edit-form-grid">
+                  <label>
+                    Date
+                    <input type="date" name="entry_date" required>
+                  </label>
+                  <label>
+                    Description
+                    <input type="text" name="description" required>
+                  </label>
+                  <label>
+                    Currency
+                    <select name="currency">
+                      {% for cur in currencies %}
+                        <option value="{{ cur }}">{{ cur }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label>
+                    Direction
+                    <select name="direction">
+                      <option value="OUT">Out (Expense)</option>
+                      <option value="IN">In (Income)</option>
+                    </select>
+                  </label>
+                  <label>
+                    Amount
+                    <input type="number" name="amount" step="0.01" min="0" required>
+                  </label>
+                  <label>
+                    Category
+                    <select name="category">
+                      {% for code, label in expense_categories %}
+                        <option value="{{ code }}">{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label>
+                    Image
+                    <input type="file" name="image" accept="image/*">
+                  </label>
+                </div>
+                <div class="edit-actions">
+                  <button type="submit" class="btn-primary" style="padding:6px 16px; border:none; border-radius:6px; background:#1d4ed8; color:white; cursor:pointer; font-size:0.85rem;">Save</button>
+                  <button type="button" data-edit-cancel style="padding:6px 16px; border:1px solid #d1d5db; border-radius:6px; background:white; cursor:pointer; font-size:0.85rem;">Cancel</button>
+                </div>
+              </form>
+            </td>
+          </tr>
+        </table>
+
+        <!-- Add new entry -->
+        <div class="card" id="entry-new">
+          <h3>Add Expense Entry</h3>
+          <form method="post" action="{{ url_for('expense_add_entry', account_id=account.id) }}" enctype="multipart/form-data">
+            <div class="add-entry-form">
+              <label>
+                Date
+                <input type="date" name="entry_date" value="{{ default_date }}" required>
+              </label>
+              <label>
+                Description
+                <input type="text" name="description" placeholder="What was this expense for?" required>
+              </label>
+              <label>
+                Currency
+                <select name="currency">
+                  {% for cur in currencies %}
+                    <option value="{{ cur }}">{{ cur }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>
+                Direction
+                <select name="direction">
+                  <option value="OUT">Out (Expense)</option>
+                  <option value="IN">In (Income)</option>
+                </select>
+              </label>
+              <label>
+                Amount
+                <input type="number" name="amount" step="0.01" min="0" placeholder="0.00" required>
+              </label>
+              <label>
+                Category
+                <select name="category">
+                  {% for code, label in expense_categories %}
+                    <option value="{{ code }}">{{ label }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>
+                Image
+                <input type="file" name="image" accept="image/*">
+              </label>
+              <div class="form-submit-wrap">
+                <button type="submit" class="btn-primary" style="padding:8px 20px; border:none; border-radius:8px; background:#1d4ed8; color:white; font-weight:600; cursor:pointer;">Add Entry</button>
+              </div>
+            </div>
+          </form>
+        </div>
+
+        <!-- Recurring Templates -->
+        <div class="card templates-section" id="templates-section">
+          <div class="collapsible-header" id="templates-toggle">
+            <span class="toggle-icon">&#9654;</span>
+            <h3 style="margin:0;">Recurring Templates ({{ templates|length }})</h3>
+          </div>
+          <div class="collapsible-body" id="templates-body">
+            <div class="template-list" style="margin-top:16px;">
+              {% for tpl in templates %}
+                <div class="template-item {% if not tpl.is_active %}inactive{% endif %}" id="tpl-{{ tpl.id }}">
+                  <!-- Display view -->
+                  <div class="tpl-display" id="tpl-display-{{ tpl.id }}">
+                    <div class="tpl-info">
+                      <strong>{{ tpl.description }}</strong>
+                      <div class="tpl-meta">
+                        {{ tpl.currency }} {{ tpl.direction }} {{ "{:,.2f}".format(tpl.amount) }}
+                        | Day {{ tpl.day_of_month }}
+                        | {% set enm = tpl.every_n_months if tpl.every_n_months else 1 %}{% if enm == 1 %}Monthly{% elif enm == 3 %}Quarterly{% elif enm == 6 %}Semi-annual{% elif enm == 12 %}Annual{% else %}Every {{ enm }} months{% endif %}
+                        | {{ tpl.category }}
+                        {% if not tpl.is_active %} | <span style="color:#dc2626;">Inactive</span>{% endif %}
+                        {% if tpl.last_generated %} | Last: {{ tpl.last_generated }}{% endif %}
+                      </div>
+                    </div>
+                    <div class="tpl-actions">
+                      <button type="button" class="btn" style="font-size:0.78rem;" onclick="document.getElementById('tpl-display-{{ tpl.id }}').style.display='none'; document.getElementById('tpl-edit-{{ tpl.id }}').style.display='block';">Edit</button>
+                      <form method="post" action="{{ url_for('expense_template_toggle', template_id=tpl.id) }}">
+                        <button type="submit" class="btn" style="font-size:0.78rem;">{{ 'Activate' if not tpl.is_active else 'Deactivate' }}</button>
+                      </form>
+                      <form method="post" action="{{ url_for('expense_template_delete', template_id=tpl.id) }}"
+                        onsubmit="return confirm('Delete this template?')">
+                        <button type="submit" class="btn btn-danger" style="font-size:0.78rem;">Delete</button>
+                      </form>
+                    </div>
+                  </div>
+                  <!-- Edit form -->
+                  <div class="tpl-edit" id="tpl-edit-{{ tpl.id }}" style="display:none; width:100%;">
+                    <form method="post" action="{{ url_for('expense_template_edit', template_id=tpl.id) }}">
+                      <div class="add-entry-form">
+                        <label>
+                          Description
+                          <input type="text" name="description" value="{{ tpl.description }}" required>
+                        </label>
+                        <label>
+                          Currency
+                          <select name="currency">
+                            {% for cur in currencies %}
+                              <option value="{{ cur }}" {% if cur == tpl.currency %}selected{% endif %}>{{ cur }}</option>
+                            {% endfor %}
+                          </select>
+                        </label>
+                        <label>
+                          Direction
+                          <select name="direction">
+                            <option value="OUT" {% if tpl.direction == 'OUT' %}selected{% endif %}>Out (Expense)</option>
+                            <option value="IN" {% if tpl.direction == 'IN' %}selected{% endif %}>In (Income)</option>
+                          </select>
+                        </label>
+                        <label>
+                          Amount
+                          <input type="number" name="amount" step="0.01" min="0" value="{{ tpl.amount }}" required>
+                        </label>
+                        <label>
+                          Day of Month
+                          <input type="number" name="day_of_month" min="1" max="28" value="{{ tpl.day_of_month }}" required>
+                        </label>
+                        <label>
+                          Every N Months
+                          <input type="number" name="every_n_months" min="1" max="12" value="{{ tpl.every_n_months if tpl.every_n_months else 1 }}" required>
+                        </label>
+                        <label>
+                          Category
+                          <select name="category">
+                            {% for code, label in expense_categories %}
+                              <option value="{{ code }}" {% if code == tpl.category %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                          </select>
+                        </label>
+                        <div class="form-submit-wrap">
+                          <button type="submit" class="btn-primary" style="padding:8px 16px; border:none; border-radius:8px; background:#1d4ed8; color:white; font-weight:600; cursor:pointer;">Save</button>
+                          <button type="button" class="btn" style="padding:8px 16px; font-size:0.82rem;" onclick="document.getElementById('tpl-edit-{{ tpl.id }}').style.display='none'; document.getElementById('tpl-display-{{ tpl.id }}').style.display='flex';">Cancel</button>
+                        </div>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              {% endfor %}
+              {% if not templates %}
+                <div style="color:#9ca3af; font-size:0.88rem; padding:8px 0;">No recurring templates yet.</div>
+              {% endif %}
+            </div>
+
+            <h4 style="font-size:0.9rem; color:#374151; margin-bottom:10px;">Add Recurring Template</h4>
+            <form method="post" action="{{ url_for('expense_template_new', account_id=account.id) }}">
+              <div class="add-entry-form">
+                <label>
+                  Description
+                  <input type="text" name="description" placeholder="e.g. Monthly rent" required>
+                </label>
+                <label>
+                  Currency
+                  <select name="currency">
+                    {% for cur in currencies %}
+                      <option value="{{ cur }}">{{ cur }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label>
+                  Direction
+                  <select name="direction">
+                    <option value="OUT">Out (Expense)</option>
+                    <option value="IN">In (Income)</option>
+                  </select>
+                </label>
+                <label>
+                  Amount
+                  <input type="number" name="amount" step="0.01" min="0" placeholder="0.00" required>
+                </label>
+                <label>
+                  Day of Month
+                  <input type="number" name="day_of_month" min="1" max="28" value="1" required>
+                </label>
+                <label>
+                  Every N Months
+                  <input type="number" name="every_n_months" min="1" max="12" value="1" required>
+                </label>
+                <label>
+                  Category
+                  <select name="category">
+                    {% for code, label in expense_categories %}
+                      <option value="{{ code }}">{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <div style="align-self: flex-end;">
+                  <button type="submit" class="btn-primary" style="padding:8px 16px; border:none; border-radius:8px; background:#1d4ed8; color:white; font-weight:600; cursor:pointer;">Add Template</button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Import CSV -->
+        <div class="card import-section">
+          <div class="collapsible-header" id="import-toggle">
+            <span class="toggle-icon">&#9654;</span>
+            <h3 style="margin:0;">Import CSV</h3>
+          </div>
+          <div class="collapsible-body" id="import-body">
+            <p style="font-size:0.82rem; color:#6b7280; margin:12px 0 8px;">
+              CSV columns: date, description, currency, direction, amount, category
+            </p>
+            <form method="post" action="{{ url_for('expense_import_csv', account_id=account.id) }}" enctype="multipart/form-data"
+              class="import-form">
+              <input type="file" name="csv_file" accept=".csv" required>
+              <button type="submit" class="btn-primary" style="padding:8px 16px; border:none; border-radius:8px; background:#1d4ed8; color:white; font-weight:600; cursor:pointer;">Import</button>
+            </form>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <script>
+      document.addEventListener('DOMContentLoaded', () => {
+        const sharedEditor = document.querySelector('#shared-editor-row');
+        const sharedForm = document.querySelector('#shared-editor-form');
+
+        const setValue = (name, value) => {
+          const field = sharedForm.querySelector(`[name="${name}"]`);
+          if (field) field.value = value ?? '';
+        };
+        const linkedEntryMessage = (displayRow) => {
+          const clientName = displayRow.dataset.linkedStatementClientName || 'the client';
+          const sourceNo = displayRow.dataset.linkedStatementSourceNo || 'statement';
+          return `This expense entry is linked from ${clientName} row #${sourceNo}. Edit it from the client statement page.`;
+        };
+
+        const openEditor = (entryId) => {
+          document.querySelectorAll('.edit-row.is-open').forEach(r => r.classList.remove('is-open'));
+          document.querySelectorAll('.display-row.is-editing').forEach(r => r.classList.remove('is-editing'));
+          const displayRow = document.querySelector(`#entry-${entryId}`);
+          if (!sharedEditor || !sharedForm || !displayRow) return;
+          if (displayRow.dataset.linkedStatementEntryId) {
+            alert(linkedEntryMessage(displayRow));
+            return;
+          }
+
+          setValue('entry_id', displayRow.dataset.entryId);
+          setValue('entry_date', displayRow.dataset.entryDate);
+          setValue('description', displayRow.dataset.description);
+          setValue('currency', displayRow.dataset.currency);
+          setValue('direction', displayRow.dataset.direction);
+          setValue('amount', displayRow.dataset.amount);
+          setValue('category', displayRow.dataset.category);
+
+          sharedForm.action = `/expenses/entries/${entryId}/save`;
+          displayRow.insertAdjacentElement('afterend', sharedEditor);
+          sharedEditor.classList.add('is-open');
+          displayRow.classList.add('is-editing');
+          sharedEditor.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        };
+
+        // Click row to edit
+        document.querySelectorAll('[data-edit-open]').forEach(el => {
+          el.addEventListener('click', (e) => {
+            if (e.target.closest('form') || e.target.closest('button') || e.target.closest('a')) return;
+            e.preventDefault();
+            openEditor(el.dataset.editOpen);
+          });
+        });
+
+        // Cancel button
+        document.querySelectorAll('[data-edit-cancel]').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const editRow = btn.closest('.edit-row');
+            const displayRow = editRow ? editRow.previousElementSibling : null;
+            if (editRow) editRow.classList.remove('is-open');
+            if (displayRow) {
+              displayRow.classList.remove('is-editing');
+              displayRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            }
+          });
+        });
+
+        // Currency helpers
+        const CURRENCIES = {{ currencies|tojson }};
+        const CUR_SYMBOLS = {"USD": "$", "CNY": "\u00a5", "EGP": "E\u00a3"};
+        const CAT_MAP = { {% for code, label in expense_categories %}"{{ code }}": "{{ label }}"{{ ", " if not loop.last }}{% endfor %} };
+
+        function updateRunningBalances() {
+          fetch('{{ url_for("expense_account_balances", account_id=account.id) }}')
+            .then(r => r.json())
+            .then(data => {
+              if (!data.ok) return;
+              const balances = data.balances;
+              document.querySelectorAll('.display-row').forEach(row => {
+                const eid = row.dataset.entryId;
+                const info = balances[eid];
+                if (!info) return;
+                // Update seq_no
+                row.dataset.seqNo = info.seq_no;
+                const cells = row.querySelectorAll('td');
+                cells[0].textContent = info.seq_no;
+                // Update balance cells (columns: #, date, desc, cat, then per currency: in, out, bal)
+                CURRENCIES.forEach((cur, idx) => {
+                  const balIdx = 4 + idx * 3 + 2;
+                  const cell = cells[balIdx];
+                  if (!cell) return;
+                  const val = info.running_balances[cur] || 0;
+                  const sym = CUR_SYMBOLS[cur] || cur;
+                  cell.textContent = sym + val.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                  cell.className = 'bal ' + (val < -0.005 ? 'negative' : val > 0.005 ? 'positive' : 'zero');
+                });
+              });
+            });
+        }
+
+        function updateRowCells(displayRow, entry) {
+          const cells = displayRow.querySelectorAll('td');
+          cells[1].textContent = entry.entry_date;
+          cells[2].textContent = entry.description;
+          cells[3].replaceChildren();
+          const badge = document.createElement('span');
+          badge.className = 'cat-badge';
+          badge.textContent = CAT_MAP[entry.category] || entry.category;
+          cells[3].appendChild(badge);
+          const sym = CUR_SYMBOLS[entry.currency] || entry.currency;
+          CURRENCIES.forEach((cur, idx) => {
+            const inIdx = 4 + idx * 3;
+            const outIdx = 4 + idx * 3 + 1;
+            cells[inIdx].textContent = (entry.currency === cur && entry.direction === 'IN') ? sym + parseFloat(entry.amount).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '';
+            cells[inIdx].className = 'amt money-in';
+            cells[outIdx].textContent = (entry.currency === cur && entry.direction === 'OUT') ? sym + parseFloat(entry.amount).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '';
+            cells[outIdx].className = 'amt money-out';
+          });
+        }
+
+        // AJAX save
+        sharedForm.addEventListener('submit', function(e) {
+          e.preventDefault();
+          const formData = new FormData(sharedForm);
+          const entryId = formData.get('entry_id');
+          const displayRow = document.querySelector('#entry-' + entryId);
+          if (!displayRow) { sharedForm.submit(); return; }
+
+          fetch(sharedForm.action, {
+            method: 'POST',
+            body: formData,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+          })
+          .then(r => r.json())
+          .then(data => {
+            if (!data.ok) {
+              if (data.error) {
+                alert(data.error);
+                return;
+              }
+              sharedForm.submit();
+              return;
+            }
+            const entry = data.entry;
+
+            // Update data attributes
+            displayRow.dataset.entryDate = entry.entry_date;
+            displayRow.dataset.description = entry.description;
+            displayRow.dataset.currency = entry.currency;
+            displayRow.dataset.direction = entry.direction;
+            displayRow.dataset.amount = entry.amount;
+            displayRow.dataset.category = entry.category;
+
+            // Update visible cells
+            updateRowCells(displayRow, entry);
+
+            // Close editor and flash green
+            sharedEditor.classList.remove('is-open');
+            displayRow.classList.remove('is-editing');
+            displayRow.classList.add('row-just-saved');
+            setTimeout(() => displayRow.classList.remove('row-just-saved'), 2000);
+
+            // Update balances in place
+            updateRunningBalances();
+          })
+          .catch(() => sharedForm.submit());
+        });
+
+        // AJAX delete
+        document.querySelectorAll('.display-row form[action*="/delete"]').forEach(form => {
+          form.onsubmit = null;
+          form.removeAttribute('onsubmit');
+          form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            if (!confirm('Delete this entry?')) return;
+            const row = form.closest('.display-row');
+            fetch(form.action, {
+              method: 'POST',
+              headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            })
+            .then(r => r.json())
+            .then(data => {
+              if (!data.ok) {
+                if (data.error) {
+                  alert(data.error);
+                  return;
+                }
+                form.submit();
+                return;
+              }
+              // Close editor if open for this row
+              if (row.classList.contains('is-editing')) {
+                sharedEditor.classList.remove('is-open');
+              }
+              row.remove();
+              updateRunningBalances();
+            })
+            .catch(() => form.submit());
+          });
+        });
+
+        // AJAX add entry
+        const addForm = document.querySelector('#entry-new form');
+        if (addForm) {
+          addForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(addForm);
+            fetch(addForm.action, {
+              method: 'POST',
+              body: formData,
+              headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            })
+            .then(r => r.json())
+            .then(data => {
+              if (!data.ok) { addForm.submit(); return; }
+              const entry = data.entry;
+              const tbody = document.querySelector('.expense-table tbody');
+              const colSpan = 4 + CURRENCIES.length * 3 + 1;
+              const tr = document.createElement('tr');
+              tr.className = 'display-row row-just-saved';
+              tr.id = 'entry-' + entry.id;
+              tr.dataset.entryId = entry.id;
+              tr.dataset.entryDate = entry.entry_date;
+              tr.dataset.description = entry.description;
+              tr.dataset.currency = entry.currency;
+              tr.dataset.direction = entry.direction;
+              tr.dataset.amount = entry.amount;
+              tr.dataset.category = entry.category;
+              tr.dataset.seqNo = entry.seq_no;
+              tr.dataset.editOpen = entry.id;
+
+              const seqCell = document.createElement('td');
+              seqCell.className = 'no';
+              seqCell.textContent = entry.seq_no;
+              tr.appendChild(seqCell);
+
+              const dateCell = document.createElement('td');
+              dateCell.textContent = entry.entry_date;
+              tr.appendChild(dateCell);
+
+              const descCell = document.createElement('td');
+              descCell.textContent = entry.description;
+              tr.appendChild(descCell);
+
+              const categoryCell = document.createElement('td');
+              const categoryBadge = document.createElement('span');
+              categoryBadge.className = 'cat-badge';
+              categoryBadge.textContent = CAT_MAP[entry.category] || entry.category;
+              categoryCell.appendChild(categoryBadge);
+              tr.appendChild(categoryCell);
+
+              CURRENCIES.forEach(() => {
+                const inCell = document.createElement('td');
+                inCell.className = 'amt money-in';
+                tr.appendChild(inCell);
+
+                const outCell = document.createElement('td');
+                outCell.className = 'amt money-out';
+                tr.appendChild(outCell);
+
+                const balanceCell = document.createElement('td');
+                balanceCell.className = 'bal';
+                balanceCell.textContent = '-';
+                tr.appendChild(balanceCell);
+              });
+
+              const actionCell = document.createElement('td');
+              const delForm = document.createElement('form');
+              delForm.method = 'POST';
+              delForm.action = '/expenses/entries/' + encodeURIComponent(entry.id) + '/delete';
+              delForm.style.display = 'inline';
+              if (window.appendCsrfToken) window.appendCsrfToken(delForm);
+
+              const delButton = document.createElement('button');
+              delButton.type = 'submit';
+              delButton.textContent = 'Del';
+              delButton.style.background = 'none';
+              delButton.style.border = 'none';
+              delButton.style.color = '#dc2626';
+              delButton.style.cursor = 'pointer';
+              delButton.style.fontSize = '0.8rem';
+              delButton.addEventListener('click', function(event) {
+                event.stopPropagation();
+              });
+              delForm.appendChild(delButton);
+              actionCell.appendChild(delForm);
+              tr.appendChild(actionCell);
+              updateRowCells(tr, entry);
+
+              // Add click-to-edit handler
+              tr.addEventListener('click', (e) => {
+                if (e.target.closest('form') || e.target.closest('button') || e.target.closest('a')) return;
+                e.preventDefault();
+                openEditor(entry.id);
+              });
+
+              // Add AJAX delete handler to the new delete form
+              if (delForm) {
+                delForm.addEventListener('submit', function(ev) {
+                  ev.preventDefault();
+                  if (!confirm('Delete this entry?')) return;
+                  fetch(delForm.action, {
+                    method: 'POST',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                  })
+                  .then(r => r.json())
+                  .then(d => {
+                    if (!d.ok) { delForm.submit(); return; }
+                    tr.remove();
+                    updateRunningBalances();
+                  })
+                  .catch(() => delForm.submit());
+                });
+              }
+
+              tbody.appendChild(tr);
+              setTimeout(() => tr.classList.remove('row-just-saved'), 2000);
+
+              // Reset form fields (keep date)
+              addForm.querySelector('[name="description"]').value = '';
+              addForm.querySelector('[name="amount"]').value = '';
+              const imgInput = addForm.querySelector('[name="image"]');
+              if (imgInput) imgInput.value = '';
+
+              // Remove "No expense entries" message if present
+              const emptyMsg = document.querySelector('#table-top > div[style*="text-align:center"]');
+              if (emptyMsg) emptyMsg.remove();
+
+              updateRunningBalances();
+              tr.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            })
+            .catch(() => addForm.submit());
+          });
+        }
+
+        // Collapsible sections
+        function setupCollapsible(toggleId, bodyId) {
+          const toggle = document.getElementById(toggleId);
+          const body = document.getElementById(bodyId);
+          if (toggle && body) {
+            toggle.addEventListener('click', () => {
+              toggle.classList.toggle('is-open');
+              body.classList.toggle('is-open');
+            });
+            // Auto-open if URL hash matches
+            if (window.location.hash === '#' + bodyId.replace('-body', '-section')) {
+              toggle.classList.add('is-open');
+              body.classList.add('is-open');
+            }
+          }
+        }
+        setupCollapsible('templates-toggle', 'templates-body');
+        setupCollapsible('import-toggle', 'import-body');
+      });
+    </script>
+  </body>
+</html>

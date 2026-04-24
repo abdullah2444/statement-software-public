@@ -1,0 +1,1690 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ app_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css') }}">
+    <style>
+      .user-bar {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        justify-content: flex-end;
+        padding: 8px 24px;
+        font-size: 13px;
+        color: #6b7280;
+      }
+      .user-bar a,
+      .user-bar .nav-link-button {
+        color: #103a46;
+        text-decoration: none;
+        font-weight: 600;
+      }
+      .user-bar a:hover,
+      .user-bar .nav-link-button:hover { text-decoration: underline; }
+      /* -- Company status -- */
+      .shell {
+        position: relative;
+      }
+      .shell::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background:
+          radial-gradient(circle at top left, rgba(16,58,70,0.18), transparent 28%),
+          radial-gradient(circle at 80% 15%, rgba(224,142,86,0.14), transparent 22%),
+          radial-gradient(circle at bottom right, rgba(19,121,95,0.1), transparent 26%),
+          linear-gradient(180deg, #eef3f2 0%, #e7eceb 48%, #edf2f1 100%);
+        z-index: -1;
+      }
+      .hero {
+        position: relative;
+        isolation: isolate;
+        margin-bottom: 28px;
+        padding: 30px 32px;
+        background:
+          radial-gradient(circle at top right, rgba(255,255,255,0.22), transparent 28%),
+          linear-gradient(135deg, #103a46 0%, #1c4f58 44%, #2d6c66 100%);
+        border: 1px solid rgba(16,58,70,0.16);
+        border-radius: 32px;
+        box-shadow: 0 30px 70px rgba(16,58,70,0.18);
+      }
+      .hero::after {
+        content: "";
+        position: absolute;
+        inset: auto 24px 20px auto;
+        width: 220px;
+        height: 220px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0) 70%);
+        z-index: -1;
+      }
+      .hero h1,
+      .hero .eyebrow,
+      .hero .hero-copy,
+      .hero .button.ghost {
+        color: white;
+      }
+      .hero .eyebrow {
+        opacity: 0.72;
+        margin-bottom: 10px;
+        font-size: 0.74rem;
+        letter-spacing: 0.18em;
+      }
+      .hero h1 { max-width: 10ch; }
+      .hero-layout {
+        display: grid;
+        grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.1fr);
+        gap: 26px;
+        align-items: stretch;
+        width: 100%;
+      }
+      .hero-main {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      .hero-copy {
+        max-width: 580px;
+        margin: 12px 0 0;
+        font-size: 0.98rem;
+        line-height: 1.7;
+        opacity: 0.82;
+      }
+      .hero-actions {
+        margin-top: 22px;
+      }
+      .hero-status {
+        padding: 20px;
+        border-radius: 26px;
+        background: rgba(255,255,255,0.09);
+        border: 1px solid rgba(255,255,255,0.12);
+        backdrop-filter: blur(10px);
+      }
+      .hero-status .company-status-header {
+        padding: 0 0 10px;
+      }
+      .hero-status .company-status-header h2,
+      .hero-status .company-net-label,
+      .hero-status .company-net-note,
+      .hero-status .fx-chip-label,
+      .hero-status .fx-chip-value,
+      .hero-status .usd-approx {
+        color: rgba(255,255,255,0.92);
+      }
+      .hero-status .company-status-header h2 {
+        font-size: 1rem;
+      }
+      .hero-status .status-badge {
+        background: rgba(255,255,255,0.18);
+        color: #fff5d6;
+        font-size: 0.7rem;
+        padding: 7px 12px;
+      }
+      .hero-status .status-badge .dot {
+        background: currentColor;
+      }
+      .hero-status .company-net {
+        padding: 0;
+        gap: 10px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+      .hero-status .company-net-item {
+        padding: 16px 15px 14px;
+        background: rgba(8,23,29,0.34);
+        border-color: rgba(255,255,255,0.14);
+        box-shadow: none;
+      }
+      .hero-status .company-net-label {
+        margin-bottom: 8px;
+        font-size: 0.62rem;
+        letter-spacing: 0.11em;
+        color: rgba(255,255,255,0.62);
+      }
+      .hero-status .company-net-value {
+        margin: 0;
+        font-size: clamp(1.05rem, 1.5vw, 1.6rem);
+        line-height: 1.15;
+        letter-spacing: -0.03em;
+        color: #f6fbfb;
+        text-shadow: 0 1px 0 rgba(0,0,0,0.08);
+      }
+      .hero-status .company-net-value.balance-negative,
+      .hero-status .company-net-value.balance-negative .usd-approx,
+      .hero-status .company-net-item .usd-approx.balance-negative {
+        color: #ff7b7b;
+      }
+      .hero-status .company-net-value.money-in,
+      .hero-status .company-net-value.money-in .usd-approx {
+        color: #f4fffd;
+      }
+      .hero-status .company-net-note {
+        margin-top: 6px;
+        font-size: 0.72rem;
+        line-height: 1.35;
+        color: rgba(255,255,255,0.6);
+      }
+      .hero-status .fx-strip {
+        padding: 10px 0 0;
+        gap: 10px;
+      }
+      .hero-status .fx-chip {
+        min-width: 132px;
+        padding: 10px 11px 9px;
+        background: rgba(255,255,255,0.09);
+        border-color: rgba(255,255,255,0.14);
+      }
+      .hero-status .fx-chip-label {
+        font-size: 0.62rem;
+        letter-spacing: 0.1em;
+        color: rgba(255,255,255,0.62);
+      }
+      .hero-status .fx-chip-value {
+        font-size: 0.92rem;
+        line-height: 1.2;
+        color: #f6fbfb;
+      }
+      .hero-status .usd-approx {
+        color: rgba(255,255,255,0.6);
+      }
+      .hero .button.ghost {
+        border-color: rgba(255,255,255,0.16);
+        background: rgba(255,255,255,0.08);
+      }
+      .hero .button.ghost:hover {
+        background: rgba(255,255,255,0.16);
+      }
+      .company-status {
+        margin-bottom: 28px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.84) 0%, rgba(246,250,249,0.96) 100%);
+        border: 1px solid rgba(215,224,226,0.95);
+        border-radius: 28px;
+        box-shadow: 0 22px 54px rgba(19,32,40,0.08);
+        overflow: hidden;
+        backdrop-filter: blur(12px);
+      }
+      .company-status-header {
+        padding: 28px 28px 10px;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .company-status-header h2 { margin: 0; font-size: 1.2rem; font-weight: 800; letter-spacing: -0.03em; }
+      .company-status-header .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 9px 15px;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 700;
+      }
+      .status-badge.positive { background: #dcfce7; color: #15803d; }
+      .status-badge.negative { background: #fee2e2; color: #dc2626; }
+      .status-badge.mixed { background: #fef3c7; color: #b45309; }
+      .status-badge.zero { background: var(--soft); color: var(--muted); }
+      .status-badge .dot { width: 8px; height: 8px; border-radius: 50%; }
+      .status-badge.positive .dot { background: #22c55e; }
+      .status-badge.negative .dot { background: #ef4444; }
+      .status-badge.mixed .dot { background: #f59e0b; }
+      .status-badge.zero .dot { background: #9ca3af; }
+
+      .company-net {
+        display: grid;
+        grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 0.95fr);
+        gap: 16px;
+        padding: 4px 28px 24px;
+      }
+      .company-net-item {
+        padding: 22px 20px 18px;
+        border: 1px solid #e1e7ea;
+        border-radius: 22px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.96) 0%, #f4f8f7 100%);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
+      }
+      .company-net-item:first-child {
+        background: linear-gradient(135deg, #123c49 0%, #1d4c57 100%);
+        border-color: rgba(16,58,70,0.28);
+      }
+      .company-net-item:first-child .company-net-label,
+      .company-net-item:first-child .company-net-value,
+      .company-net-item:first-child .company-net-note,
+      .company-net-item:first-child .usd-approx {
+        color: white;
+      }
+      .company-net-item:first-child .company-net-note,
+      .company-net-item:first-child .company-net-label,
+      .company-net-item:first-child .usd-approx {
+        opacity: 0.76;
+      }
+      .company-net-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin: 0 0 10px; font-weight: 700; }
+      .company-net-value { font-size: clamp(1.5rem, 2vw, 2.15rem); font-weight: 800; letter-spacing: -0.04em; margin: 0; line-height: 1.08; }
+      .company-net-note { margin: 8px 0 0; font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+
+      .breakdown-title {
+        font-size: 0.73rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        margin: 0 0 10px;
+        font-weight: 600;
+      }
+      .breakdown-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        padding: 3px 0;
+      }
+      .breakdown-label { font-size: 0.84rem; color: var(--ink); }
+      .breakdown-val { font-size: 0.9rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+      .usd-approx { font-size: 0.78rem; color: var(--muted); font-weight: 600; margin-left: 6px; white-space: nowrap; }
+      .usd-approx.balance-negative { color: var(--red); }
+      .breakdown-divider { border-top: 1px solid var(--line); margin: 6px 0; }
+      .breakdown-total .breakdown-label { font-weight: 700; }
+      .fx-strip {
+        display: flex;
+        gap: 12px;
+        padding: 0 28px 28px;
+        flex-wrap: wrap;
+      }
+      .fx-chip {
+        min-width: 180px;
+        padding: 14px 14px 12px;
+        border-radius: 18px;
+        border: 1px solid #dfe6e7;
+        background: rgba(255,255,255,0.72);
+      }
+      .fx-chip-label {
+        margin: 0 0 4px;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+      }
+      .fx-chip-value { margin: 0; font-size: 0.98rem; font-weight: 800; letter-spacing: -0.02em; color: var(--ink); }
+
+      @media (max-width: 600px) {
+        .company-net { grid-template-columns: 1fr; gap: 12px; }
+        .fx-strip { grid-template-columns: 1fr; }
+      }
+
+      /* -- Dashboard stats -- */
+      .dash-stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+        margin-bottom: 22px;
+      }
+      .stat-card {
+        padding: 18px 22px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: 0 2px 8px rgba(24,33,43,0.04);
+        position: relative;
+        overflow: hidden;
+      }
+      .stat-card::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 3px;
+      }
+      .stat-card.accent-blue::before { background: #3b82f6; }
+      .stat-card.accent-green::before { background: var(--green); }
+      .stat-card.accent-amber::before { background: #d97706; }
+      .stat-card.accent-purple::before { background: #7c3aed; }
+      .stat-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 6px; }
+      .stat-value { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+      .stat-sub { font-size: 0.8rem; color: var(--muted); margin: 4px 0 0; }
+
+      /* -- Bank balances -- */
+      .bank-section,
+      .supplier-section,
+      .client-section {
+        margin-bottom: 24px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.84) 0%, rgba(248,251,250,0.96) 100%);
+        border: 1px solid rgba(215,224,226,0.95);
+        border-radius: 28px;
+        box-shadow: 0 22px 54px rgba(19,32,40,0.08);
+        overflow: hidden;
+        backdrop-filter: blur(12px);
+      }
+      .bank-header,
+      .supplier-header,
+      .client-section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 18px 22px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.16) 0%, rgba(242,247,246,0.72) 100%);
+        border-bottom: 1px solid #e4ebeb;
+        cursor: pointer;
+        user-select: none;
+      }
+      .bank-header:hover,
+      .supplier-header:hover,
+      .client-section-header:hover { background: rgba(244,248,247,0.88); }
+      .bank-header-left,
+      .supplier-header-left,
+      .client-section-header-left {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex: 1;
+        min-width: 0;
+      }
+      .section-head-main {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        min-width: 0;
+        flex: 0 1 auto;
+        max-width: none;
+      }
+      .section-summary {
+        display: flex;
+        justify-content: flex-end;
+        flex: 1;
+        min-width: 0;
+        padding-right: 10px;
+      }
+      .bank-header h3,
+      .supplier-header h3,
+      .client-section-header h2 { margin: 0; font-size: 1.04rem; font-weight: 800; line-height: 1.15; letter-spacing: -0.03em; }
+      .bank-header .toggle-icon,
+      .supplier-header .toggle-icon,
+      .client-section-header .toggle-icon {
+        flex: 0 0 24px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.8rem;
+        color: var(--muted);
+        transition: transform 0.2s;
+      }
+      .bank-header.is-open .toggle-icon,
+      .supplier-header.is-open .toggle-icon,
+      .client-section-header.is-open .toggle-icon { transform: rotate(90deg); }
+      .bank-body { display: none; }
+      .bank-body.is-open { display: block; }
+      .section-total {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(164px, 164px));
+        align-items: stretch;
+        justify-content: flex-end;
+        gap: 10px;
+        width: 100%;
+        font-size: 0.84rem;
+      }
+      .section-total strong {
+        color: var(--ink);
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .section-total .approx {
+        color: var(--ink);
+        font-weight: 800;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+        align-items: flex-start;
+        width: 164px;
+        min-width: 164px;
+        min-height: 80px;
+        padding: 12px 14px;
+        border-radius: 16px;
+        border: 1px solid #e2e9f1;
+        background: linear-gradient(180deg, #ffffff 0%, #f6f9fc 100%);
+        box-shadow: none;
+        font-variant-numeric: tabular-nums;
+        gap: 5px;
+      }
+      .section-total .approx.balance-negative { color: var(--red); }
+      .section-total .approx.balance-negative {
+        border-color: #e2e9f1;
+        background: linear-gradient(180deg, #ffffff 0%, #f6f9fc 100%);
+      }
+      .section-total .approx-label {
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        margin-bottom: 0;
+        min-height: 20px;
+        white-space: nowrap;
+      }
+      .money-block {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: flex-start;
+        width: 164px;
+        min-width: 164px;
+        min-height: 80px;
+        padding: 12px 14px;
+        border-radius: 16px;
+        border: 1px solid #e2e9f1;
+        background: linear-gradient(180deg, #ffffff 0%, #f6f9fc 100%);
+        box-shadow: none;
+        gap: 5px;
+      }
+      .money-block-label {
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        font-weight: 700;
+        min-height: 20px;
+      }
+      .money-block-value {
+        font-variant-numeric: tabular-nums;
+        font-size: 1.18rem;
+        line-height: 1.15;
+        min-height: 28px;
+        display: inline-flex;
+        align-items: center;
+      }
+      .money-block-ref {
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-start;
+        min-height: 20px;
+        padding: 1px 7px;
+        border-radius: 999px;
+        border: 1px solid #e1e8ef;
+        background: #f3f7fb;
+        width: fit-content;
+      }
+      .money-block-ref .usd-approx {
+        margin-left: 0;
+        font-size: 0.74rem;
+      }
+      .money-block-ref.is-negative {
+        border-color: #f2d3d5;
+        background: #fff3f4;
+      }
+      .money-block-ref.is-negative .usd-approx {
+        color: var(--red);
+      }
+
+      .bank-comparison {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .bank-cmp-card {
+        padding: 16px 22px;
+        border-right: 1px solid var(--line);
+        text-align: center;
+      }
+      .bank-cmp-card:last-child { border-right: none; }
+      .bank-cmp-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 4px; }
+      .bank-cmp-value { font-size: 1.15rem; font-weight: 700; margin: 0; }
+      .bank-cmp-sub { font-size: 0.78rem; color: var(--muted); margin: 3px 0 0; }
+      .diff-positive { color: var(--green); }
+      .diff-negative { color: var(--red, #dc2626); }
+      .diff-zero { color: var(--muted); }
+
+      .bank-table-wrap { padding: 0; }
+      .bank-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88rem;
+      }
+      .bank-table th {
+        text-align: left;
+        padding: 10px 16px;
+        font-size: 0.73rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+        background: #f8f9fb;
+        border-bottom: 1px solid var(--line);
+      }
+      .bank-table td {
+        padding: 10px 16px;
+        border-bottom: 1px solid #f0f2f5;
+        vertical-align: middle;
+      }
+      .bank-table tr:last-child td { border-bottom: none; }
+      .bank-table .bal-cell { font-weight: 600; font-variant-numeric: tabular-nums; }
+      .bank-table input[type="text"],
+      .bank-table input[type="number"] {
+        padding: 5px 8px;
+        font-size: 0.85rem;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .bank-table input[type="number"] { width: 130px; }
+      .bank-add-row td { background: #f8f9fb; }
+      .bank-actions { display: flex; gap: 4px; }
+
+      /* -- Supplier section (reuses bank- styles) -- */
+      .supplier-body { display: none; }
+      .supplier-body.is-open { display: block; }
+      .supplier-summary {
+        display: flex;
+        gap: 24px;
+        padding: 14px 22px;
+        border-bottom: 1px solid var(--line);
+        background: #fffcf5;
+        flex-wrap: wrap;
+      }
+      .supplier-summary-item { display: flex; align-items: baseline; gap: 6px; }
+      .supplier-summary-label { font-size: 0.73rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+      .supplier-summary-value { font-size: 1.1rem; font-weight: 700; }
+      .supplier-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+      .supplier-table th { text-align: left; padding: 10px 16px; font-size: 0.73rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); background: #f8f9fb; border-bottom: 1px solid var(--line); }
+      .supplier-table td { padding: 10px 16px; border-bottom: 1px solid #f0f2f5; vertical-align: middle; }
+      .supplier-table tr:last-child td { border-bottom: none; }
+      .supplier-table .bal-cell { font-weight: 600; font-variant-numeric: tabular-nums; }
+      .supplier-table input[type="text"],
+      .supplier-table input[type="number"] { padding: 5px 8px; font-size: 0.85rem; border: 1px solid var(--line); border-radius: 5px; width: 100%; box-sizing: border-box; }
+      .supplier-table input[type="number"] { width: 130px; }
+      .supplier-table select { padding: 5px 8px; font-size: 0.85rem; border: 1px solid var(--line); border-radius: 5px; }
+      .supplier-add-row td { background: #f8f9fb; }
+
+      /* -- Tools row -- */
+      .tools-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        margin-bottom: 22px;
+      }
+      .tool-card {
+        padding: 22px 22px 20px;
+        background: linear-gradient(180deg, #fcfefe 0%, #f2f8f7 100%);
+        border: 1px solid #dbe6e7;
+        border-radius: 22px;
+        box-shadow: 0 16px 30px rgba(19,32,40,0.05);
+      }
+      .tool-card h3 { margin: 0 0 6px; font-size: 0.98rem; letter-spacing: -0.02em; }
+      .tool-card p { margin: 0 0 14px; color: var(--muted); font-size: 0.85rem; }
+      .tool-card .inline-create { display: flex; gap: 8px; flex-wrap: wrap; }
+      .tool-card .inline-create input[type="text"],
+      .tool-card .inline-create input[type="file"] { flex: 1; min-width: 160px; }
+
+      /* -- Section title -- */
+      .section-title { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; }
+      .section-title h2 { margin: 0; font-size: 1.05rem; }
+      .count-pill {
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: #eef3f8;
+        font-size: 0.68rem;
+        font-weight: 800;
+        color: #607086;
+      }
+      .client-section-body { display: none; padding: 18px 22px 22px; }
+      .client-section-body.is-open { display: block; }
+
+      /* -- Search -- */
+      .search-bar { position: relative; margin-bottom: 22px; }
+      .search-bar input { width: 100%; padding: 16px 18px 16px 48px; border: 1px solid #d9e4e6; border-radius: 999px; background: rgba(255,255,255,0.92); font-size: 0.94rem; box-shadow: 0 16px 30px rgba(19,32,40,0.05); }
+      .search-bar input:focus { border-color: var(--accent-2); box-shadow: 0 0 0 4px rgba(47,105,114,0.1); }
+      .search-bar svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; color: var(--muted); pointer-events: none; }
+      .search-results { position: absolute; top: 100%; left: 0; right: 0; z-index: 100; background: #fff; border: 1px solid #d9e4e6; border-radius: 14px; margin-top: 4px; max-height: 400px; overflow-y: auto; box-shadow: 0 16px 40px rgba(19,32,40,0.12); display: none; }
+      .search-results.active { display: block; }
+      .search-result-item { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid #f3f4f6; cursor: pointer; text-decoration: none; color: inherit; transition: background 0.1s; }
+      .search-result-item:last-child { border-bottom: none; }
+      .search-result-item:hover { background: #f8fafc; }
+      .sr-client { font-size: 0.75rem; color: var(--accent-2); font-weight: 600; min-width: 90px; }
+      .sr-desc { flex: 1; font-size: 0.85rem; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .sr-amount { font-size: 0.85rem; font-weight: 700; white-space: nowrap; }
+      .sr-date { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+      .sr-empty { padding: 14px 16px; text-align: center; color: var(--muted); font-size: 0.85rem; }
+
+      /* -- Group wrapper -- */
+      .group-list { display: grid; gap: 18px; margin-bottom: 22px; }
+
+      .group-wrapper {
+        border: 1px solid #dce5e7;
+        border-radius: 24px;
+        background: rgba(255,255,255,0.86);
+        box-shadow: 0 18px 36px rgba(19,32,40,0.06);
+        overflow: hidden;
+      }
+      .group-wrapper.standalone {
+        border: none;
+        background: none;
+        box-shadow: none;
+        overflow: visible;
+      }
+      .group-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 20px 24px;
+        background: linear-gradient(180deg, #fcfefe 0%, #f1f6f5 100%);
+        border-bottom: 1px solid #e1e8e9;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .group-header-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .group-name {
+        font-size: 1.1rem;
+        font-weight: 700;
+        margin: 0;
+        letter-spacing: -0.01em;
+      }
+      .group-totals {
+        display: flex;
+        gap: 10px;
+        font-size: 0.82rem;
+        color: var(--ink);
+        flex-wrap: wrap;
+      }
+      .group-totals span {
+        font-weight: 700;
+        padding: 7px 11px;
+        border-radius: 999px;
+        background: #f7fbfa;
+        border: 1px solid #e0e8e8;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .group-actions { display: flex; gap: 6px; align-items: center; }
+
+      .group-children {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 0;
+      }
+      .group-children .client-card {
+        border-radius: 0;
+        border: none;
+        border-right: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        box-shadow: none;
+      }
+      .group-children .client-card:hover {
+        background: #f8fafd;
+        box-shadow: none;
+      }
+
+      /* -- Standalone grid -- */
+      .standalone-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: 14px;
+      }
+
+      /* -- Client card -- */
+      .client-card {
+        display: flex;
+        flex-direction: column;
+        padding: 22px 22px 18px;
+        background:
+          radial-gradient(circle at top right, rgba(47,105,114,0.08), transparent 32%),
+          linear-gradient(180deg, #ffffff 0%, #f4f8f7 100%);
+        border: 1px solid #dde6e7;
+        border-radius: 22px;
+        box-shadow: 0 16px 28px rgba(19,32,40,0.05);
+        transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+        color: inherit;
+        position: relative;
+      }
+      .client-card:hover {
+        border-color: #bfd1d4;
+        box-shadow: 0 22px 36px rgba(19,32,40,0.09);
+        transform: translateY(-3px);
+      }
+      .client-card a.card-link { text-decoration: none; color: inherit; }
+      .client-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+      .client-name { font-size: 1rem; font-weight: 650; margin: 0; }
+      .client-badge { padding: 4px 10px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; background: #edf5f4; color: #4f6670; }
+      .child-badge { background: #ebf2ff; color: #4363a3; }
+
+      .client-balances { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+      .client-bal { padding: 12px 13px; background: rgba(246,250,249,0.92); border-radius: 16px; border: 1px solid #e3ebec; }
+      .client-bal-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 0 0 2px; }
+      .client-bal-value { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+
+      .client-footer { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 12px; border-top: 1px solid #ebf0f5; }
+      .client-meta { font-size: 0.76rem; color: var(--muted); }
+      .client-open { font-size: 0.82rem; font-weight: 600; color: var(--accent-2); display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
+      .client-open svg { width: 14px; height: 14px; }
+
+      /* -- Card actions -- */
+      .client-actions { display: flex; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #e7efef; flex-wrap: wrap; }
+      .client-actions form { margin: 0; }
+      .btn-sm { display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; background: #f5f9f9; color: var(--muted); font: inherit; font-size: 0.73rem; cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s; text-decoration: none; }
+      .btn-sm:hover { background: var(--soft); border-color: var(--accent-2); color: var(--ink); }
+      .btn-sm.btn-danger:hover { background: var(--red-bg); border-color: var(--red); color: var(--red); }
+      .btn-sm svg { width: 12px; height: 12px; }
+      .rename-row { display: none; gap: 6px; align-items: center; margin-top: 6px; }
+      .rename-row.is-open { display: flex; }
+      .rename-row input { flex: 1; padding: 5px 8px; font-size: 0.82rem; }
+
+      /* -- Group mode checkboxes -- */
+      .group-check { position: absolute; top: 10px; right: 10px; width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; display: none; z-index: 5; }
+      body.group-mode .group-check { display: block; }
+      body.group-mode .client-card { padding-right: 38px; }
+
+      /* -- Group bar (bottom fixed) -- */
+      .group-bar { display: none; position: fixed; bottom: 16px; left: 16px; right: 16px; background: linear-gradient(135deg, #103a46 0%, #245660 100%); color: white; padding: 16px 20px; z-index: 100; box-shadow: 0 18px 50px rgba(16,58,70,0.28); border-radius: 24px; border: 1px solid rgba(255,255,255,0.1); }
+      .group-bar.is-visible { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      .group-bar-info { font-size: 0.92rem; font-weight: 500; }
+      .group-bar-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .group-bar select { padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.15); color: white; font: inherit; font-size: 0.85rem; }
+      .group-bar select option { color: var(--ink); background: white; }
+      .btn-bar { padding: 8px 16px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.4); background: white; color: var(--accent); font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+      .btn-bar:hover { opacity: 0.9; }
+      .btn-bar-ghost { padding: 8px 14px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.3); background: transparent; color: white; font: inherit; font-size: 0.85rem; cursor: pointer; }
+
+      /* -- Empty state -- */
+      .empty-state { text-align: center; padding: 48px 20px; color: var(--muted); }
+      .empty-state p { margin: 4px 0; }
+
+      /* -- Responsive -- */
+      @media (max-width: 900px) {
+        .hero-layout { grid-template-columns: 1fr; }
+        .hero h1 { max-width: none; }
+        .dash-stats { grid-template-columns: repeat(2, 1fr); }
+        .tools-row { grid-template-columns: 1fr; }
+        .group-children { grid-template-columns: 1fr; }
+        .bank-header-left,
+        .supplier-header-left,
+        .client-section-header-left {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        .section-head-main {
+          flex: 0 1 auto;
+          max-width: none;
+          width: 100%;
+          align-items: flex-start;
+        }
+        .section-summary { width: 100%; justify-content: flex-start; }
+        .section-total { justify-content: flex-start; }
+        .money-block,
+        .section-total .approx { align-items: flex-start; }
+      }
+      @media (max-width: 768px) {
+        .hero { padding: 18px 16px; border-radius: 16px; }
+        .hero-status .company-net { grid-template-columns: 1fr; }
+        .section-total { grid-template-columns: 1fr; }
+        .dash-stats { grid-template-columns: 1fr; }
+        .standalone-grid { grid-template-columns: 1fr; }
+        .company-net { grid-template-columns: 1fr; }
+        .tool-card .inline-create { flex-direction: column; }
+        .tool-card .inline-create input[type="text"],
+        .tool-card .inline-create input[type="file"] { min-width: 0; width: 100%; }
+        .tool-card .inline-create button { width: 100%; }
+        .client-card-header { flex-direction: column; align-items: flex-start; gap: 6px; }
+        .client-actions { flex-wrap: wrap; gap: 4px; }
+        .client-actions .btn-sm { font-size: 0.75rem; padding: 4px 8px; }
+      }
+    </style>
+  </head>
+  <body>
+    {% if g.user %}
+    {% include '_nav.html' %}
+    {% endif %}
+    {% macro usd_ref(value) -%}
+      {%- if fx_summary.display_rate is not none -%}
+        <span class="usd-approx">&#8776; &#165;{{ "{:,.2f}".format((value|float) * fx_summary.display_rate) }}</span>
+      {%- endif -%}
+    {%- endmacro %}
+    {% macro usd_ref_negative(value) -%}
+      {%- if fx_summary.display_rate is not none -%}
+        <span class="usd-approx balance-negative">&#8776; -&#165;{{ "{:,.2f}".format((value|float) * fx_summary.display_rate) }}</span>
+      {%- endif -%}
+    {%- endmacro %}
+    {% macro approx_total_rmb(usd_value, cny_value) -%}
+      {%- if fx_summary.display_rate is not none -%}
+        {%- set approx_value = (usd_value|float) * fx_summary.display_rate + (cny_value|float) -%}
+        &#8776; {{ "+" if approx_value >= 0 else "-" }}&#165;{{ "{:,.2f}".format(approx_value|abs) }}
+      {%- endif -%}
+    {%- endmacro %}
+    <main class="shell">
+      <!-- Hero -->
+      <section class="hero">
+        <div class="hero-layout">
+          <div class="hero-main">
+            <div>
+            <p class="eyebrow">{{ brand_name }} Control Room</p>
+            <h1>Client Statements</h1>
+            <p class="hero-copy">A cleaner operating view for cash positions, supplier exposure, and client statement workflows. The dashboard keeps the financial snapshot visible while your working tools stay one scroll away.</p>
+            </div>
+            <div class="hero-actions">
+              {% if clients|length >= 2 %}
+              <button class="button ghost" id="group-toggle-btn" type="button">Group Clients</button>
+              {% endif %}
+              <a class="button ghost" href="{{ url_for('quick_submit_page') }}">Quick Submit</a>
+              <form method="POST" action="{{ url_for('reload_data') }}" style="margin:0;">
+                {{ csrf_input() }}
+                <button class="button ghost" type="submit" onclick="return confirm('Reload statements from the source CSV? This replaces seeded client statement data.');">Reload From CSV</button>
+              </form>
+            </div>
+          </div>
+          {% if bank_balances or suppliers %}
+          <div class="hero-status">
+            <div class="company-status-header">
+              <h2>Company Financial Status</h2>
+              <span class="status-badge {{ status.overall_state }}">
+                <span class="dot"></span>
+                {{ status.overall_label }}
+              </span>
+            </div>
+            <div class="company-net">
+              <div class="company-net-item">
+                <p class="company-net-label">Company Balance (USD)</p>
+                <p class="company-net-value {% if status.balance_usd < -0.005 %}balance-negative{% elif status.balance_usd > 0.005 %}money-in{% endif %}">
+                  {{ "+" if status.balance_usd >= 0 }}${{ "{:,.2f}".format(status.balance_usd) }}
+                  {{ usd_ref(status.balance_usd|abs) }}
+                </p>
+              </div>
+              <div class="company-net-item">
+                <p class="company-net-label">Company Balance (CNY)</p>
+                <p class="company-net-value {% if status.balance_cny < -0.005 %}balance-negative{% elif status.balance_cny > 0.005 %}money-in{% endif %}">
+                  {{ "+" if status.balance_cny >= 0 }}&#165;{{ "{:,.2f}".format(status.balance_cny) }}
+                </p>
+              </div>
+              <div class="company-net-item">
+                <p class="company-net-label">Approx Total (RMB)</p>
+                <p class="company-net-value {% if status.balance_usd < 0 or status.balance_cny < 0 %}balance-negative{% elif status.balance_usd > 0 or status.balance_cny > 0 %}money-in{% endif %}">
+                  {{ approx_total_rmb(status.balance_usd, status.balance_cny) }}
+                </p>
+                <p class="company-net-note">{% if fx_summary.fx_source == 'live' and fx_summary.live_rate is not none %}Live rate{% else %}Avg rate{% endif %} &middot; for reference only</p>
+              </div>
+            </div>
+            <div class="fx-strip">
+              <div class="fx-chip">
+                <p class="fx-chip-label">Live FX {% if fx_summary.fx_source == 'live' %}<span style="color:#059669;font-weight:700;font-size:0.65rem;letter-spacing:0;">ACTIVE</span>{% endif %}</p>
+                <p class="fx-chip-value" id="live-fx-value">
+                  {% if fx_summary.live_rate is not none %}
+                  {{ "{:,.4f}".format(fx_summary.live_rate) }}
+                  {% else %}
+                  --
+                  {% endif %}
+                </p>
+                <p class="company-net-note">
+                  {% if fx_summary.live_rate_date %}Updated {{ fx_summary.live_rate_date[:16].replace('T', ' ') }}{% else %}Not fetched yet{% endif %}
+                  &middot; <a href="#" id="fx-refresh-btn" style="color:#1d4ed8;text-decoration:none;font-weight:600;">Refresh</a>
+                </p>
+              </div>
+              <div class="fx-chip">
+                <p class="fx-chip-label">Avg FX {% if fx_summary.fx_source == 'average' %}<span style="color:#059669;font-weight:700;font-size:0.65rem;letter-spacing:0;">ACTIVE</span>{% endif %}</p>
+                <p class="fx-chip-value">
+                  {% if fx_summary.average_rate is not none %}
+                  {{ "{:,.4f}".format(fx_summary.average_rate) }}
+                  {% else %}
+                  --
+                  {% endif %}
+                </p>
+                <p class="company-net-note">
+                  {% if fx_summary.count > 0 %}From {{ fx_summary.count }} pair{{ 's' if fx_summary.count != 1 else '' }}{% endif %}
+                </p>
+              </div>
+              <div class="fx-chip">
+                <p class="fx-chip-label">Latest FX</p>
+                <p class="fx-chip-value">
+                  {% if fx_summary.latest_rate is not none %}
+                  {{ "{:,.4f}".format(fx_summary.latest_rate) }}
+                  {% else %}
+                  --
+                  {% endif %}
+                </p>
+                <p class="company-net-note">
+                  {% if fx_summary.latest_date %}{{ fx_summary.latest_date }}{% endif %}
+                </p>
+              </div>
+            </div>
+            <script>
+            (function() {
+              var btn = document.getElementById('fx-refresh-btn');
+              if (!btn) return;
+              btn.addEventListener('click', function(e) {
+                e.preventDefault();
+                btn.textContent = 'Fetching...';
+                fetch('/api/fx-refresh', {method: 'POST'})
+                  .then(function(r) { return r.json(); })
+                  .then(function(data) {
+                    if (data.error) {
+                      btn.textContent = 'Failed';
+                      setTimeout(function() { btn.textContent = 'Refresh'; }, 2000);
+                    } else {
+                      document.getElementById('live-fx-value').textContent = data.rate.toFixed(4);
+                      btn.textContent = 'Done!';
+                      setTimeout(function() { location.reload(); }, 600);
+                    }
+                  })
+                  .catch(function() {
+                    btn.textContent = 'Error';
+                    setTimeout(function() { btn.textContent = 'Refresh'; }, 2000);
+                  });
+              });
+            })();
+            </script>
+          </div>
+          {% endif %}
+        </div>
+      </section>
+
+      {% if error %}
+      <div style="background:var(--red-bg);border:1px solid var(--red);border-radius:var(--radius);padding:14px 18px;margin-bottom:18px;">
+        <p class="balance-negative" style="margin:0;font-size:0.9rem">{{ error }}</p>
+      </div>
+      {% endif %}
+
+      <!-- Bank Balances -->
+      <section class="bank-section">
+        <div class="bank-header" id="bank-toggle">
+          <div class="bank-header-left">
+            <div class="section-head-main">
+              <h3>Bank Account Balances</h3>
+              <span class="count-pill">{{ bank_balances|length }} account{{ 's' if bank_balances|length != 1 else '' }}</span>
+            </div>
+            <div class="section-summary">
+              <span class="section-total">
+                <span class="money-block">
+                  <span class="money-block-label">USD</span>
+                  <strong class="money-block-value {% if bank_totals.total_usd < 0 %}balance-negative{% endif %}">
+                    {{ "+" if bank_totals.total_usd >= 0 else "" }}${{ "{:,.2f}".format(bank_totals.total_usd) }}
+                  </strong>
+                  <span class="money-block-ref {% if bank_totals.total_usd < 0 %}is-negative{% endif %}">{{ usd_ref(bank_totals.total_usd|abs) }}</span>
+                </span>
+                <span class="money-block">
+                  <span class="money-block-label">CNY</span>
+                  <strong class="money-block-value {% if bank_totals.total_cny < 0 %}balance-negative{% endif %}">
+                    {{ "+" if bank_totals.total_cny >= 0 else "" }}&#165;{{ "{:,.2f}".format(bank_totals.total_cny) }}
+                  </strong>
+                </span>
+                <span class="approx {% if fx_summary.display_rate is not none and (bank_totals.total_usd * fx_summary.display_rate + bank_totals.total_cny) < 0 %}balance-negative{% endif %}">
+                  <span class="approx-label">Approx Total RMB</span>
+                  {{ approx_total_rmb(bank_totals.total_usd, bank_totals.total_cny) }}
+                </span>
+              </span>
+            </div>
+          </div>
+          <span class="toggle-icon">&#9654;</span>
+        </div>
+        <div class="bank-body" id="bank-body">
+          <div class="bank-table-wrap">
+            <table class="bank-table">
+              <thead>
+                <tr>
+                  <th>Account Name</th>
+                  <th>USD Balance</th>
+                  <th>CNY Balance</th>
+                  <th>Last Updated</th>
+                  <th class="col-actions">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for b in bank_balances %}
+                <tr id="bank-row-{{ b.id }}">
+                  <td class="bank-display-{{ b.id }}">{{ b.account_name }}</td>
+                  <td class="bank-display-{{ b.id }} bal-cell {% if b.usd_balance < 0 %}balance-negative{% elif b.usd_balance > 0 %}money-in{% endif %}">${{ "{:,.2f}".format(b.usd_balance) }}{{ usd_ref(b.usd_balance|abs) }}</td>
+                  <td class="bank-display-{{ b.id }} bal-cell {% if b.cny_balance < 0 %}balance-negative{% elif b.cny_balance > 0 %}money-in{% endif %}">¥{{ "{:,.2f}".format(b.cny_balance) }}</td>
+                  <td class="bank-display-{{ b.id }}" style="font-size:0.8rem;color:var(--muted);">{{ b.updated_at[:10] if b.updated_at else '' }}</td>
+                  <td class="bank-display-{{ b.id }}">
+                    <div class="bank-actions">
+                      <button type="button" class="btn-sm" onclick="toggleBankEdit({{ b.id }})">Edit</button>
+                      <form method="post" action="{{ url_for('delete_bank_balance', balance_id=b.id) }}" style="margin:0" onsubmit="return confirm('Delete account {{ b.account_name }}?')">
+                        <button type="submit" class="btn-sm btn-danger">Delete</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+                <tr class="bank-edit-row" id="bank-edit-{{ b.id }}" style="display:none;">
+                  <form method="post" action="{{ url_for('edit_bank_balance', balance_id=b.id) }}">
+                    <td><input type="text" name="account_name" value="{{ b.account_name }}" required></td>
+                    <td><input type="number" name="usd_balance" value="{{ b.usd_balance }}" step="0.01"></td>
+                    <td><input type="number" name="cny_balance" value="{{ b.cny_balance }}" step="0.01"></td>
+                    <td colspan="2">
+                      <div class="bank-actions">
+                        <button type="submit" class="btn-sm" style="background:var(--accent);color:white;border-color:var(--accent);">Save</button>
+                        <button type="button" class="btn-sm" onclick="toggleBankEdit({{ b.id }})">Cancel</button>
+                      </div>
+                    </td>
+                  </form>
+                </tr>
+                {% endfor %}
+                <tr class="bank-add-row">
+                  <form method="post" action="{{ url_for('add_bank_balance') }}">
+                    <td><input type="text" name="account_name" placeholder="Account name" required></td>
+                    <td><input type="number" name="usd_balance" value="0" step="0.01"></td>
+                    <td><input type="number" name="cny_balance" value="0" step="0.01"></td>
+                    <td colspan="2">
+                      <button type="submit" class="button secondary" style="padding:6px 14px;font-size:0.82rem;">Add Account</button>
+                    </td>
+                  </form>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Supplier Balances -->
+      <section class="supplier-section">
+        <div class="supplier-header" id="supplier-toggle">
+          <div class="supplier-header-left">
+            <div class="section-head-main">
+              <h3>Supplier Balances (What You Owe)</h3>
+              <span class="count-pill">{{ suppliers|length }} supplier{{ 's' if suppliers|length != 1 else '' }}</span>
+            </div>
+            <div class="section-summary">
+              <span class="section-total">
+                <span class="money-block">
+                  <span class="money-block-label">USD</span>
+                  <strong class="money-block-value {% if supplier_totals.total_usd > 0 %}balance-negative{% endif %}">
+                    {% if supplier_totals.total_usd > 0 %}-{% endif %}${{ "{:,.2f}".format(supplier_totals.total_usd) }}
+                  </strong>
+                  <span class="money-block-ref {% if supplier_totals.total_usd > 0 %}is-negative{% endif %}">{% if supplier_totals.total_usd > 0 %}{{ usd_ref_negative(supplier_totals.total_usd|abs) }}{% else %}{{ usd_ref(0) }}{% endif %}</span>
+                </span>
+                <span class="money-block">
+                  <span class="money-block-label">CNY</span>
+                  <strong class="money-block-value {% if supplier_totals.total_cny > 0 %}balance-negative{% endif %}">
+                    {% if supplier_totals.total_cny > 0 %}-{% endif %}&#165;{{ "{:,.2f}".format(supplier_totals.total_cny) }}
+                  </strong>
+                </span>
+                <span class="approx {% if supplier_totals.total_usd > 0 or supplier_totals.total_cny > 0 %}balance-negative{% endif %}">
+                  <span class="approx-label">Approx Total RMB</span>
+                  {{ approx_total_rmb(-supplier_totals.total_usd, -supplier_totals.total_cny) if supplier_totals.total_usd > 0 or supplier_totals.total_cny > 0 else approx_total_rmb(0, 0) }}
+                </span>
+              </span>
+            </div>
+          </div>
+          <span class="toggle-icon">&#9654;</span>
+        </div>
+        <div class="supplier-body" id="supplier-body">
+          <table class="supplier-table">
+            <thead>
+              <tr>
+                <th>Supplier Name</th>
+                <th>Currency</th>
+                <th>Amount Owed</th>
+                <th>Notes</th>
+                <th>Updated</th>
+                <th class="col-actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for s in suppliers %}
+              <tr id="supplier-row-{{ s.id }}">
+                <td class="sup-display-{{ s.id }}">{{ s.supplier_name }}</td>
+                <td class="sup-display-{{ s.id }}"><span class="client-badge">{{ s.currency }}</span></td>
+                <td class="sup-display-{{ s.id }} bal-cell {% if s.amount_owed > 0 %}balance-negative{% endif %}">{{ ("-$" if s.currency == "USD" and s.amount_owed > 0 else "$" if s.currency == "USD" else "-¥" if s.currency != "USD" and s.amount_owed > 0 else "¥") }}{{ "{:,.2f}".format(s.amount_owed) }}{% if s.currency == "USD" %}{% if s.amount_owed > 0 %}{{ usd_ref_negative(s.amount_owed|abs) }}{% else %}{{ usd_ref(0) }}{% endif %}{% endif %}</td>
+                <td class="sup-display-{{ s.id }}" style="font-size:0.82rem;color:var(--muted);">{{ s.notes }}</td>
+                <td class="sup-display-{{ s.id }}" style="font-size:0.8rem;color:var(--muted);">{{ s.updated_at[:10] if s.updated_at else '' }}</td>
+                <td class="sup-display-{{ s.id }}">
+                  <div class="bank-actions">
+                    <button type="button" class="btn-sm" onclick="toggleSupplierEdit({{ s.id }})">Edit</button>
+                    <form method="post" action="{{ url_for('delete_supplier', supplier_id=s.id) }}" style="margin:0" onsubmit="return confirm('Delete supplier {{ s.supplier_name }}?')">
+                      <button type="submit" class="btn-sm btn-danger">Delete</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+              <tr class="sup-edit-row" id="sup-edit-{{ s.id }}" style="display:none;">
+                <form method="post" action="{{ url_for('edit_supplier', supplier_id=s.id) }}">
+                  <td><input type="text" name="supplier_name" value="{{ s.supplier_name }}" required></td>
+                  <td>
+                    <select name="currency">
+                      <option value="CNY" {% if s.currency == 'CNY' %}selected{% endif %}>CNY</option>
+                      <option value="USD" {% if s.currency == 'USD' %}selected{% endif %}>USD</option>
+                    </select>
+                  </td>
+                  <td><input type="number" name="amount_owed" value="{{ s.amount_owed }}" step="0.01"></td>
+                  <td><input type="text" name="notes" value="{{ s.notes }}" placeholder="Optional notes"></td>
+                  <td colspan="2">
+                    <div class="bank-actions">
+                      <button type="submit" class="btn-sm" style="background:var(--accent);color:white;border-color:var(--accent);">Save</button>
+                      <button type="button" class="btn-sm" onclick="toggleSupplierEdit({{ s.id }})">Cancel</button>
+                    </div>
+                  </td>
+                </form>
+              </tr>
+              {% endfor %}
+              <tr class="supplier-add-row">
+                <form method="post" action="{{ url_for('add_supplier') }}">
+                  <td><input type="text" name="supplier_name" placeholder="Supplier name" required></td>
+                  <td>
+                    <select name="currency">
+                      <option value="CNY">CNY</option>
+                      <option value="USD">USD</option>
+                    </select>
+                  </td>
+                  <td><input type="number" name="amount_owed" value="0" step="0.01"></td>
+                  <td><input type="text" name="notes" placeholder="Optional notes"></td>
+                  <td colspan="2">
+                    <button type="submit" class="button secondary" style="padding:6px 14px;font-size:0.82rem;">Add Supplier</button>
+                  </td>
+                </form>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Expense Accounts -->
+      {% if expense_accounts %}
+      <section class="supplier-section">
+        <div class="supplier-header" id="expense-toggle">
+          <div class="supplier-header-left">
+            <div class="section-head-main">
+              <h3>Expense Accounts</h3>
+              <span class="count-pill">{{ expense_accounts|length }} account{{ 's' if expense_accounts|length != 1 else '' }}</span>
+            </div>
+          </div>
+          <span class="toggle-icon">&#9654;</span>
+        </div>
+        <div class="supplier-body" id="expense-body">
+          <table class="supplier-table">
+            <thead>
+              <tr>
+                <th>Account Name</th>
+                <th>Entries</th>
+                <th>Currencies</th>
+                <th>Balance</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for acc in expense_accounts %}
+              <tr>
+                <td style="font-weight:600;">{{ acc.name }}</td>
+                <td>{{ acc.entry_count }}</td>
+                <td>
+                  {% for cur in acc.currencies %}
+                  <span class="client-badge">{{ cur }}</span>
+                  {% endfor %}
+                </td>
+                <td>
+                  {% for cur, vals in acc.totals.items() %}
+                  <span style="font-weight:600; font-variant-numeric:tabular-nums; {% if vals.balance < 0 %}color:var(--red);{% endif %}">
+                    {{ '¥' if cur == 'CNY' else '$' if cur == 'USD' else 'E£' }}{{ "{:,.2f}".format(vals.balance) }}
+                  </span>
+                  {% if not loop.last %} &middot; {% endif %}
+                  {% endfor %}
+                </td>
+                <td>
+                  <a href="{{ url_for('expense_account_view', account_id=acc.id) }}" class="btn-sm" style="text-decoration:none;">View</a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <div style="padding:12px 16px; text-align:right;">
+            <a href="{{ url_for('expense_list') }}" class="button secondary" style="padding:6px 14px; font-size:0.82rem; text-decoration:none;">Manage All Expenses</a>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
+      <!-- Client list -->
+      <section class="client-section">
+        <div class="client-section-header" id="client-toggle">
+          <div class="client-section-header-left">
+            <div class="section-head-main">
+              <h2>All Clients</h2>
+              <span class="count-pill">{{ clients|length }}</span>
+            </div>
+            <div class="section-summary">
+              <span class="section-total">
+                <span class="money-block">
+                  <span class="money-block-label">USD</span>
+                  <strong class="money-block-value {% if stats.total_usd_balance < 0 %}balance-negative{% endif %}">
+                    {{ "+" if stats.total_usd_balance >= 0 else "" }}${{ "{:,.2f}".format(stats.total_usd_balance) }}
+                  </strong>
+                  <span class="money-block-ref {% if stats.total_usd_balance < 0 %}is-negative{% endif %}">{{ usd_ref(stats.total_usd_balance|abs) }}</span>
+                </span>
+                <span class="money-block">
+                  <span class="money-block-label">CNY</span>
+                  <strong class="money-block-value {% if stats.total_cny_balance < 0 %}balance-negative{% endif %}">
+                    {{ "+" if stats.total_cny_balance >= 0 else "" }}&#165;{{ "{:,.2f}".format(stats.total_cny_balance) }}
+                  </strong>
+                </span>
+                <span class="approx {% if fx_summary.display_rate is not none and (stats.total_usd_balance * fx_summary.display_rate + stats.total_cny_balance) < 0 %}balance-negative{% endif %}">
+                  <span class="approx-label">Approx Total RMB</span>
+                  {{ approx_total_rmb(stats.total_usd_balance, stats.total_cny_balance) }}
+                </span>
+              </span>
+            </div>
+          </div>
+          <span class="toggle-icon">&#9654;</span>
+        </div>
+        <div class="client-section-body" id="client-body">
+        <section class="tools-row">
+          <div class="tool-card">
+            <h3>Create New Client</h3>
+            <p>Open a fresh statement workspace in one step.</p>
+            <form method="post" action="{{ url_for('new_client') }}" class="inline-create">
+              <input type="text" name="name" placeholder="Client name" required>
+              <button class="button secondary" type="submit">Create</button>
+            </form>
+          </div>
+          <div class="tool-card">
+            <h3>Import from CSV</h3>
+            <p>Attach a statement export and place it directly into the dashboard.</p>
+            <form method="post" action="{{ url_for('import_client_csv') }}" enctype="multipart/form-data" class="inline-create">
+              <input type="text" name="name" placeholder="Client name" required>
+              <input type="file" name="statement_csv" accept=".csv,text/csv" required>
+              <button class="button secondary" type="submit">Upload</button>
+            </form>
+          </div>
+        </section>
+
+        <div class="search-bar">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+          </svg>
+          <input type="text" id="client-search" placeholder="Search clients, entries, amounts, dates..." autocomplete="off">
+          <div class="search-results" id="search-results"></div>
+        </div>
+
+        {% if groups %}
+        <div class="group-list" id="group-list">
+          {% for group in groups %}
+            {% if group.children %}
+            <!-- Grouped clients -->
+            <div class="group-wrapper" data-search="{{ group.name|lower }} {% for ch in group.children %}{{ ch.name|lower }} {{ '{:,.2f}'.format(ch.usd_balance) }} {{ '{:,.2f}'.format(ch.cny_balance) }} {% endfor %}{{ '{:,.2f}'.format(group.usd_balance) }} {{ '{:,.2f}'.format(group.cny_balance) }} {{ '{:,.2f}'.format(group.group_usd) }} {{ '{:,.2f}'.format(group.group_cny) }}">
+              <div class="group-header">
+                <div class="group-header-left">
+                  <h3 class="group-name">{{ group.name }}</h3>
+                  <div class="group-totals">
+                    <span>{{ group.group_entries }} entries</span>
+                    <span class="{% if group.group_usd < 0 %}balance-negative{% endif %}">{{ "+" if group.group_usd >= 0 else "" }}${{ "{:,.2f}".format(group.group_usd) }}{{ usd_ref(group.group_usd|abs) }}</span>
+                    <span class="{% if group.group_cny < 0 %}balance-negative{% endif %}">{{ "+" if group.group_cny >= 0 else "" }}¥{{ "{:,.2f}".format(group.group_cny) }}</span>
+                    {% if fx_summary.display_rate is not none %}
+                    <span class="{% if (group.group_usd * fx_summary.display_rate + group.group_cny) < 0 %}balance-negative{% endif %}">{{ approx_total_rmb(group.group_usd, group.group_cny) }}</span>
+                    {% endif %}
+                  </div>
+                </div>
+                <div class="group-actions">
+                  <form method="post" action="{{ url_for('ungroup_all_children', client_id=group.id) }}" style="margin:0">
+                    <button type="submit" class="btn-sm" onclick="return confirm('Ungroup all sub-statements from {{ group.name }}?')">Ungroup All</button>
+                  </form>
+                </div>
+              </div>
+              <div class="group-children">
+                <!-- Parent's own card -->
+                {% macro client_card(c, is_child=false) %}
+                <div class="client-card" data-name="{{ c.name|lower }}" data-id="{{ c.id }}">
+                  <input type="checkbox" class="group-check" value="{{ c.id }}" data-client-name="{{ c.name }}">
+                  <a class="card-link" href="{{ url_for('client_statement', client_id=c.id) }}">
+                    <div class="client-header">
+                      <h3 class="client-name">{{ c.name }}</h3>
+                      <span class="client-badge {% if is_child %}child-badge{% endif %}">{{ c.entry_count }} entries</span>
+                    </div>
+                    <div class="client-balances">
+                      <div class="client-bal">
+                        <p class="client-bal-label">USD</p>
+                        <p class="client-bal-value {% if c.usd_balance < 0 %}balance-negative{% elif c.usd_balance == 0 %}balance-zero{% else %}money-in{% endif %}">
+                          ${{ "{:,.2f}".format(c.usd_balance) }}
+                        </p>
+                      </div>
+                      <div class="client-bal">
+                        <p class="client-bal-label">CNY</p>
+                        <p class="client-bal-value {% if c.cny_balance < 0 %}balance-negative{% elif c.cny_balance == 0 %}balance-zero{% else %}money-in{% endif %}">
+                          ¥{{ "{:,.2f}".format(c.cny_balance) }}
+                        </p>
+                      </div>
+                      {% if fx_summary.display_rate is not none %}
+                      <div class="client-bal">
+                        <p class="client-bal-label">Approx RMB</p>
+                        {%- set client_rmb = (c.usd_balance|float) * fx_summary.display_rate + (c.cny_balance|float) -%}
+                        <p class="client-bal-value {% if client_rmb < -0.005 %}balance-negative{% elif client_rmb < 0.005 %}balance-zero{% else %}money-in{% endif %}">
+                          &#8776; ¥{{ "{:,.2f}".format(client_rmb) }}
+                        </p>
+                      </div>
+                      {% endif %}
+                    </div>
+                    <div class="client-footer">
+                      <span class="client-open">Open <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg></span>
+                    </div>
+                  </a>
+                  <div class="client-actions">
+                    <button type="button" class="btn-sm" onclick="toggleRename({{ c.id }})">
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"/></svg>
+                      Rename
+                    </button>
+                    {% if is_child %}
+                    <form method="post" action="{{ url_for('ungroup_client', client_id=c.id) }}" style="margin:0">
+                      <button type="submit" class="btn-sm">Ungroup</button>
+                    </form>
+                    {% endif %}
+                    <form method="post" action="{{ url_for('delete_client', client_id=c.id) }}" style="margin:0" onsubmit="return confirm('Delete &quot;{{ c.name }}&quot; and all {{ c.entry_count }} entries?')">
+                      <button type="submit" class="btn-sm btn-danger">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>
+                        Delete
+                      </button>
+                    </form>
+                  </div>
+                  <form method="post" action="{{ url_for('rename_client', client_id=c.id) }}" class="rename-row" id="rename-{{ c.id }}">
+                    <input type="text" name="name" value="{{ c.name }}" required>
+                    <button type="submit" class="btn-sm" style="background:var(--accent);color:white;border-color:var(--accent);">Save</button>
+                    <button type="button" class="btn-sm" onclick="toggleRename({{ c.id }})">Cancel</button>
+                  </form>
+                </div>
+                {% endmacro %}
+
+                {{ client_card(group) }}
+                {% for child in group.children %}
+                  {{ client_card(child, is_child=true) }}
+                {% endfor %}
+              </div>
+            </div>
+
+            {% else %}
+            <!-- Standalone client -->
+            <div class="group-wrapper standalone" data-search="{{ group.name|lower }} {{ '{:,.2f}'.format(group.usd_balance) }} {{ '{:,.2f}'.format(group.cny_balance) }}">
+              <div class="standalone-grid">
+                <div class="client-card" data-name="{{ group.name|lower }}" data-id="{{ group.id }}">
+                  <input type="checkbox" class="group-check" value="{{ group.id }}" data-client-name="{{ group.name }}">
+                  <a class="card-link" href="{{ url_for('client_statement', client_id=group.id) }}">
+                    <div class="client-header">
+                      <h3 class="client-name">{{ group.name }}</h3>
+                      <span class="client-badge">{{ group.entry_count }} entries</span>
+                    </div>
+                    <div class="client-balances">
+                      <div class="client-bal">
+                        <p class="client-bal-label">USD Balance</p>
+                        <p class="client-bal-value {% if group.usd_balance < 0 %}balance-negative{% elif group.usd_balance == 0 %}balance-zero{% else %}money-in{% endif %}">
+                          ${{ "{:,.2f}".format(group.usd_balance) }}
+                        </p>
+                      </div>
+                      <div class="client-bal">
+                        <p class="client-bal-label">CNY Balance</p>
+                        <p class="client-bal-value {% if group.cny_balance < 0 %}balance-negative{% elif group.cny_balance == 0 %}balance-zero{% else %}money-in{% endif %}">
+                          ¥{{ "{:,.2f}".format(group.cny_balance) }}
+                        </p>
+                      </div>
+                      {% if fx_summary.display_rate is not none %}
+                      <div class="client-bal">
+                        <p class="client-bal-label">Approx RMB</p>
+                        {%- set client_rmb = (group.usd_balance|float) * fx_summary.display_rate + (group.cny_balance|float) -%}
+                        <p class="client-bal-value {% if client_rmb < -0.005 %}balance-negative{% elif client_rmb < 0.005 %}balance-zero{% else %}money-in{% endif %}">
+                          &#8776; ¥{{ "{:,.2f}".format(client_rmb) }}
+                        </p>
+                      </div>
+                      {% endif %}
+                    </div>
+                    <div class="client-footer">
+                      <span class="client-open">Open <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg></span>
+                    </div>
+                  </a>
+                  <div class="client-actions">
+                    <button type="button" class="btn-sm" onclick="toggleRename({{ group.id }})">
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"/></svg>
+                      Rename
+                    </button>
+                    <form method="post" action="{{ url_for('delete_client', client_id=group.id) }}" style="margin:0" onsubmit="return confirm('Delete &quot;{{ group.name }}&quot; and all {{ group.entry_count }} entries?')">
+                      <button type="submit" class="btn-sm btn-danger">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>
+                        Delete
+                      </button>
+                    </form>
+                  </div>
+                  <form method="post" action="{{ url_for('rename_client', client_id=group.id) }}" class="rename-row" id="rename-{{ group.id }}">
+                    <input type="text" name="name" value="{{ group.name }}" required>
+                    <button type="submit" class="btn-sm" style="background:var(--accent);color:white;border-color:var(--accent);">Save</button>
+                    <button type="button" class="btn-sm" onclick="toggleRename({{ group.id }})">Cancel</button>
+                  </form>
+                </div>
+              </div>
+            </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+          <p><strong>No clients yet</strong></p>
+          <p>Create a new client or import a CSV above to get started.</p>
+        </div>
+        {% endif %}
+        </div>
+      </section>
+    </main>
+
+    <!-- Group bar (fixed bottom) -->
+    <div class="group-bar" id="group-bar">
+      <span class="group-bar-info" id="group-info">Select clients to group together</span>
+      <div class="group-bar-actions">
+        <form method="post" action="{{ url_for('group_clients') }}" id="group-form">
+          <span style="color:rgba(255,255,255,0.8);font-size:0.82rem;margin-right:4px;">Parent:</span>
+          <select name="parent_id" id="group-parent" required></select>
+          <button type="submit" class="btn-bar" id="group-submit" disabled>Group Selected</button>
+        </form>
+        <button type="button" class="btn-bar-ghost" id="group-cancel">Cancel</button>
+      </div>
+    </div>
+
+    {% include '_calculator.html' %}
+    <script>
+      /* -- Bank balances toggle -- */
+      const bankToggle = document.getElementById('bank-toggle');
+      const bankBody = document.getElementById('bank-body');
+      if (bankToggle && bankBody) {
+        bankToggle.addEventListener('click', () => {
+          bankToggle.classList.toggle('is-open');
+          bankBody.classList.toggle('is-open');
+        });
+      }
+
+      function toggleBankEdit(id) {
+        const editRow = document.getElementById('bank-edit-' + id);
+        const displayCells = document.querySelectorAll('.bank-display-' + id);
+        if (editRow.style.display === 'none') {
+          editRow.style.display = '';
+          displayCells.forEach(c => { c.closest('tr').style.display = 'none'; });
+        } else {
+          editRow.style.display = 'none';
+          displayCells.forEach(c => { c.closest('tr').style.display = ''; });
+        }
+      }
+
+      /* -- Supplier toggle -- */
+      const supplierToggle = document.getElementById('supplier-toggle');
+      const supplierBody = document.getElementById('supplier-body');
+      if (supplierToggle && supplierBody) {
+        supplierToggle.addEventListener('click', () => {
+          supplierToggle.classList.toggle('is-open');
+          supplierBody.classList.toggle('is-open');
+        });
+      }
+
+      /* -- Expense toggle -- */
+      const expenseToggle = document.getElementById('expense-toggle');
+      const expenseBody = document.getElementById('expense-body');
+      if (expenseToggle && expenseBody) {
+        expenseToggle.addEventListener('click', () => {
+          expenseToggle.classList.toggle('is-open');
+          expenseBody.classList.toggle('is-open');
+        });
+      }
+
+      const clientToggle = document.getElementById('client-toggle');
+      const clientBody = document.getElementById('client-body');
+      if (clientToggle && clientBody) {
+        clientToggle.addEventListener('click', () => {
+          clientToggle.classList.toggle('is-open');
+          clientBody.classList.toggle('is-open');
+        });
+      }
+
+      function toggleSupplierEdit(id) {
+        const editRow = document.getElementById('sup-edit-' + id);
+        const displayCells = document.querySelectorAll('.sup-display-' + id);
+        if (editRow.style.display === 'none') {
+          editRow.style.display = '';
+          displayCells.forEach(c => { c.closest('tr').style.display = 'none'; });
+        } else {
+          editRow.style.display = 'none';
+          displayCells.forEach(c => { c.closest('tr').style.display = ''; });
+        }
+      }
+
+      /* -- Search -- */
+      const searchInput = document.getElementById('client-search');
+      const groupList = document.getElementById('group-list');
+      const searchResults = document.getElementById('search-results');
+      let searchTimer = null;
+      if (searchInput && groupList) {
+        searchInput.addEventListener('input', () => {
+          const q = searchInput.value.toLowerCase().trim();
+          // Filter client cards
+          groupList.querySelectorAll('.group-wrapper').forEach(wrapper => {
+            const text = wrapper.dataset.search || '';
+            wrapper.style.display = text.includes(q) ? '' : 'none';
+          });
+          // Global entry search (debounced)
+          clearTimeout(searchTimer);
+          if (q.length < 2) { searchResults.classList.remove('active'); return; }
+          searchTimer = setTimeout(() => {
+            fetch('/api/global-search?q=' + encodeURIComponent(q))
+              .then(r => r.json())
+              .then(data => {
+                searchResults.replaceChildren();
+                if (!data.length) {
+                  const empty = document.createElement('div');
+                  empty.className = 'sr-empty';
+                  empty.textContent = 'No entries found';
+                  searchResults.appendChild(empty);
+                } else {
+                  data.forEach(e => {
+                    const sym = e.currency === 'CNY' ? '\u00a5' : '$';
+                    const sign = e.direction === 'IN' ? '+' : '-';
+                    const amtClass = e.direction === 'IN' ? 'money-in' : 'balance-negative';
+                    const link = document.createElement('a');
+                    link.className = 'search-result-item';
+                    link.href = '/clients/' + encodeURIComponent(e.client_id) + '?q=' + encodeURIComponent(searchInput.value.trim());
+
+                    const clientSpan = document.createElement('span');
+                    clientSpan.className = 'sr-client';
+                    clientSpan.textContent = e.client_name || '';
+                    link.appendChild(clientSpan);
+
+                    const descSpan = document.createElement('span');
+                    descSpan.className = 'sr-desc';
+                    descSpan.textContent = e.description || '';
+                    link.appendChild(descSpan);
+
+                    const amountSpan = document.createElement('span');
+                    amountSpan.className = 'sr-amount ' + amtClass;
+                    amountSpan.textContent = sign + sym + Number(e.amount).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+                    link.appendChild(amountSpan);
+
+                    const dateSpan = document.createElement('span');
+                    dateSpan.className = 'sr-date';
+                    dateSpan.textContent = e.entry_date || '';
+                    link.appendChild(dateSpan);
+
+                    searchResults.appendChild(link);
+                  });
+                }
+                searchResults.classList.add('active');
+              });
+          }, 300);
+        });
+        document.addEventListener('click', e => {
+          if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+            searchResults.classList.remove('active');
+          }
+        });
+      }
+
+      /* -- Rename -- */
+      function toggleRename(clientId) {
+        const row = document.getElementById('rename-' + clientId);
+        if (row) {
+          row.classList.toggle('is-open');
+          if (row.classList.contains('is-open')) row.querySelector('input').focus();
+        }
+      }
+
+      /* -- Group mode -- */
+      const groupToggle = document.getElementById('group-toggle-btn');
+      const groupBar = document.getElementById('group-bar');
+      const groupForm = document.getElementById('group-form');
+      const groupParent = document.getElementById('group-parent');
+      const groupInfo = document.getElementById('group-info');
+      const groupSubmit = document.getElementById('group-submit');
+      const groupCancel = document.getElementById('group-cancel');
+
+      function getChecked() {
+        return Array.from(document.querySelectorAll('.group-check:checked'));
+      }
+
+      function updateGroupBar() {
+        const checked = getChecked();
+        if (checked.length < 2) {
+          groupInfo.textContent = checked.length === 0
+            ? 'Tick checkboxes to select clients to group'
+            : '1 selected — pick at least 2';
+          groupSubmit.disabled = true;
+          groupParent.innerHTML = '<option value="">--</option>';
+        } else {
+          groupInfo.textContent = checked.length + ' clients selected';
+          groupSubmit.disabled = false;
+          groupParent.innerHTML = '';
+          checked.forEach(cb => {
+            const opt = document.createElement('option');
+            opt.value = cb.value;
+            opt.textContent = cb.dataset.clientName;
+            groupParent.appendChild(opt);
+          });
+        }
+        groupForm.querySelectorAll('input[name="child_ids"]').forEach(el => el.remove());
+        checked.forEach(cb => {
+          const inp = document.createElement('input');
+          inp.type = 'hidden';
+          inp.name = 'child_ids';
+          inp.value = cb.value;
+          groupForm.appendChild(inp);
+        });
+      }
+
+      if (groupToggle) {
+        groupToggle.addEventListener('click', () => {
+          document.body.classList.add('group-mode');
+          groupBar.classList.add('is-visible');
+          groupToggle.style.display = 'none';
+          updateGroupBar();
+        });
+      }
+      if (groupCancel) {
+        groupCancel.addEventListener('click', () => {
+          document.body.classList.remove('group-mode');
+          groupBar.classList.remove('is-visible');
+          if (groupToggle) groupToggle.style.display = '';
+          document.querySelectorAll('.group-check').forEach(cb => cb.checked = false);
+        });
+      }
+      document.querySelectorAll('.group-check').forEach(cb => {
+        cb.addEventListener('change', updateGroupBar);
+      });
+
+      if (groupForm) {
+        groupForm.addEventListener('submit', (e) => {
+          const checked = getChecked();
+          const parentId = groupParent.value;
+          const parentName = checked.find(cb => cb.value === parentId)?.dataset.clientName || '';
+          const childNames = checked.filter(cb => cb.value !== parentId).map(cb => cb.dataset.clientName);
+          if (!confirm('Group ' + childNames.join(', ') + ' under "' + parentName + '"?\n\nAll statements stay separate — they will just be displayed together.')) {
+            e.preventDefault();
+          }
+        });
+      }
+    </script>
+  </body>
+</html>

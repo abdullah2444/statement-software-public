@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <title>Settings - {{ app_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css') }}">
+    <style>
+      body { background: linear-gradient(180deg, #f8fafc 0%, #f3f6fb 100%); }
+      .settings-shell {
+        max-width: 900px;
+        margin: 40px auto;
+        padding: 0 20px;
+      }
+      .settings-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 24px;
+      }
+      .settings-header h1 {
+        font-size: 24px;
+        font-weight: 700;
+        color: #111827;
+      }
+      .settings-card {
+        background: rgba(255,255,255,0.98);
+        border: 1px solid #dbe3ee;
+        border-radius: 14px;
+        padding: 24px;
+        margin-bottom: 20px;
+        box-shadow: 0 12px 30px rgba(15,23,42,0.06);
+      }
+      .settings-card h2 {
+        font-size: 16px;
+        font-weight: 600;
+        color: #111827;
+        margin: 0 0 4px;
+      }
+      .settings-card p {
+        font-size: 13px;
+        color: #6b7280;
+        margin: 0 0 16px;
+      }
+      .settings-field {
+        margin-bottom: 16px;
+      }
+      .settings-field:last-child {
+        margin-bottom: 0;
+      }
+      .settings-field label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 6px;
+      }
+      .settings-field input[type="text"],
+      .settings-field input[type="password"],
+      .settings-field select {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid #cfd8e3;
+        border-radius: 10px;
+        font-size: 14px;
+        color: #1f2937;
+        background: #fff;
+        box-sizing: border-box;
+      }
+      .settings-field input:focus,
+      .settings-field select:focus {
+        outline: none;
+        border-color: #1d4ed8;
+        box-shadow: 0 0 0 3px rgba(29,78,216,0.1);
+      }
+      .settings-field .field-hint {
+        font-size: 12px;
+        color: #9ca3af;
+        margin-top: 4px;
+      }
+      .settings-actions {
+        display: flex;
+        gap: 12px;
+        justify-content: flex-end;
+        margin-top: 20px;
+      }
+      .btn-save {
+        background: #1d4ed8;
+        color: #fff;
+        border: none;
+        border-radius: 10px;
+        padding: 10px 20px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .btn-save:hover { background: #1e40af; }
+      .btn-secondary {
+        background: #fff;
+        color: #1f2937;
+        border: 1px solid #cfd8e3;
+        border-radius: 10px;
+        padding: 10px 16px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        text-decoration: none;
+      }
+      .btn-secondary:hover { background: #f8fafc; }
+      .btn-back {
+        background: #fff;
+        color: #334155;
+        border: 1px solid #cfd8e3;
+        border-radius: 10px;
+        padding: 10px 16px;
+        font-size: 14px;
+        font-weight: 500;
+        text-decoration: none;
+        transition: background 0.15s;
+      }
+      .btn-back:hover { background: #f8fafc; }
+      .log-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      .log-table th { text-align: left; padding: 8px 8px; border-bottom: 2px solid #e5e7eb; font-weight: 600; color: #374151; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+      .log-table td { padding: 8px 8px; border-bottom: 1px solid #f3f4f6; color: #1f2937; vertical-align: top; }
+      .log-table tr:last-child td { border-bottom: none; }
+      .log-table tr.undone td { opacity: 0.45; text-decoration: line-through; }
+      .log-badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 600; }
+      .log-badge.create { background: #d1fae5; color: #065f46; }
+      .log-badge.update { background: #dbeafe; color: #1e3a8a; }
+      .log-badge.delete { background: #fee2e2; color: #991b1b; }
+      .log-detail { font-family: monospace; font-size: 11px; color: #6b7280; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+      .log-detail.expanded { white-space: pre-wrap; word-break: break-all; }
+      .log-empty { text-align: center; color: #9ca3af; padding: 24px; font-size: 13px; }
+      .table-scroll-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      .log-filter { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+      .log-filter select, .log-filter input { padding: 6px 10px; border: 1px solid #cfd8e3; border-radius: 8px; font-size: 12px; }
+      .log-count { font-size: 12px; color: #6b7280; margin-left: auto; }
+      .key-toggle {
+        background: none;
+        border: none;
+        color: #1d4ed8;
+        font-size: 12px;
+        cursor: pointer;
+        padding: 0;
+        margin-top: 4px;
+      }
+      .key-toggle:hover { text-decoration: underline; }
+      .key-status {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 500;
+        margin-left: 8px;
+      }
+      .key-status.configured { background: #d1fae5; color: #065f46; }
+      .key-status.missing { background: #fee2e2; color: #991b1b; }
+      .flash-msg { padding: 8px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
+      .flash-error { background: #fee2e2; color: #991b1b; }
+      .flash-success { background: #d1fae5; color: #065f46; }
+      .db-meta {
+        display: grid;
+        gap: 8px;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        margin-bottom: 16px;
+      }
+      .db-meta-item {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 12px;
+      }
+      .db-meta-item strong {
+        display: block;
+        font-size: 12px;
+        color: #64748b;
+        margin-bottom: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .db-meta-item span {
+        color: #111827;
+        font-size: 14px;
+        word-break: break-word;
+      }
+      .settings-upload-row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .settings-upload-row input[type="file"] {
+        flex: 1 1 240px;
+      }
+      .db-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      .db-table th {
+        text-align: left;
+        padding: 8px 10px;
+        border-bottom: 2px solid #e5e7eb;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: #475569;
+      }
+      .db-table td {
+        padding: 10px;
+        border-bottom: 1px solid #f1f5f9;
+        vertical-align: middle;
+      }
+      .db-table tr:last-child td {
+        border-bottom: none;
+      }
+      .inline-form {
+        display: inline-flex;
+        margin: 0;
+      }
+      .inline-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      @media (max-width: 720px) {
+        .settings-shell { margin: 20px auto; padding: 0 12px; }
+        .settings-header { flex-wrap: wrap; gap: 10px; }
+        .settings-header h1 { font-size: 20px; }
+        .settings-card { padding: 18px; }
+        .settings-actions { justify-content: stretch; }
+        .settings-actions .btn-save { width: 100%; min-height: 44px; }
+      }
+      @media (max-width: 480px) {
+        .settings-shell { margin: 12px auto; padding: 0 8px; }
+        .settings-header h1 { font-size: 18px; }
+        .settings-card { padding: 14px; border-radius: 10px; }
+        .settings-field input[type="text"],
+        .settings-field input[type="password"],
+        .settings-field select { padding: 12px; font-size: 16px; min-height: 48px; }
+        .btn-save { padding: 12px 20px; font-size: 16px; }
+        .btn-back { padding: 8px 14px; font-size: 13px; }
+        .key-status { margin-left: 4px; font-size: 11px; }
+      }
+    </style>
+  </head>
+  <body>
+    {% include '_nav.html' %}
+    <div class="settings-shell">
+      <div class="settings-header">
+        <h1>Settings</h1>
+        <a href="{{ url_for('index') }}" class="btn-back desktop-only">Back to Dashboard</a>
+      </div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      {% for cat, msg in messages %}
+      <div class="flash-msg flash-{{ cat }}">{{ msg }}</div>
+      {% endfor %}
+      {% endif %}
+      {% endwith %}
+
+      <form method="POST" action="{{ url_for('settings_save') }}">
+        <div class="settings-card">
+          <h2>Exchange Rate</h2>
+          <p>Choose which rate to use for Approx Total (RMB) calculations on the dashboard.</p>
+
+          <div class="settings-field">
+            <label for="fx_rate_source">Rate Source</label>
+            <select id="fx_rate_source" name="fx_rate_source">
+              <option value="live" {% if fx_rate_source == 'live' %}selected{% endif %}>Live API Rate</option>
+              <option value="average" {% if fx_rate_source == 'average' %}selected{% endif %}>Average Historical Rate</option>
+            </select>
+            <div class="field-hint">Live: fetched from exchange rate API on demand. Average: calculated from all recorded exchanges.</div>
+          </div>
+
+          <div class="settings-field">
+            <label>Current Stored Live Rate</label>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <span style="font-size:15px;font-weight:700;color:#1f2937;" id="fx-stored-rate">
+                {% if fx_live_rate %}1 USD = {{ fx_live_rate }} CNY{% else %}Not fetched yet{% endif %}
+              </span>
+              {% if fx_live_rate_updated_at %}
+              <span style="font-size:12px;color:#9ca3af;">Updated {{ fx_live_rate_updated_at[:16].replace('T', ' ') }}</span>
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="settings-field">
+            <label>Test API Connection</label>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <button type="button" id="fx-test-btn" style="background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;">Test API</button>
+              <span id="fx-test-result" style="font-size:13px;color:#6b7280;"></span>
+            </div>
+            <div class="field-hint">Fetches a live USD/CNY rate to verify the API is reachable.</div>
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <h2>
+            OpenRouter AI
+            {% if api_key_set %}
+              <span class="key-status configured">Configured</span>
+            {% else %}
+              <span class="key-status missing">Not Set</span>
+            {% endif %}
+          </h2>
+          <p>API key and model for image parsing and text extraction.</p>
+
+          <div class="settings-field">
+            <label for="openrouter_api_key">API Key</label>
+            {% if api_key_set %}
+            <div class="field-hint" style="margin-bottom:6px;">Current: <code>{{ api_key_masked }}</code></div>
+            {% endif %}
+            <input type="password" id="openrouter_api_key" name="openrouter_api_key"
+                   value=""
+                   placeholder="{% if api_key_set %}Enter new key to replace{% else %}sk-or-...{% endif %}">
+            <div class="field-hint">Get your key from openrouter.ai/settings/keys. Leave blank to keep current key.</div>
+          </div>
+
+          <div class="settings-field">
+            <label for="openrouter_model">Model</label>
+            <select id="openrouter_model" name="openrouter_model">
+              {% for model_id, model_name in models %}
+                <option value="{{ model_id }}" {% if model_id == current_model %}selected{% endif %}>{{ model_name }}</option>
+              {% endfor %}
+            </select>
+            <div class="field-hint">Only vision-capable models are shown. Models are fetched from OpenRouter.</div>
+          </div>
+        </div>
+
+        <div class="settings-actions">
+          <button type="submit" class="btn-save">Save Settings</button>
+        </div>
+      </form>
+
+      <div class="settings-card">
+        <h2>Backup And Restore</h2>
+        <p>Download a full backup with the database and uploaded images, upload a replacement, or restore an older backup. Every restore creates a full safety backup first.</p>
+
+        <div class="db-meta">
+          <div class="db-meta-item">
+            <strong>Current Database</strong>
+            <span class="mono">{{ current_db_info.name }}</span>
+          </div>
+          <div class="db-meta-item">
+            <strong>Size</strong>
+            <span>{{ current_db_info.size_label }}</span>
+          </div>
+          <div class="db-meta-item">
+            <strong>Database Path</strong>
+            <span class="mono">{{ db_path_display }}</span>
+          </div>
+          <div class="db-meta-item">
+            <strong>Backup Directory</strong>
+            <span class="mono">{{ backup_dir_display }}</span>
+          </div>
+        </div>
+
+        <div class="settings-actions" style="justify-content:flex-start; margin-top:0;">
+          <a href="{{ url_for('settings_download_full_backup') }}" class="btn-save">Download Full Backup</a>
+          <a href="{{ url_for('settings_download_database') }}" class="btn-secondary">Download Database Only</a>
+        </div>
+
+        <div class="settings-field" style="margin-top:20px;">
+          <label for="database_file">Upload And Restore</label>
+          <form method="POST" action="{{ url_for('settings_upload_database') }}" enctype="multipart/form-data">
+            {{ csrf_input() }}
+            <div class="settings-upload-row">
+              <input id="database_file" type="file" name="database_file" accept=".tar.gz,.tgz,.db,.sqlite,.sqlite3" required>
+              <button type="submit" class="btn-save">Upload And Restore</button>
+            </div>
+            <div class="field-hint">Accepted files: .tar.gz, .tgz, .db, .sqlite, .sqlite3. Full backups restore uploaded images; database-only files do not include images.</div>
+          </form>
+        </div>
+
+        <div class="settings-field" style="margin-top:24px;">
+          <label>Available Backups</label>
+          {% if db_backups %}
+          <div class="table-scroll-wrap">
+            <table class="db-table">
+              <thead>
+                <tr>
+                  <th>Filename</th>
+                  <th>Type</th>
+                  <th>Created</th>
+                  <th>Size</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for backup in db_backups %}
+                <tr>
+                  <td class="mono">{{ backup.name }}</td>
+                  <td>{{ backup.kind }}</td>
+                  <td>{{ backup.created_at }}</td>
+                  <td>{{ backup.size_label }}</td>
+                  <td>
+                    <div class="inline-actions">
+                      <a href="{{ url_for('settings_download_database_backup', backup_name=backup.name) }}" class="btn-secondary">Download</a>
+                      <form method="POST" action="{{ url_for('settings_restore_database_backup') }}" class="inline-form" onsubmit="return confirm('Restore backup {{ backup.name }}? The current database will be saved first.');">
+                        {{ csrf_input() }}
+                        <input type="hidden" name="backup_name" value="{{ backup.name }}">
+                        <button type="submit" class="btn-save">Restore</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="field-hint">No backups stored yet. A backup will be created automatically the first time you restore a database.</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="settings-card" style="max-width:none;">
+        <h2>API Audit Log</h2>
+        <p>All write operations performed through the API are logged here.</p>
+
+        {% if audit_log %}
+        <div class="log-filter">
+          <select id="log-action-filter" onchange="filterLog()">
+            <option value="">All Actions</option>
+            {% set actions_seen = [] %}
+            {% for entry in audit_log %}
+              {% if entry.action not in actions_seen %}
+                {% if actions_seen.append(entry.action) %}{% endif %}
+                <option value="{{ entry.action }}">{{ entry.action.replace('_', ' ').title() }}</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+          <input type="text" id="log-search" placeholder="Search details..." oninput="filterLog()">
+          <span class="log-count" id="log-count">{{ audit_log|length }} entries</span>
+        </div>
+        <div class="table-scroll-wrap">
+        <table class="log-table" id="audit-log-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Action</th>
+              <th>Resource</th>
+              <th>Details</th>
+              <th>Time</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for entry in audit_log %}
+            <tr class="log-row {% if entry.undone %}undone{% endif %}" data-action="{{ entry.action }}" data-detail="{{ entry.detail|tojson }}">
+              <td>{{ entry.id }}</td>
+              <td>
+                {% if 'create' in entry.action %}
+                <span class="log-badge create">{{ entry.action.replace('_', ' ') }}</span>
+                {% elif 'update' in entry.action or 'restore' in entry.action %}
+                <span class="log-badge update">{{ entry.action.replace('_', ' ') }}</span>
+                {% elif 'delete' in entry.action %}
+                <span class="log-badge delete">{{ entry.action.replace('_', ' ') }}</span>
+                {% else %}
+                <span class="log-badge">{{ entry.action.replace('_', ' ') }}</span>
+                {% endif %}
+              </td>
+              <td>{{ entry.resource_type.replace('_', ' ') }} {% if entry.resource_id %}#{{ entry.resource_id }}{% endif %}</td>
+              <td>
+                <div class="log-detail" onclick="this.classList.toggle('expanded')" title="Click to expand">
+                  {% set d = entry.detail %}
+                  {% if d.get('description') %}
+                    {{ d.description }} - {{ d.get('currency','') }} {{ d.get('amount','') }}
+                  {% elif d.get('name') %}
+                    {{ d.name }}
+                  {% elif d.get('account_name') %}
+                    {{ d.account_name }} (USD: {{ d.get('usd_balance','') }}, CNY: {{ d.get('cny_balance','') }})
+                  {% elif d.get('supplier_name') %}
+                    {{ d.supplier_name }} - {{ d.get('currency','') }} {{ d.get('amount_owed','') }}
+                  {% elif d.get('before') and d.get('after') %}
+                    Updated: {{ d.after.get('description', d.after.get('account_name', '')) }}
+                  {% elif d.get('transfer_group') %}
+                    FX: {{ d.transfer_group }}
+                  {% else %}
+                    {{ d|tojson|truncate(80) }}
+                  {% endif %}
+                </div>
+              </td>
+              <td style="white-space:nowrap;">{{ entry.created_at[:16].replace('T', ' ') }}</td>
+              <td>
+                {% if entry.undone %}
+                <span class="log-badge delete">Undone</span>
+                {% else %}
+                <span class="log-badge create">Active</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        {% else %}
+        <div class="log-empty">No API actions recorded yet. Actions will appear here when the API is used to create, update, or delete records.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <script>
+    function filterLog() {
+      var action = document.getElementById('log-action-filter').value.toLowerCase();
+      var search = document.getElementById('log-search').value.toLowerCase();
+      var rows = document.querySelectorAll('.log-row');
+      var visible = 0;
+      rows.forEach(function(row) {
+        var rowAction = row.getAttribute('data-action') || '';
+        var rowDetail = row.getAttribute('data-detail') || '';
+        var showAction = !action || rowAction === action;
+        var showSearch = !search || rowDetail.toLowerCase().indexOf(search) !== -1 || rowAction.toLowerCase().indexOf(search) !== -1;
+        if (showAction && showSearch) {
+          row.style.display = '';
+          visible++;
+        } else {
+          row.style.display = 'none';
+        }
+      });
+      document.getElementById('log-count').textContent = visible + ' entries';
+    }
+    var fxTestBtn = document.getElementById('fx-test-btn');
+    var fxTestResult = document.getElementById('fx-test-result');
+    if (fxTestBtn) {
+      fxTestBtn.addEventListener('click', function() {
+        fxTestResult.textContent = 'Fetching...';
+        fxTestResult.style.color = '#6b7280';
+        fetch('/api/fx-rate?from=USD&to=CNY')
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (data.error) {
+              fxTestResult.textContent = 'Error: ' + data.error;
+              fxTestResult.style.color = '#dc2626';
+            } else {
+              fxTestResult.textContent = '1 USD = ' + data.rate.toFixed(4) + ' CNY (source: ' + data.source + ')';
+              fxTestResult.style.color = '#059669';
+            }
+          })
+          .catch(function(err) {
+            fxTestResult.textContent = 'Connection error: ' + err.message;
+            fxTestResult.style.color = '#dc2626';
+          });
+      });
+    }
+    </script>
+  </body>
+</html>

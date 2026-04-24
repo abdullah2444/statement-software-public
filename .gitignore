@@ -1,0 +1,47 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data
+data/
+statement-software-data/
+statement_software.db
+*.db
+*.sqlite
+*.sqlite3
+uploads/
+backups/
+
+# Logs and process files
+*.log
+*.pid
+server.out.log
+server.err.log
+
+# Python
+__pycache__/
+*.py[cod]
+.Python
+.venv/
+venv/
+env/
+
+# Backups and archives
+Dockerfile.cached
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.backup
+*.bak
+statement-software/
+
+# Local editor / tool state
+.claude/
+.mcp.json
+.playwright-mcp/
+
+# OS files
+.DS_Store
+Thumbs.db

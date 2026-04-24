@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>New Client</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  </head>
+  <body>
+    <main class="shell shell-narrow">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">{{ brand_name }}</p>
+          <h1>New Client</h1>
+        </div>
+        <a class="button secondary" href="{{ url_for('index') }}">Back</a>
+      </section>
+      <section class="card form-card">
+        <form method="post" class="form-grid">
+          <label>
+            <span>Client Name</span>
+            <input type="text" name="name" required>
+          </label>
+          <button class="button" type="submit">Create Client</button>
+        </form>
+      </section>
+    </main>
+  </body>
+</html>

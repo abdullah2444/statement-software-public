@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+REPO_URL_DEFAULT="https://github.com/abdullah2444/statement-software-public.git"
+BRANCH="main"
+INSTALL_DIR="${STATEMENTSW_DIR:-$HOME/.statement-software/statement-software-public}"
+
+script_path="${BASH_SOURCE[0]}"
+if command -v readlink >/dev/null 2>&1; then
+  script_path="$(readlink -f "$script_path" 2>/dev/null || printf '%s' "$script_path")"
+fi
+script_dir="$(cd "$(dirname "$script_path")" && pwd)"
+if [[ -f "$script_dir/../setup.sh" ]]; then
+  PROJECT_DIR="$(cd "$script_dir/.." && pwd)"
+else
+  PROJECT_DIR="$INSTALL_DIR"
+fi
+
+print_help() {
+  cat <<'HELP'
+Statement Software command
+
+Usage:
+  statementsw setup [options]
+  statementsw start
+  statementsw stop
+  statementsw restart
+  statementsw status
+  statementsw doctor
+  statementsw backup
+  statementsw export
+  statementsw restore <backup-file-or-db-file>
+  statementsw reset-admin-password [options]
+  statementsw update
+  statementsw help
+
+Global options:
+  --dir PATH       Installed project directory
+  --branch NAME    Git branch for update. Default: main
+
+Examples:
+  statementsw setup --method docker --port 18451
+  statementsw doctor
+  statementsw backup
+  statementsw restore ./statement-full-backup.tar.gz
+  statementsw update
+HELP
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dir)
+      PROJECT_DIR="${2:-}"
+      shift 2
+      ;;
+    --branch)
+      BRANCH="${2:-main}"
+      shift 2
+      ;;
+    --help|-h|help)
+      print_help
+      exit 0
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+COMMAND="${1:-help}"
+shift || true
+
+if [[ ! -f "$PROJECT_DIR/setup.sh" && "$COMMAND" != "help" && "$COMMAND" != "--help" && "$COMMAND" != "-h" ]]; then
+  printf '[FAIL] Statement Software is not installed at %s\n' "$PROJECT_DIR" >&2
+  printf 'Run the public install command again, or use: statementsw --dir PATH %s\n' "$COMMAND" >&2
+  exit 1
+fi
+
+run_setup() {
+  cd "$PROJECT_DIR"
+  bash setup.sh "$@"
+}
+
+case "$COMMAND" in
+  setup)
+    run_setup quickstart "$@"
+    ;;
+  install|start|stop|restart|status|doctor|restore|reset-admin-password|reset-admin)
+    run_setup "$COMMAND" "$@"
+    ;;
+  backup|export)
+    run_setup backup "$@"
+    ;;
+  update)
+    cd "$PROJECT_DIR"
+    if [[ ! -d .git ]]; then
+      printf '[FAIL] %s is not a Git checkout. Re-run the installer.\n' "$PROJECT_DIR" >&2
+      exit 1
+    fi
+    if [[ -f .env ]]; then
+      bash setup.sh backup || true
+    fi
+    git fetch origin "$BRANCH"
+    git checkout "$BRANCH"
+    git pull --ff-only origin "$BRANCH"
+    if [[ -f .env ]]; then
+      bash setup.sh restart
+      bash setup.sh doctor || true
+    fi
+    ;;
+  help|--help|-h)
+    print_help
+    ;;
+  *)
+    printf '[FAIL] Unknown command: %s\n\n' "$COMMAND" >&2
+    print_help >&2
+    exit 1
+    ;;
+esac

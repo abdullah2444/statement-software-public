@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <title>Quick Submit</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css') }}">
+    <style>
+      .qs-form-card {
+        max-width: 480px;
+        margin: 24px auto 0;
+        padding: 24px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+      }
+      .qs-form-card .form-grid { display: grid; gap: 16px; }
+      .qs-form-card label { display: block; font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 6px; }
+      .qs-form-card select,
+      .qs-form-card input[type="text"] { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 15px; background: #fff; }
+      .qs-drop-zone {
+        border: 2px dashed var(--line);
+        border-radius: 14px;
+        padding: 32px 16px;
+        text-align: center;
+        cursor: pointer;
+        transition: border-color .2s, background .2s;
+        position: relative;
+      }
+      .qs-drop-zone.has-image { padding: 8px; border-style: solid; }
+      .qs-drop-zone:hover, .qs-drop-zone.dragover { border-color: var(--accent-2); background: var(--soft); }
+      .qs-drop-zone img { max-width: 100%; max-height: 300px; object-fit: contain; border-radius: 8px; display: none; }
+      .qs-drop-zone img.visible { display: block; margin: 0 auto; }
+      .qs-drop-zone .placeholder { color: var(--muted); font-size: 14px; }
+      .qs-drop-zone .placeholder svg { display: block; margin: 0 auto 8px; opacity: .5; }
+      .qs-remove-btn { position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,.6); color: #fff; border: none; border-radius: 50%; width: 28px; height: 28px; cursor: pointer; display: none; font-size: 16px; line-height: 28px; }
+      .qs-drop-zone.has-image .qs-remove-btn { display: block; }
+      .qs-drop-zone.has-image .placeholder { display: none; }
+      .qs-submit-btn { width: 100%; padding: 14px; font-size: 16px; font-weight: 600; }
+      .flash-msg { padding: 10px 14px; border-radius: 10px; margin-bottom: 12px; font-size: 14px; }
+      .flash-success { background: var(--green-bg); color: var(--green); }
+      .flash-error { background: var(--red-bg); color: var(--red); }
+      .badge-count { display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; min-width: 20px; height: 20px; border-radius: 10px; padding: 0 6px; margin-left: 4px; }
+    </style>
+  </head>
+  <body>
+    {% if g.user %}
+    <div style="display:flex;align-items:center;gap:16px;justify-content:flex-end;padding:8px 24px;font-size:13px;color:#6b7280;">
+      <span>{{ g.user.username }}</span>
+      <a href="{{ url_for('index') }}" style="color:#103a46;text-decoration:none;font-weight:600;">Home</a>
+      <form method="POST" action="{{ url_for('logout') }}" style="display:inline;margin:0;">
+        {{ csrf_input() }}
+        <button type="submit" style="background:none;border:none;color:#103a46;font:inherit;font-weight:600;cursor:pointer;padding:0;">Logout</button>
+      </form>
+    </div>
+    {% endif %}
+
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">{{ brand_name }} Control Room</p>
+          <h1>Quick Submit</h1>
+        </div>
+        <div class="hero-actions">
+          <a class="button ghost" href="{{ url_for('quick_submit_history') }}">
+            History
+            {% if pending_count %}<span class="badge-count">{{ pending_count }}</span>{% endif %}
+          </a>
+          <a class="button ghost" href="{{ url_for('index') }}">Back to Home</a>
+        </div>
+      </section>
+
+      <div class="qs-form-card">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        {% for cat, msg in messages %}
+        <div class="flash-msg flash-{{ cat }}">{{ msg }}</div>
+        {% endfor %}
+        {% endif %}
+        {% endwith %}
+
+        <form method="POST" action="{{ url_for('quick_submit_save') }}" enctype="multipart/form-data" id="qs-form">
+          {{ csrf_input() }}
+          <div class="form-grid">
+            <div>
+              <label>Image</label>
+              <div class="qs-drop-zone" id="drop-zone">
+                <div class="placeholder">
+                  <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+                  Tap to upload or take a photo
+                </div>
+                <img id="preview">
+                <button type="button" class="qs-remove-btn" id="remove-btn">&times;</button>
+                <input type="file" name="image" accept="image/*" id="file-input" style="display:none;">
+              </div>
+            </div>
+
+            <div>
+              <label for="client_id">Client</label>
+              <select name="client_id" id="client_id" required>
+                <option value="">-- Select Client --</option>
+                {% for c in clients %}
+                <option value="{{ c.id }}">{{ c.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div>
+              <label for="description">Description (optional)</label>
+              <input type="text" name="description" id="description" placeholder="e.g. factory payment receipt">
+            </div>
+
+            <div>
+              <label for="amount">Amount (optional)</label>
+              <input type="number" step="0.01" name="amount" id="amount" placeholder="e.g. 1500.00">
+            </div>
+
+            <button type="submit" class="button qs-submit-btn" id="submit-btn" disabled>Submit</button>
+          </div>
+        </form>
+      </div>
+    </main>
+
+    <script>
+      const dropZone = document.getElementById('drop-zone');
+      const fileInput = document.getElementById('file-input');
+      const preview = document.getElementById('preview');
+      const removeBtn = document.getElementById('remove-btn');
+      const submitBtn = document.getElementById('submit-btn');
+
+      function showPreview(file) {
+        const reader = new FileReader();
+        reader.onload = e => {
+          preview.src = e.target.result;
+          preview.classList.add('visible');
+          dropZone.classList.add('has-image');
+          submitBtn.disabled = false;
+        };
+        reader.readAsDataURL(file);
+      }
+
+      dropZone.addEventListener('click', e => {
+        if (e.target === removeBtn) return;
+        fileInput.click();
+      });
+
+      fileInput.addEventListener('change', () => {
+        if (fileInput.files[0]) showPreview(fileInput.files[0]);
+      });
+
+      removeBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        fileInput.value = '';
+        preview.src = '';
+        preview.classList.remove('visible');
+        dropZone.classList.remove('has-image');
+        submitBtn.disabled = true;
+      });
+
+      dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+      dropZone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files[0]) {
+          fileInput.files = e.dataTransfer.files;
+          showPreview(e.dataTransfer.files[0]);
+        }
+      });
+    </script>
+  </body>
+</html>

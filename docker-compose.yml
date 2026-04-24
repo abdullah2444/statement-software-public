@@ -1,0 +1,36 @@
+services:
+  statement-software:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: statement-software:latest
+    container_name: statement-software
+    hostname: statement-software
+    ports:
+      - "${HOST:-0.0.0.0}:${PORT:-18451}:18451"
+    volumes:
+      - ${DATA_DIR:-./data}/statement_software.db:/data/statement_software.db
+      - ${DATA_DIR:-./data}/uploads:/data/uploads
+      - ${DATA_DIR:-./data}/backups:/data/backups
+    environment:
+      PORT: "18451"
+      HOST: "0.0.0.0"
+      FLASK_DEBUG: "0"
+      DATABASE_PATH: /data/statement_software.db
+      UPLOAD_DIR: /data/uploads
+      BACKUP_DIR: /data/backups
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-512}
+      APP_NAME: ${APP_NAME:-Statement Software}
+      BRAND_NAME: ${BRAND_NAME:-Statement}
+      COMPANY_NAME: ${COMPANY_NAME:-Your Company}
+      DEFAULT_PROFIT_EXPENSE_ACCOUNT_NAME: ${DEFAULT_PROFIT_EXPENSE_ACCOUNT_NAME:-Company Profit}
+      LEGACY_DATABASE_FILENAME: ${LEGACY_DATABASE_FILENAME:-}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-0}
+      SOURCE_CSV_PATH: ${SOURCE_CSV_PATH:-}
+      DEMO_CLIENT_NAME: ${DEMO_CLIENT_NAME:-Demo Client}
+      SECRET_KEY: ${SECRET_KEY}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-0}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      RESET_SECRET_TOKEN: ${RESET_SECRET_TOKEN:-}
+      FX_PROXY_URL: ${FX_PROXY_URL:-}
+    restart: unless-stopped

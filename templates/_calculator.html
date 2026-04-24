@@ -1,0 +1,531 @@
+<!-- Calculator Widget -->
+<style>
+/* ── Calculator Widget ──────────────────────────────────── */
+#calc-tab {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 9990;
+  background: #0f172a;
+  color: #fff;
+  border: none;
+  border-radius: 10px 0 0 10px;
+  padding: 14px 7px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  font-family: "Bahnschrift", "Trebuchet MS", "Segoe UI", sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  box-shadow: -2px 0 10px rgba(15,23,42,.12);
+  animation: calc-tab-glow 3s ease-in-out infinite;
+  transition: background .2s;
+}
+#calc-tab:hover { background: #1e293b; }
+#calc-tab svg { width: 20px; height: 20px; }
+@keyframes calc-tab-glow {
+  0%, 100% { box-shadow: -2px 0 10px rgba(15,23,42,.12); }
+  50%      { box-shadow: -2px 0 14px rgba(15,23,42,.2); }
+}
+
+#calc-panel {
+  position: fixed;
+  right: -360px;
+  bottom: 24px;
+  width: 340px;
+  height: 480px;
+  z-index: 9990;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 16px 32px rgba(15,23,42,.16);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: right .3s cubic-bezier(.4,0,.2,1);
+  font-family: "Bahnschrift", "Trebuchet MS", "Segoe UI", sans-serif;
+}
+#calc-panel.open { right: 16px; }
+
+#calc-header {
+  background: #0f172a;
+  color: #fff;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+#calc-header span {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: .3px;
+}
+#calc-close {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 22px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 4px;
+  opacity: .7;
+  transition: opacity .15s;
+}
+#calc-close:hover { opacity: 1; }
+
+#calc-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+#calc-input-area {
+  padding: 16px 16px 0;
+  flex-shrink: 0;
+}
+#calc-input {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 15px;
+  font-family: inherit;
+  border: 2px solid #d7e0e2;
+  border-radius: 10px;
+  outline: none;
+  transition: border-color .2s;
+  color: #132028;
+}
+#calc-input:focus { border-color: #1d4ed8; }
+
+#calc-result-area {
+  padding: 16px;
+  flex-shrink: 0;
+  min-height: 80px;
+}
+#calc-result {
+  font-size: 28px;
+  font-weight: 700;
+  color: #132028;
+  word-break: break-all;
+  line-height: 1.2;
+}
+#calc-rate-info {
+  font-size: 12px;
+  color: #61717c;
+  margin-top: 4px;
+}
+#calc-source-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  margin-top: 4px;
+  background: #eef4f3;
+  color: #334155;
+  border: 1px solid #d7e0e2;
+}
+#calc-error {
+  font-size: 13px;
+  color: #c95454;
+  margin-top: 4px;
+}
+
+#calc-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px 6px;
+  flex-shrink: 0;
+  border-top: 1px solid #edf1f2;
+  padding-top: 10px;
+}
+#calc-history-header span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #61717c;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+#calc-history-clear {
+  font-size: 12px;
+  color: #1d4ed8;
+  cursor: pointer;
+  background: none;
+  border: none;
+  font-family: inherit;
+  padding: 0;
+}
+#calc-history-clear:hover { text-decoration: underline; }
+
+#calc-history-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 16px 12px;
+}
+.calc-hist-item {
+  padding: 7px 0;
+  border-bottom: 1px solid #f0f3f4;
+  font-size: 13px;
+  color: #132028;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.calc-hist-item:last-child { border-bottom: none; }
+.calc-hist-expr {
+  color: #61717c;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calc-hist-val {
+  font-weight: 600;
+  white-space: nowrap;
+}
+</style>
+
+<!-- Tab button -->
+<button id="calc-tab" title="Calculator">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="4" y="2" width="16" height="20" rx="2"/>
+    <line x1="8" y1="6" x2="16" y2="6"/>
+    <line x1="8" y1="10" x2="8" y2="10.01"/>
+    <line x1="12" y1="10" x2="12" y2="10.01"/>
+    <line x1="16" y1="10" x2="16" y2="10.01"/>
+    <line x1="8" y1="14" x2="8" y2="14.01"/>
+    <line x1="12" y1="14" x2="12" y2="14.01"/>
+    <line x1="16" y1="14" x2="16" y2="14.01"/>
+    <line x1="8" y1="18" x2="8" y2="18.01"/>
+    <line x1="12" y1="18" x2="12" y2="18.01"/>
+    <line x1="16" y1="18" x2="16" y2="18.01"/>
+  </svg>
+  <span style="writing-mode:vertical-rl;text-orientation:mixed;font-size:10px;">CALC</span>
+</button>
+
+<!-- Panel -->
+<div id="calc-panel">
+  <div id="calc-header">
+    <span>Calculator</span>
+    <button id="calc-close">&times;</button>
+  </div>
+  <div id="calc-body">
+    <div id="calc-input-area">
+      <input id="calc-input" type="text" placeholder="100+33 or 1 usd to eur" autocomplete="off" spellcheck="false">
+    </div>
+    <div id="calc-result-area">
+      <div id="calc-result"></div>
+      <div id="calc-rate-info"></div>
+      <div id="calc-source-badge"></div>
+      <div id="calc-error"></div>
+    </div>
+    <div id="calc-history-header">
+      <span>History</span>
+      <button id="calc-history-clear">Clear</button>
+    </div>
+    <div id="calc-history-list"></div>
+  </div>
+</div>
+
+<script>
+(function() {
+  "use strict";
+
+  /* ── DOM refs ──────────────────────────────────────────── */
+  var tab     = document.getElementById("calc-tab");
+  var panel   = document.getElementById("calc-panel");
+  var closeBtn= document.getElementById("calc-close");
+  var input   = document.getElementById("calc-input");
+  var resultEl= document.getElementById("calc-result");
+  var rateEl  = document.getElementById("calc-rate-info");
+  var sourceEl = document.getElementById("calc-source-badge");
+  var errorEl = document.getElementById("calc-error");
+
+  var sourceLabels = {
+    "moneyconvert": "MoneyConvert (hourly)",
+    "exchangerate-api": "ExchangeRate-API (daily)",
+    "stored": "Stored rate (app DB)",
+    "identity": ""
+  };
+  var histList= document.getElementById("calc-history-list");
+  var clearBtn= document.getElementById("calc-history-clear");
+
+  var HIST_KEY = "statement_software_calc_history";
+  var MAX_HIST = 20;
+  var rateCache = {};  // keyed by pair e.g. {USDCNY: {rate:6.87, ts:Date.now()}}
+  var RATE_CACHE_TTL = 3600000; // 1 hour in ms
+
+  /* ── Currency symbols ──────────────────────────────────── */
+  var symbols = {USD:'$', EUR:'\u20ac', GBP:'\u00a3', JPY:'\u00a5', CNY:'\u00a5', RMB:'\u00a5', AUD:'A$', CAD:'C$', CHF:'Fr', HKD:'HK$', SGD:'S$', KRW:'\u20a9', INR:'\u20b9', BRL:'R$', MXN:'Mex$', ZAR:'R', SEK:'kr', NOK:'kr', DKK:'kr', NZD:'NZ$', TRY:'\u20ba', THB:'\u0e3f', AED:'\u062f.\u0625', SAR:'\ufdfc', EGP:'E\u00a3'};
+
+  /* ── Open / Close ──────────────────────────────────────── */
+  tab.addEventListener("click", function() {
+    panel.classList.add("open");
+    tab.style.display = "none";
+    setTimeout(function(){ input.focus(); }, 350);
+  });
+  closeBtn.addEventListener("click", function() {
+    panel.classList.remove("open");
+    tab.style.display = "";
+  });
+
+  /* ── Safe math parser (no eval) ────────────────────────── */
+  function tokenize(expr) {
+    var tokens = [];
+    var i = 0;
+    while (i < expr.length) {
+      var ch = expr[i];
+      if (ch === " ") { i++; continue; }
+      if ("+-*/()%".indexOf(ch) !== -1) {
+        tokens.push({ type: "op", value: ch });
+        i++;
+      } else if (/[0-9.]/.test(ch)) {
+        var num = "";
+        while (i < expr.length && /[0-9.,]/.test(expr[i])) { num += expr[i]; i++; }
+        var parsed = parseFloat(num.replace(/,/g, ""));
+        if (isNaN(parsed)) throw new Error("Invalid number");
+        tokens.push({ type: "num", value: parsed });
+      } else {
+        throw new Error("Unexpected character: " + ch);
+      }
+    }
+    return tokens;
+  }
+
+  /* Recursive descent: expr -> term ((+|-) term)* */
+  /* Apple-style %: in "A + B%", B% means B% of A, so A + A*B/100 */
+  /* Standalone "5%" = 0.05 */
+  function parseExpr(tokens, pos) {
+    var result = parseTerm(tokens, pos);
+    var val = result.value; pos = result.pos;
+    /* Standalone %: just "5%" with no operator = 5/100 */
+    if (pos < tokens.length && tokens[pos].value === "%" &&
+        (pos + 1 >= tokens.length || tokens[pos + 1].value === ")")) {
+      val = val / 100;
+      pos++;
+      return { value: val, pos: pos };
+    }
+    while (pos < tokens.length && (tokens[pos].value === "+" || tokens[pos].value === "-")) {
+      var op = tokens[pos].value; pos++;
+      result = parseTerm(tokens, pos);
+      pos = result.pos;
+      var rhs = result.value;
+      /* Check if a % follows this term — Apple-style percentage */
+      if (pos < tokens.length && tokens[pos].value === "%") {
+        rhs = val * rhs / 100;
+        pos++;
+      }
+      val = op === "+" ? val + rhs : val - rhs;
+    }
+    return { value: val, pos: pos };
+  }
+  function parseTerm(tokens, pos) {
+    var result = parseUnary(tokens, pos);
+    var val = result.value; pos = result.pos;
+    while (pos < tokens.length && (tokens[pos].value === "*" || tokens[pos].value === "/")) {
+      var op = tokens[pos].value; pos++;
+      result = parseUnary(tokens, pos);
+      pos = result.pos;
+      /* Handle % after factor in multiply/divide: 200*5% = 200*0.05 */
+      if (pos < tokens.length && tokens[pos].value === "%") {
+        result.value = result.value / 100;
+        pos++;
+      }
+      if (op === "/") {
+        if (result.value === 0) throw new Error("Division by zero");
+        val = val / result.value;
+      } else {
+        val = val * result.value;
+      }
+    }
+    return { value: val, pos: pos };
+  }
+  function parseUnary(tokens, pos) {
+    if (pos < tokens.length && tokens[pos].value === "-") {
+      pos++;
+      var result = parseFactor(tokens, pos);
+      return { value: -result.value, pos: result.pos };
+    }
+    if (pos < tokens.length && tokens[pos].value === "+") {
+      pos++;
+    }
+    return parseFactor(tokens, pos);
+  }
+  function parseFactor(tokens, pos) {
+    if (pos >= tokens.length) throw new Error("Unexpected end");
+    var t = tokens[pos];
+    if (t.type === "num") return { value: t.value, pos: pos + 1 };
+    if (t.value === "(") {
+      var result = parseExpr(tokens, pos + 1);
+      if (result.pos >= tokens.length || tokens[result.pos].value !== ")")
+        throw new Error("Missing )");
+      return { value: result.value, pos: result.pos + 1 };
+    }
+    throw new Error("Unexpected token");
+  }
+
+  function safeEval(expr) {
+    var tokens = tokenize(expr);
+    if (tokens.length === 0) throw new Error("Empty expression");
+    var result = parseExpr(tokens, 0);
+    if (result.pos !== tokens.length) throw new Error("Unexpected content");
+    return result.value;
+  }
+
+  function formatNum(n) {
+    /* Dynamic decimals: show up to 8 significant decimal digits, trim trailing zeros */
+    var abs = Math.abs(n);
+    var decimals = 2;
+    if (abs !== 0 && abs < 0.01) decimals = 8;
+    else if (abs < 1) decimals = 6;
+    else if (abs < 100) decimals = 4;
+    var str = n.toFixed(decimals);
+    /* Trim trailing zeros but keep at least 2 decimals if there's a fraction */
+    if (str.indexOf('.') !== -1) {
+      str = str.replace(/0+$/, '');
+      str = str.replace(/\.$/, '');
+    }
+    /* Add thousands separator to integer part */
+    var parts = str.split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return parts.length > 1 ? parts.join('.') : parts[0];
+  }
+
+  /* ── Currency conversion ───────────────────────────────── */
+  /* Strip currency symbols and whitespace, allow negative, commas, decimals */
+  var currencyRe = /^([¥$€£₩₹₺฿A-Z]*\s*-?[\d,.]+)\s*([a-z]{3})\s+to\s+([a-z]{3})$/i;
+
+  function normalizeCurrency(code) {
+    code = code.toUpperCase();
+    if (code === "RMB") return "CNY";
+    return code;
+  }
+
+  function getSymbol(code) {
+    return symbols[code] || code;
+  }
+
+  function fetchRate(from, to, cb) {
+    var pair = from + to;
+    var cached = rateCache[pair];
+    if (cached && (Date.now() - cached.ts) < RATE_CACHE_TTL) {
+      cb(cached);
+      return;
+    }
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", "/api/fx-rate?from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to), true);
+    xhr.timeout = 8000;
+    xhr.onload = function() {
+      if (xhr.status === 200) {
+        try {
+          var data = JSON.parse(xhr.responseText);
+          data.ts = Date.now();
+          rateCache[pair] = data;
+          cb(data);
+        } catch(e) { cb(null); }
+      } else {
+        cb(null);
+      }
+    };
+    xhr.onerror = xhr.ontimeout = function() { cb(null); };
+    xhr.send();
+  }
+
+  /* ── History ───────────────────────────────────────────── */
+  function loadHistory() {
+    try { return JSON.parse(localStorage.getItem(HIST_KEY)) || []; }
+    catch(e) { return []; }
+  }
+  function saveHistory(arr) {
+    localStorage.setItem(HIST_KEY, JSON.stringify(arr.slice(0, MAX_HIST)));
+  }
+  function addHistory(expr, result) {
+    var arr = loadHistory();
+    arr.unshift({ expr: expr, result: result });
+    if (arr.length > MAX_HIST) arr.length = MAX_HIST;
+    saveHistory(arr);
+    renderHistory();
+  }
+  function renderHistory() {
+    var arr = loadHistory();
+    histList.innerHTML = "";
+    arr.forEach(function(item) {
+      var div = document.createElement("div");
+      div.className = "calc-hist-item";
+      div.innerHTML = '<span class="calc-hist-expr">' + escHtml(item.expr) +
+        '</span><span class="calc-hist-val">' + escHtml(item.result) + '</span>';
+      histList.appendChild(div);
+    });
+  }
+  function escHtml(s) {
+    var d = document.createElement("span");
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  clearBtn.addEventListener("click", function() {
+    localStorage.removeItem(HIST_KEY);
+    renderHistory();
+  });
+
+  /* ── Main evaluate ─────────────────────────────────────── */
+  function evaluate(raw) {
+    resultEl.textContent = "";
+    rateEl.textContent = "";
+    sourceEl.textContent = "";
+    errorEl.textContent = "";
+    var expr = raw.trim();
+    if (!expr) return;
+
+    /* Currency conversion? */
+    var m = expr.match(currencyRe);
+    if (m) {
+      var amt = parseFloat(m[1].replace(/[^0-9.\-]/g, ""));
+      var from = normalizeCurrency(m[2]);
+      var to = normalizeCurrency(m[3]);
+      if (isNaN(amt)) { errorEl.textContent = "Invalid amount"; return; }
+      if (from === to) {
+        var sym = getSymbol(to);
+        var display = sym + formatNum(amt);
+        resultEl.textContent = display;
+        rateEl.textContent = "Same currency";
+        addHistory(expr, display);
+        return;
+      }
+      fetchRate(from, to, function(data) {
+        if (!data || !data.rate) { errorEl.textContent = "Could not fetch " + from + "/" + to + " rate"; return; }
+        var converted = amt * data.rate;
+        var sym = getSymbol(to);
+        var display = sym + formatNum(converted);
+        resultEl.textContent = display;
+        rateEl.textContent = "Rate: 1 " + from + " = " + data.rate.toFixed(4) + " " + to;
+        var src = data.source || "";
+        sourceEl.textContent = sourceLabels[src] || src;
+        addHistory(expr, display);
+      });
+      return;
+    }
+
+    /* Math expression — strip currency symbols before parsing */
+    try {
+      var cleanExpr = expr.replace(/[¥$€£₩₹₺฿]/g, "");
+      var val = safeEval(cleanExpr);
+      var display = formatNum(val);
+      resultEl.textContent = display;
+      addHistory(expr, display);
+    } catch(e) {
+      errorEl.textContent = e.message || "Invalid expression";
+    }
+  }
+
+  input.addEventListener("keydown", function(e) {
+    if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); evaluate(input.value); }
+  });
+
+  /* ── Init ──────────────────────────────────────────────── */
+  renderHistory();
+})();
+</script>
