@@ -98,6 +98,37 @@ docker compose up -d --build
 
 This downloads the source from Gitee during the build. Private app data is stored in `./statement-software-data`, not in Git.
 
+Important: run Compose commands on the server/host, in the folder where `compose.yml` exists. Do not run `bash setup.sh quickstart` inside the container. The runtime container only contains the app files:
+
+```text
+/app/app.py
+/app/templates
+/app/static
+```
+
+If you are at a prompt like `root@statement-software:/app#`, you are already inside the container. Type:
+
+```bash
+exit
+```
+
+Then manage the app from the server folder that contains `compose.yml`:
+
+```bash
+docker compose ps
+docker compose logs -f statement-software
+docker compose down
+docker compose up -d --build
+```
+
+To update a paste-only Compose install to the latest Gitee code:
+
+```bash
+docker compose down
+docker compose build --no-cache statement-software
+docker compose up -d
+```
+
 ## Optional One-Command Installer
 
 If GitHub raw access is available, the installer can still be used:
