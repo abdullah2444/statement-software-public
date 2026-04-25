@@ -3,78 +3,103 @@
 /* ── Calculator Widget ──────────────────────────────────── */
 #calc-tab {
   position: fixed;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
+  right: 18px;
+  bottom: 18px;
   z-index: 9990;
-  background: #0f172a;
+  width: 48px;
+  height: 48px;
+  background: #103a46;
   color: #fff;
-  border: none;
-  border-radius: 10px 0 0 10px;
-  padding: 14px 7px;
-  cursor: pointer;
+  border: 1px solid rgba(255,255,255,.22);
+  border-radius: 14px;
+  padding: 0;
+  cursor: grab;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
   font-family: "Bahnschrift", "Trebuchet MS", "Segoe UI", sans-serif;
-  font-size: 11px;
-  letter-spacing: 0.5px;
-  box-shadow: -2px 0 10px rgba(15,23,42,.12);
-  animation: calc-tab-glow 3s ease-in-out infinite;
-  transition: background .2s;
+  box-shadow: 0 12px 28px rgba(16,58,70,.24);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-drag: none;
+  transition: background .2s, box-shadow .2s, transform .2s;
 }
-#calc-tab:hover { background: #1e293b; }
-#calc-tab svg { width: 20px; height: 20px; }
-@keyframes calc-tab-glow {
-  0%, 100% { box-shadow: -2px 0 10px rgba(15,23,42,.12); }
-  50%      { box-shadow: -2px 0 14px rgba(15,23,42,.2); }
+#calc-tab:hover {
+  background: #2f6972;
+  box-shadow: 0 16px 34px rgba(16,58,70,.28);
+}
+#calc-tab:active { cursor: grabbing; transform: scale(.98); }
+#calc-tab.is-dragging {
+  cursor: grabbing;
+  transition: none;
+}
+#calc-tab svg { width: 21px; height: 21px; }
+#calc-tab span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
 }
 
 #calc-panel {
   position: fixed;
-  right: -360px;
-  bottom: 24px;
-  width: 340px;
-  height: 480px;
+  right: 18px;
+  bottom: 78px;
+  width: min(380px, calc(100vw - 32px));
+  max-height: min(560px, calc(100vh - 104px));
   z-index: 9990;
   background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 16px 32px rgba(15,23,42,.16);
+  border: 1px solid #d7e0e2;
+  border-radius: 16px;
+  box-shadow: 0 22px 60px rgba(15,23,42,.22);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: right .3s cubic-bezier(.4,0,.2,1);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(12px) scale(.98);
+  transition: opacity .18s ease, transform .18s ease;
   font-family: "Bahnschrift", "Trebuchet MS", "Segoe UI", sans-serif;
 }
-#calc-panel.open { right: 16px; }
+#calc-panel.open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
 
 #calc-header {
-  background: #0f172a;
-  color: #fff;
-  padding: 12px 16px;
+  background: #fbfcfd;
+  color: #132028;
+  padding: 14px 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-shrink: 0;
+  border-bottom: 1px solid #d7e0e2;
 }
 #calc-header span {
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: .3px;
 }
 #calc-close {
-  background: none;
-  border: none;
-  color: #fff;
+  width: 34px;
+  height: 34px;
+  background: #fff;
+  border: 1px solid #d7e0e2;
+  border-radius: 999px;
+  color: #61717c;
   font-size: 22px;
   cursor: pointer;
   line-height: 1;
-  padding: 0 4px;
-  opacity: .7;
-  transition: opacity .15s;
+  padding: 0;
+  transition: color .15s, border-color .15s, background .15s;
 }
-#calc-close:hover { opacity: 1; }
+#calc-close:hover { color: #132028; border-color: #2f6972; background: #eef4f3; }
 
 #calc-body {
   display: flex;
@@ -92,21 +117,21 @@
   padding: 10px 14px;
   font-size: 15px;
   font-family: inherit;
-  border: 2px solid #d7e0e2;
-  border-radius: 10px;
+  border: 1px solid #d7e0e2;
+  border-radius: 8px;
   outline: none;
   transition: border-color .2s;
   color: #132028;
 }
-#calc-input:focus { border-color: #1d4ed8; }
+#calc-input:focus { border-color: #2f6972; box-shadow: 0 0 0 3px rgba(47,105,114,.12); }
 
 #calc-result-area {
   padding: 16px;
   flex-shrink: 0;
-  min-height: 80px;
+  min-height: 82px;
 }
 #calc-result {
-  font-size: 28px;
+  font-size: 26px;
   font-weight: 700;
   color: #132028;
   word-break: break-all;
@@ -140,7 +165,7 @@
   padding: 0 16px 6px;
   flex-shrink: 0;
   border-top: 1px solid #edf1f2;
-  padding-top: 10px;
+  padding-top: 12px;
 }
 #calc-history-header span {
   font-size: 12px;
@@ -151,7 +176,7 @@
 }
 #calc-history-clear {
   font-size: 12px;
-  color: #1d4ed8;
+  color: #2f6972;
   cursor: pointer;
   background: none;
   border: none;
@@ -164,13 +189,15 @@
   flex: 1;
   overflow-y: auto;
   padding: 0 16px 12px;
+  min-height: 120px;
 }
 .calc-hist-item {
-  padding: 7px 0;
+  padding: 8px 0;
   border-bottom: 1px solid #f0f3f4;
   font-size: 13px;
   color: #132028;
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
@@ -203,7 +230,7 @@
     <line x1="12" y1="18" x2="12" y2="18.01"/>
     <line x1="16" y1="18" x2="16" y2="18.01"/>
   </svg>
-  <span style="writing-mode:vertical-rl;text-orientation:mixed;font-size:10px;">CALC</span>
+  <span>Calculator</span>
 </button>
 
 <!-- Panel -->
@@ -253,7 +280,7 @@
   var histList= document.getElementById("calc-history-list");
   var clearBtn= document.getElementById("calc-history-clear");
 
-  var HIST_KEY = "statement_software_calc_history";
+  var HIST_KEY = "firefly_calc_history";
   var MAX_HIST = 20;
   var rateCache = {};  // keyed by pair e.g. {USDCNY: {rate:6.87, ts:Date.now()}}
   var RATE_CACHE_TTL = 3600000; // 1 hour in ms
@@ -262,15 +289,239 @@
   var symbols = {USD:'$', EUR:'\u20ac', GBP:'\u00a3', JPY:'\u00a5', CNY:'\u00a5', RMB:'\u00a5', AUD:'A$', CAD:'C$', CHF:'Fr', HKD:'HK$', SGD:'S$', KRW:'\u20a9', INR:'\u20b9', BRL:'R$', MXN:'Mex$', ZAR:'R', SEK:'kr', NOK:'kr', DKK:'kr', NZD:'NZ$', TRY:'\u20ba', THB:'\u0e3f', AED:'\u062f.\u0625', SAR:'\ufdfc', EGP:'E\u00a3'};
 
   /* ── Open / Close ──────────────────────────────────────── */
-  tab.addEventListener("click", function() {
+  function openPanel() {
     panel.classList.add("open");
     tab.style.display = "none";
-    setTimeout(function(){ input.focus(); }, 350);
-  });
-  closeBtn.addEventListener("click", function() {
+    setTimeout(function(){ input.focus(); }, 180);
+  }
+  function closePanel() {
     panel.classList.remove("open");
     tab.style.display = "";
+  }
+  tab.addEventListener("click", openPanel);
+  closeBtn.addEventListener("click", function() {
+    closePanel();
   });
+
+  /* ── Movable tab ───────────────────────────────────────── */
+  (function enableMovableTab() {
+    var POS_KEY = "firefly_calc_tab_pos";
+    var dragging = false;
+    var moved = false;
+    var startX = 0;
+    var startY = 0;
+    var offsetX = 0;
+    var offsetY = 0;
+    var activePointerId = null;
+    var activeTouchId = null;
+    var hasPointerEvents = !!window.PointerEvent;
+    var touchOptions = { passive: false, capture: true };
+
+    function clamp(value, min, max) {
+      return Math.min(Math.max(value, min), max);
+    }
+    function viewportWidth() {
+      return window.visualViewport ? window.visualViewport.width : window.innerWidth;
+    }
+    function viewportHeight() {
+      return window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    }
+    function mobileViewport() {
+      return viewportWidth() <= 768;
+    }
+    function place(x, y) {
+      var rect = tab.getBoundingClientRect();
+      var pad = mobileViewport() ? 16 : 8;
+      var left = clamp(x, pad, viewportWidth() - rect.width - pad);
+      var top = clamp(y, pad, viewportHeight() - rect.height - pad);
+      tab.classList.add("is-positioned");
+      tab.style.setProperty("--calc-tab-left", left + "px");
+      tab.style.setProperty("--calc-tab-top", top + "px");
+      tab.style.left = left + "px";
+      tab.style.top = top + "px";
+      tab.style.right = "auto";
+      tab.style.bottom = "auto";
+      tab.style.transform = "none";
+      return { left: left, top: top };
+    }
+    function placeDefault() {
+      var rect = tab.getBoundingClientRect();
+      var rightPad = mobileViewport() ? 16 : 18;
+      var bottomPad = mobileViewport() ? 22 : 18;
+      return place(viewportWidth() - rect.width - rightPad, viewportHeight() - rect.height - bottomPad);
+    }
+    function save(left, top) {
+      try { localStorage.setItem(POS_KEY, JSON.stringify({ left: left, top: top })); } catch(e) {}
+    }
+    function restore() {
+      try {
+        var saved = JSON.parse(localStorage.getItem(POS_KEY) || "null");
+        if (saved && typeof saved.left === "number" && typeof saved.top === "number") {
+          if (mobileViewport() && saved.left < 12) {
+            var fallback = placeDefault();
+            save(fallback.left, fallback.top);
+            return;
+          }
+          place(saved.left, saved.top);
+        }
+      } catch(e) {}
+    }
+
+    restore();
+    function clampSavedPosition() {
+      if (!tab.classList.contains("is-positioned") || tab.style.display === "none") return;
+      var rect = tab.getBoundingClientRect();
+      var pos = place(rect.left, rect.top);
+      save(pos.left, pos.top);
+    }
+    window.addEventListener("resize", clampSavedPosition);
+    if (window.visualViewport) window.visualViewport.addEventListener("resize", clampSavedPosition);
+
+    function startDrag(clientX, clientY) {
+      var rect = tab.getBoundingClientRect();
+      dragging = true;
+      moved = false;
+      tab.classList.add("is-dragging");
+      startX = clientX;
+      startY = clientY;
+      offsetX = clientX - rect.left;
+      offsetY = clientY - rect.top;
+    }
+    function moveDrag(clientX, clientY) {
+      if (!dragging) return;
+      var distance = Math.abs(clientX - startX) + Math.abs(clientY - startY);
+      if (!moved && distance <= 4) return;
+      moved = true;
+      var pos = place(clientX - offsetX, clientY - offsetY);
+      save(pos.left, pos.top);
+    }
+    function blockNextClick() {
+      function blockClick(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        tab.removeEventListener("click", blockClick, true);
+      }
+      tab.addEventListener("click", blockClick, true);
+      setTimeout(function() {
+        tab.removeEventListener("click", blockClick, true);
+      }, 500);
+    }
+    function stopEvent(event) {
+      if (!event) return;
+      if (event.cancelable) event.preventDefault();
+      event.stopPropagation();
+    }
+    function removeMouseListeners() {
+      document.removeEventListener("mousemove", onMouseMove, true);
+      document.removeEventListener("mouseup", finishMouseDrag, true);
+    }
+    function removePointerListeners() {
+      document.removeEventListener("pointermove", onPointerMove, true);
+      document.removeEventListener("pointerup", finishPointerDrag, true);
+      document.removeEventListener("pointercancel", finishPointerDrag, true);
+    }
+    function removeTouchListeners() {
+      document.removeEventListener("touchmove", onTouchMove, touchOptions);
+      document.removeEventListener("touchend", finishTouchDrag, touchOptions);
+      document.removeEventListener("touchcancel", finishTouchDrag, touchOptions);
+    }
+    function endDrag(event, openOnTap) {
+      if (!dragging) return;
+      var didMove = moved;
+      dragging = false;
+      tab.classList.remove("is-dragging");
+      removePointerListeners();
+      removeTouchListeners();
+      removeMouseListeners();
+      activePointerId = null;
+      activeTouchId = null;
+      if (didMove) {
+        stopEvent(event);
+        blockNextClick();
+      } else if (openOnTap) {
+        stopEvent(event);
+        blockNextClick();
+        openPanel();
+      }
+    }
+
+    function onPointerMove(event) {
+      if (!dragging || event.pointerId !== activePointerId) return;
+      stopEvent(event);
+      moveDrag(event.clientX, event.clientY);
+    }
+    function finishPointerDrag(event) {
+      if (!dragging || event.pointerId !== activePointerId) return;
+      try { tab.releasePointerCapture(event.pointerId); } catch(e) {}
+      endDrag(event, event.pointerType === "touch");
+    }
+
+    function getActiveTouch(event) {
+      var lists = [event.changedTouches, event.touches];
+      for (var l = 0; l < lists.length; l++) {
+        var touches = lists[l];
+        if (!touches) continue;
+        for (var i = 0; i < touches.length; i++) {
+          if (touches[i].identifier === activeTouchId) return touches[i];
+        }
+      }
+      return null;
+    }
+    function onTouchMove(event) {
+      var touch = getActiveTouch(event);
+      if (!touch) return;
+      stopEvent(event);
+      moveDrag(touch.clientX, touch.clientY);
+    }
+    function finishTouchDrag(event) {
+      var touch = getActiveTouch(event);
+      if (!touch && event.type !== "touchcancel") return;
+      endDrag(event, event.type !== "touchcancel");
+    }
+
+    if (hasPointerEvents) {
+      tab.addEventListener("pointerdown", function(event) {
+        if (event.button !== undefined && event.button !== 0) return;
+        if (event.isPrimary === false) return;
+        if (event.pointerType === "touch") return;
+        activePointerId = event.pointerId;
+        startDrag(event.clientX, event.clientY);
+        try { tab.setPointerCapture(event.pointerId); } catch(e) {}
+        document.addEventListener("pointermove", onPointerMove, true);
+        document.addEventListener("pointerup", finishPointerDrag, true);
+        document.addEventListener("pointercancel", finishPointerDrag, true);
+      });
+    } else {
+      tab.addEventListener("mousedown", function(event) {
+        if (event.button !== undefined && event.button !== 0) return;
+        startDrag(event.clientX, event.clientY);
+        document.addEventListener("mousemove", onMouseMove, true);
+        document.addEventListener("mouseup", finishMouseDrag, true);
+      });
+    }
+    tab.addEventListener("touchstart", function(event) {
+      if (!event.touches || event.touches.length !== 1) return;
+      var touch = event.touches[0];
+      stopEvent(event);
+      activeTouchId = touch.identifier;
+      startDrag(touch.clientX, touch.clientY);
+      document.addEventListener("touchmove", onTouchMove, touchOptions);
+      document.addEventListener("touchend", finishTouchDrag, touchOptions);
+      document.addEventListener("touchcancel", finishTouchDrag, touchOptions);
+    }, touchOptions);
+    tab.addEventListener("contextmenu", function(event) {
+      stopEvent(event);
+    });
+
+    function onMouseMove(event) {
+      if (!dragging) return;
+      moveDrag(event.clientX, event.clientY);
+    }
+    function finishMouseDrag(event) {
+      endDrag(event, false);
+    }
+  })();
 
   /* ── Safe math parser (no eval) ────────────────────────── */
   function tokenize(expr) {

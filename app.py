@@ -76,6 +76,23 @@ DEFAULT_PROFIT_EXPENSE_ACCOUNT_NAME = (
     os.environ.get("DEFAULT_PROFIT_EXPENSE_ACCOUNT_NAME", "Company Profit").strip()
     or "Company Profit"
 )
+
+
+def _asset_version() -> str:
+    explicit = os.environ.get("ASSET_VERSION", "").strip()
+    if explicit:
+        return explicit
+    candidates = [
+        BASE_DIR / "app.py",
+        BASE_DIR / "static" / "styles.css",
+        BASE_DIR / "static" / "mobile.css",
+        BASE_DIR / "templates" / "_calculator.html",
+    ]
+    newest = max((path.stat().st_mtime_ns for path in candidates if path.exists()), default=0)
+    return str(newest)
+
+
+ASSET_VERSION = _asset_version()
 REQUIRED_DB_TABLES = {
     "users",
     "clients",
@@ -181,6 +198,7 @@ def inject_template_helpers() -> dict:
         "brand_name": BRAND_NAME,
         "company_name": COMPANY_NAME,
         "default_profit_expense_account_name": DEFAULT_PROFIT_EXPENSE_ACCOUNT_NAME,
+        "asset_version": ASSET_VERSION,
     }
 
 
@@ -1681,7 +1699,7 @@ def _get_live_usd_cny_rate() -> float | None:
         if rate is not None:
             return float(rate)
 
-    proxies = {"http": PROXY_URL, "https": PROXY_URL}
+    proxies = {"http": FX_PROXY_URL, "https": FX_PROXY_URL} if FX_PROXY_URL else None
     ts = datetime.now(tz=CHINA_TZ).isoformat(timespec="seconds")
 
     try:
@@ -2587,6 +2605,10 @@ def client_statement(client_id: int):
     rows = statement_rows_with_commission_state(db, client_id, all_entries)
     current_usd_balance = rows[-1]["running_usd"] if rows else 0.0
     current_cny_balance = rows[-1]["running_cny"] if rows else 0.0
+    fx_summary = exchange_rate_summary()
+    approx_total_rmb = None
+    if fx_summary.get("display_rate") is not None:
+        approx_total_rmb = current_usd_balance * fx_summary["display_rate"] + current_cny_balance
     if per_page != "all":
         pages: list[list[dict]] = []
         remainder = total_rows % per_page
@@ -2607,6 +2629,8 @@ def client_statement(client_id: int):
         rows=rows,
         current_usd_balance=current_usd_balance,
         current_cny_balance=current_cny_balance,
+        approx_total_rmb=approx_total_rmb,
+        fx_summary=fx_summary,
         latest_event=latest_undo_event(client_id),
         recent_events=recent_events(client_id),
         filters=filters,
@@ -2729,7 +2753,8 @@ def exchange_balance(client_id: int):
         abort(404)
 
     exchange_date = request.form["exchange_date"]
-    usd_amount = float(request.form["usd_amount"])
+    usd_amount_raw = request.form.get("usd_amount", "").strip()
+    usd_amount = float(usd_amount_raw) if usd_amount_raw else 0.0
     cny_amount_raw = request.form.get("cny_amount", "").strip()
     cny_amount = float(cny_amount_raw) if cny_amount_raw else 0.0
     submitted_rate_raw = request.form.get("exchange_rate", "").strip()
@@ -2740,7 +2765,11 @@ def exchange_balance(client_id: int):
     transfer_group = make_transfer_group()
     usd_description = note or "USD to RMB exchange"
     cny_description = note or "USD to RMB exchange"
-    if submitted_rate and usd_amount > 0 and cny_amount <= 0:
+    if submitted_rate and cny_amount > 0 and usd_amount <= 0:
+        divisor = submitted_rate * (1 - fee_rate)
+        if divisor > 0:
+            usd_amount = round(cny_amount / divisor, 2)
+    elif submitted_rate and usd_amount > 0 and cny_amount <= 0:
         # Calculate CNY from rate, then apply fee if enabled
         cny_amount = round(usd_amount * submitted_rate, 2)
         if fee_enabled:
@@ -3888,7 +3917,9 @@ FX_PROXY_URL = os.environ.get("FX_PROXY_URL", "").strip()
 
 def _fetch_moneyconvert(proxies):
     """Fetch from moneyconvert.net (hourly updates, all rates based on USD)."""
-    resp = http_requests.get(MONEYCONVERT_URL, proxies=proxies, timeout=8)
+    with http_requests.Session() as session:
+        session.trust_env = False
+        resp = session.get(MONEYCONVERT_URL, proxies=proxies, timeout=8)
     resp.raise_for_status()
     data = resp.json()
     rates = data.get("rates")
@@ -3899,7 +3930,9 @@ def _fetch_moneyconvert(proxies):
 
 def _fetch_er_api(base, proxies):
     """Fetch from open.er-api.com (daily updates, any base currency)."""
-    resp = http_requests.get(ER_API_URL.format(base=base), proxies=proxies, timeout=8)
+    with http_requests.Session() as session:
+        session.trust_env = False
+        resp = session.get(ER_API_URL.format(base=base), proxies=proxies, timeout=8)
     resp.raise_for_status()
     data = resp.json()
     if data.get("result") == "success":
@@ -4037,7 +4070,7 @@ def settings_page():
     masked_key = raw_key[:6] + "..." + raw_key[-4:] if len(raw_key) > 10 else raw_key
     # Fetch API audit log
     db = get_db()
-    audit_rows = db.execute("select * from api_audit_log order by id desc limit 100").fetchall()
+    audit_rows = db.execute("select * from api_audit_log order by id desc limit 10").fetchall()
     audit_log = []
     for r in audit_rows:
         d = dict(r)
@@ -4993,7 +5026,7 @@ def api_v1_fx_rate():
                 result["converted"] = round(float(amount) * rate, 2)
             return jsonify(result)
 
-    proxies = {"http": PROXY_URL, "https": PROXY_URL}
+    proxies = {"http": FX_PROXY_URL, "https": FX_PROXY_URL} if FX_PROXY_URL else None
     ts = datetime.now(tz=CHINA_TZ).isoformat(timespec="seconds")
 
     # 1) Try moneyconvert.net

@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
     <title>{{ client.name }} Statement</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=asset_version) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css', v=asset_version) }}">
     <style>
       @keyframes row-saved {
         0% { background: #d4edda; }
@@ -37,16 +37,25 @@
         const hash = window.location.hash;
         const sharedEditor = document.querySelector('#shared-editor-row');
         const sharedForm = document.querySelector('#shared-editor-form');
-        const bottomAnchor = document.querySelector('#page-bottom');
         const historyDropdown = document.querySelector('[data-history-dropdown]');
         const historyToggle = document.querySelector('[data-history-toggle]');
         const historyTimestamps = document.querySelectorAll('[data-utc-timestamp]');
         const exchangeDropdown = document.querySelector('[data-exchange-dropdown]');
         const exchangeToggle = document.querySelector('[data-exchange-toggle]');
+        const exchangeClose = document.querySelector('[data-exchange-close]');
+        const exportDropdown = document.querySelector('[data-export-dropdown]');
+        const exportToggle = document.querySelector('[data-export-toggle]');
         const exchangeForm = document.querySelector('#balance-exchange-form');
         const sharedCommissionRow = document.querySelector('#shared-commission-row');
         const sharedCommissionForm = document.querySelector('#shared-commission-form');
         const addForm = document.querySelector('#entry-new form');
+        const filtersCard = document.querySelector('[data-filters-card]');
+        const filtersToggle = document.querySelector('[data-filters-toggle]');
+        const perPageForm = document.querySelector('[data-per-page-form]');
+        const perPageSelect = document.querySelector('[data-per-page-select]');
+        const addEntryModal = document.querySelector('[data-add-entry-modal]');
+        const addEntryOpen = document.querySelector('[data-add-entry-open]');
+        const addEntryCloseControls = document.querySelectorAll('[data-add-entry-close]');
         const defaultProfitAccountId = {{ default_profit_account_id|tojson }};
         const setValue = (name, value) => {
           const field = sharedForm.querySelector(`[name="${name}"]`);
@@ -318,15 +327,53 @@
           });
         });
 
+        if (filtersToggle && filtersCard) {
+          filtersToggle.addEventListener('click', () => {
+            const isOpen = filtersCard.classList.toggle('is-open');
+            filtersToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+            filtersToggle.textContent = isOpen ? 'Close Filters' : 'Open Filters';
+          });
+        }
+
+        if (perPageForm && perPageSelect) {
+          perPageSelect.addEventListener('change', () => perPageForm.submit());
+        }
+
+        const openDropdown = (dropdown, toggle, event) => {
+          event.preventDefault();
+          const willOpen = !dropdown.classList.contains('is-open');
+          document.querySelectorAll('.history-dropdown.is-open').forEach((node) => {
+            if (node !== dropdown) {
+              node.classList.remove('is-open');
+              node.querySelector('[aria-expanded="true"]')?.setAttribute('aria-expanded', 'false');
+            }
+          });
+          dropdown.classList.toggle('is-open', willOpen);
+          toggle?.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        };
+
         if (historyToggle && historyDropdown) {
           historyToggle.addEventListener('click', (event) => {
-            event.preventDefault();
-            historyDropdown.classList.toggle('is-open');
+            openDropdown(historyDropdown, historyToggle, event);
           });
 
           document.addEventListener('click', (event) => {
             if (!historyDropdown.contains(event.target)) {
               historyDropdown.classList.remove('is-open');
+              historyToggle.setAttribute('aria-expanded', 'false');
+            }
+          });
+        }
+
+        if (exportToggle && exportDropdown) {
+          exportToggle.addEventListener('click', (event) => {
+            openDropdown(exportDropdown, exportToggle, event);
+          });
+
+          document.addEventListener('click', (event) => {
+            if (!exportDropdown.contains(event.target)) {
+              exportDropdown.classList.remove('is-open');
+              exportToggle.setAttribute('aria-expanded', 'false');
             }
           });
         }
@@ -351,16 +398,45 @@
 
         if (exchangeToggle && exchangeDropdown) {
           exchangeToggle.addEventListener('click', (event) => {
-            event.preventDefault();
-            exchangeDropdown.classList.toggle('is-open');
+            openDropdown(exchangeDropdown, exchangeToggle, event);
           });
 
           document.addEventListener('click', (event) => {
             if (!exchangeDropdown.contains(event.target)) {
               exchangeDropdown.classList.remove('is-open');
+              exchangeToggle.setAttribute('aria-expanded', 'false');
             }
           });
         }
+        exchangeClose?.addEventListener('click', () => {
+          exchangeDropdown?.classList.remove('is-open');
+          exchangeToggle?.setAttribute('aria-expanded', 'false');
+        });
+
+        const openAddEntryModal = () => {
+          if (!addEntryModal) return;
+          addEntryModal.hidden = false;
+          document.body.classList.add('modal-open');
+          addForm?.querySelector('[name="description"]')?.focus();
+        };
+        const closeAddEntryModal = () => {
+          if (!addEntryModal) return;
+          addEntryModal.hidden = true;
+          document.body.classList.remove('modal-open');
+          addEntryOpen?.focus();
+        };
+        addEntryOpen?.addEventListener('click', openAddEntryModal);
+        addEntryCloseControls.forEach((control) => {
+          control.addEventListener('click', closeAddEntryModal);
+        });
+        addEntryModal?.addEventListener('click', (event) => {
+          if (event.target === addEntryModal) closeAddEntryModal();
+        });
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape' && addEntryModal && !addEntryModal.hidden) {
+            closeAddEntryModal();
+          }
+        });
 
         if (exchangeForm) {
           const usdInput = exchangeForm.querySelector('[name="usd_amount"]');
@@ -369,28 +445,55 @@
           const feeToggle = exchangeForm.querySelector('[name="apply_fee"]');
           const feeButton = exchangeForm.querySelector('[data-apply-fee]');
           const feePreview = exchangeForm.querySelector('[data-fee-preview]');
+          const useAllUsdBtn = exchangeForm.querySelector('[data-use-all-usd]');
+          let exchangeCalcMode = 'usd';
 
           const recalcFromRate = () => {
             const usd = parseFloat(usdInput?.value || '0') || 0;
+            const cnyTarget = parseFloat(cnyInput?.value || '0') || 0;
             const rate = parseFloat(rateInput?.value || '0') || 0;
-            if (cnyInput && usd > 0 && rate > 0) {
-              let cny = usd * rate;
-              if (feeToggle?.checked) cny = cny * 0.996;
-              cnyInput.value = cny.toFixed(2);
+            const feeRate = feeToggle?.checked ? 0.004 : 0;
+            if (exchangeCalcMode === 'cny' && usdInput && cnyTarget > 0 && rate > 0) {
+              const divisor = rate * (1 - feeRate);
+              if (divisor > 0) {
+                usdInput.value = (cnyTarget / divisor).toFixed(2);
+              }
+            } else if (cnyInput && usd > 0 && rate > 0) {
+              cnyInput.value = (usd * rate * (1 - feeRate)).toFixed(2);
             }
             if (feePreview && feeToggle) {
-              const fee = feeToggle.checked && usd > 0 && rate > 0 ? (usd * rate * 0.004) : 0;
+              let fee = 0;
+              const currentUsd = parseFloat(usdInput?.value || '0') || 0;
+              if (feeToggle.checked && currentUsd > 0 && rate > 0) {
+                fee = currentUsd * rate * 0.004;
+              }
               feePreview.textContent = fee > 0 ? `Fee deducted from RMB: ¥${fee.toFixed(2)}` : 'Fee deducted from RMB: ¥0.00';
             }
           };
 
-          usdInput?.addEventListener('input', recalcFromRate);
+          usdInput?.addEventListener('input', () => {
+            exchangeCalcMode = 'usd';
+            recalcFromRate();
+          });
+          cnyInput?.addEventListener('input', () => {
+            exchangeCalcMode = 'cny';
+            recalcFromRate();
+          });
           rateInput?.addEventListener('input', recalcFromRate);
           feeToggle?.addEventListener('change', recalcFromRate);
           feeButton?.addEventListener('click', (event) => {
             event.preventDefault();
             if (feeToggle) feeToggle.checked = true;
             recalcFromRate();
+          });
+          useAllUsdBtn?.addEventListener('click', (event) => {
+            event.preventDefault();
+            if (usdInput) {
+              exchangeCalcMode = 'usd';
+              usdInput.value = useAllUsdBtn.dataset.availableUsd || '';
+              recalcFromRate();
+              usdInput.focus();
+            }
           });
           recalcFromRate();
 
@@ -493,7 +596,6 @@
             addDropPlaceholder.style.display = '';
             addImageRemove.style.display = 'none';
             addParseAI.style.display = 'none';
-            addTextPanel.style.display = 'none';
             addParseStatus.textContent = '';
           });
         }
@@ -726,8 +828,6 @@
         if (hash && hash.startsWith('#entry-')) {
           const target = document.querySelector(hash);
           if (target) target.scrollIntoView({ block: 'center' });
-        } else if (bottomAnchor) {
-          bottomAnchor.scrollIntoView({ block: 'end' });
         }
 
       });
@@ -737,7 +837,7 @@
     {% if g.user %}
     {% include '_nav.html' %}
     {% endif %}
-    <main class="shell">
+    <main class="shell client-page">
       {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
       {% for cat, msg in messages %}
@@ -745,75 +845,27 @@
       {% endfor %}
       {% endif %}
       {% endwith %}
-      <section class="hero">
-        <div>
+      <section class="hero client-hero">
+        <div class="client-title-block">
           <p class="eyebrow">Client Statement</p>
           <h1>{{ client.name }}</h1>
+          <p class="client-subtitle">{{ total_rows }} entries · {{ per_page_raw|upper }} rows view</p>
         </div>
         <div class="hero-actions">
           <a class="button ghost" href="{{ url_for('index') }}">Back</a>
-          <a class="button ghost" href="{{ url_for('print_statement', client_id=client.id) }}" target="_blank">Print</a>
-          <a class="button ghost" href="{{ url_for('export_pdf', client_id=client.id) }}">Export PDF</a>
-          <a class="button ghost" href="{{ url_for('export_statement', client_id=client.id) }}">Export CSV</a>
-          <a class="button ghost" href="{{ url_for('export_statement_xlsx', client_id=client.id) }}">Export Excel</a>
-          <div class="history-dropdown" data-exchange-dropdown>
-            <a class="button secondary" href="#" data-exchange-toggle>Exchange USD &rarr; RMB</a>
-            <div class="history-popover exchange-popover">
-              <div class="history-popover-head">Exchange USD to RMB</div>
-              <form method="post" action="{{ url_for('exchange_balance', client_id=client.id) }}" id="balance-exchange-form" class="form-grid">
-                <input type="hidden" name="return_page" value="{{ page }}">
-                <input type="hidden" name="return_per_page" value="{{ per_page_raw }}">
-                <label>
-                  <span>Available USD</span>
-                  <input type="text" value="{{ (current_usd_balance, 'USD')|money_with_symbol }}" disabled>
-                </label>
-                <label>
-                  <span>Available RMB</span>
-                  <input type="text" value="{{ (current_cny_balance, 'CNY')|money_with_symbol }}" disabled>
-                </label>
-                <label>
-                  <span>Date</span>
-                  <input type="date" name="exchange_date" required value="{{ default_date }}">
-                </label>
-                <label>
-                  <span>USD Amount</span>
-                  <input type="number" step="0.01" name="usd_amount" required>
-                </label>
-                <label>
-                  <span>Exchange Rate</span>
-                  <input type="number" step="0.0001" name="exchange_rate" placeholder="Optional">
-                  <div class="live-rate-row">
-                    <button type="button" id="exchange-use-live-rate" class="button ghost" style="padding:4px 10px;font-size:0.76rem;min-height:auto;">Use live rate</button>
-                  </div>
-                  <div id="exchange-fx-ref" style="font-size:12px;color:#61717c;margin-top:4px;">
-                    <span id="exchange-fx-rate"></span>
-                    <span id="exchange-fx-source" style="display:inline-block;font-size:10px;padding:2px 7px;border-radius:4px;margin-left:6px;background:#eef4f3;color:#4a6670;border:1px solid #d7e0e2;"></span>
-                  </div>
-                </label>
-                <label>
-                  <span>RMB Amount</span>
-                  <input type="number" step="0.01" name="cny_amount" placeholder="Auto-calculated from rate">
-                </label>
-                <label class="full">
-                  <span>Note</span>
-                  <input type="text" name="exchange_note" placeholder="USD to RMB exchange">
-                </label>
-                <div class="exchange-tools full">
-                  <label class="checkline">
-                    <input type="checkbox" name="apply_fee" value="1">
-                    <span>Deduct 0.4% exchange fee from RMB</span>
-                  </label>
-                  <button class="button ghost" type="button" data-apply-fee>+0.4% Fee</button>
-                  <span class="fee-preview" data-fee-preview>Fee deducted from RMB: &yen;0.00</span>
-                </div>
-                <div class="full">
-                  <button class="button secondary" type="submit">Create Exchange</button>
-                </div>
-              </form>
+          <div class="history-dropdown export-dropdown" data-export-dropdown>
+            <a class="button ghost" href="#" data-export-toggle aria-expanded="false">Export</a>
+            <div class="history-popover export-popover">
+              <div class="history-popover-head">Export Statement</div>
+              <div class="export-menu">
+                <a href="{{ url_for('export_pdf', client_id=client.id) }}">PDF</a>
+                <a href="{{ url_for('export_statement', client_id=client.id) }}">CSV</a>
+                <a href="{{ url_for('export_statement_xlsx', client_id=client.id) }}">Excel</a>
+              </div>
             </div>
           </div>
           <div class="history-dropdown" data-history-dropdown>
-            <a class="button ghost" href="#" data-history-toggle>History</a>
+            <a class="button ghost" href="#" data-history-toggle aria-expanded="false">History</a>
             <div class="history-popover">
               <div class="history-popover-head">Recent Changes</div>
               {% if recent_events %}
@@ -841,7 +893,7 @@
         </div>
       </section>
 
-      <section class="balance-strip">
+      <section class="balance-strip client-metrics">
         <div class="balance-card">
           <p class="balance-label">USD Balance</p>
           <p class="balance-value {% if current_usd_balance < 0 %}is-negative{% elif current_usd_balance == 0 %}is-zero{% endif %}">{{ (current_usd_balance, 'USD')|money_with_symbol }}</p>
@@ -854,11 +906,27 @@
           <p class="balance-label">Total Entries</p>
           <p class="balance-value">{{ total_rows }}</p>
         </div>
+        <div class="balance-card">
+          <p class="balance-label">Approx Total RMB</p>
+          <p class="balance-value {% if approx_total_rmb is not none and approx_total_rmb < 0 %}is-negative{% elif approx_total_rmb == 0 %}is-zero{% endif %}">
+            {% if approx_total_rmb is not none %}
+            ≈ {{ "+" if approx_total_rmb >= 0 else "-" }}¥{{ "{:,.2f}".format(approx_total_rmb|abs) }}
+            {% else %}
+            —
+            {% endif %}
+          </p>
+        </div>
       </section>
 
-      <section class="card form-card">
-        <div class="section-head">
+      <section class="card form-card filters-card client-filters" data-filters-card>
+        <div class="section-head filters-head">
           <h2>Filters</h2>
+          <div class="filters-head-actions">
+            {% if filters.q or filters.currency or filters.category or filters.date_from or filters.date_to %}
+            <span class="status-pill">Filters active</span>
+            {% endif %}
+            <button class="button ghost" type="button" data-filters-toggle aria-expanded="false">Open Filters</button>
+          </div>
         </div>
         <form method="get" class="form-grid filters-grid">
           <input type="hidden" name="view" value="{{ view_mode }}">
@@ -900,13 +968,79 @@
         </form>
       </section>
 
-      <section class="view-toggle">
-        <span>View:</span>
-        <a class="button {% if view_mode != 'combined' %}ghost{% endif %}" href="{{ url_for('client_statement', client_id=client.id, page=page, per_page=per_page_raw, view='combined', q=filters.q, currency=filters.currency, category=filters.category, date_from=filters.date_from, date_to=filters.date_to) }}">Combined</a>
-        <a class="button {% if view_mode != 'split' %}ghost{% endif %}" href="{{ url_for('client_statement', client_id=client.id, page=page, per_page=per_page_raw, view='split', q=filters.q, currency=filters.currency, category=filters.category, date_from=filters.date_from, date_to=filters.date_to) }}">Client Style</a>
-      </section>
-
-      <section class="card" id="table-top">
+      <section class="card statement-card" id="table-top">
+        <div class="statement-card-head">
+          <div>
+            <p class="eyebrow">Ledger</p>
+            <h2>Statement Entries</h2>
+          </div>
+          <div class="statement-card-actions">
+            <button class="button" type="button" data-add-entry-open>Add Entry</button>
+            <div class="history-dropdown" data-exchange-dropdown>
+              <a class="button secondary" href="#" data-exchange-toggle aria-expanded="false">Exchange USD &rarr; RMB</a>
+              <div class="history-popover exchange-popover action-modal-popover">
+                <div class="action-modal-head">
+                  <div class="history-popover-head">Exchange USD to RMB</div>
+                  <button class="entry-modal-close" type="button" data-exchange-close aria-label="Close exchange">&times;</button>
+                </div>
+                <form method="post" action="{{ url_for('exchange_balance', client_id=client.id) }}" id="balance-exchange-form" class="form-grid">
+                  {{ csrf_input() }}
+                  <input type="hidden" name="return_page" value="{{ page }}">
+                  <input type="hidden" name="return_per_page" value="{{ per_page_raw }}">
+                  <label>
+                    <span>Available USD</span>
+                    <div class="exchange-field-action">
+                      <input type="text" value="{{ (current_usd_balance, 'USD')|money_with_symbol }}" disabled>
+                      <button class="button ghost" type="button" data-use-all-usd data-available-usd="{{ '%.2f'|format(current_usd_balance) }}">Use All</button>
+                    </div>
+                  </label>
+                  <label>
+                    <span>Available RMB</span>
+                    <input type="text" value="{{ (current_cny_balance, 'CNY')|money_with_symbol }}" disabled>
+                  </label>
+                  <label>
+                    <span>Date</span>
+                    <input type="date" name="exchange_date" required value="{{ default_date }}">
+                  </label>
+                  <label>
+                    <span>USD Amount</span>
+                    <input type="number" step="0.01" name="usd_amount" placeholder="Auto from RMB or enter USD">
+                  </label>
+                  <label>
+                    <span>Exchange Rate</span>
+                    <input type="number" step="0.0001" name="exchange_rate" placeholder="Optional">
+                    <div class="live-rate-row">
+                      <button type="button" id="exchange-use-live-rate" class="button ghost" style="padding:4px 10px;font-size:0.76rem;min-height:auto;">Use live rate</button>
+                    </div>
+                    <div id="exchange-fx-ref" style="font-size:12px;color:#61717c;margin-top:4px;">
+                      <span id="exchange-fx-rate"></span>
+                      <span id="exchange-fx-source" style="display:inline-block;font-size:10px;padding:2px 7px;border-radius:4px;margin-left:6px;background:#eef4f3;color:#4a6670;border:1px solid #d7e0e2;"></span>
+                    </div>
+                  </label>
+                  <label>
+                    <span>RMB Amount</span>
+                    <input type="number" step="0.01" name="cny_amount" placeholder="Auto from USD or enter target RMB">
+                  </label>
+                  <label class="full">
+                    <span>Note</span>
+                    <input type="text" name="exchange_note" placeholder="USD to RMB exchange">
+                  </label>
+                  <div class="exchange-tools full">
+                    <label class="checkline">
+                      <input type="checkbox" name="apply_fee" value="1">
+                      <span>Deduct 0.4% exchange fee from RMB</span>
+                    </label>
+                    <button class="button ghost" type="button" data-apply-fee>+0.4% Fee</button>
+                    <span class="fee-preview" data-fee-preview>Fee deducted from RMB: &yen;0.00</span>
+                  </div>
+                  <div class="full">
+                    <button class="button secondary" type="submit">Create Exchange</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="table-scroll-wrap">
         <table>
           <thead>
@@ -1149,6 +1283,72 @@
           </tbody>
         </table>
         </div>
+        <div class="mobile-statement-list">
+          {% for row in rows %}
+          <article class="mobile-entry-card">
+            <div class="mobile-entry-top">
+              <div>
+                <span class="mobile-entry-date">{{ row.entry_date }}</span>
+                <strong>#{{ row.source_no }}</strong>
+              </div>
+              <span class="mobile-entry-currency">{{ row.currency }}</span>
+            </div>
+            <div class="mobile-entry-desc">
+              <strong>{{ row.description }}</strong>
+              <div class="row-meta">
+                {% for value, label in category_options %}
+                  {% if row.category_hint == value and value != 'uncategorized' %}
+                  <small>{{ label }}</small>
+                  {% endif %}
+                {% endfor %}
+                {% if row.commission_source_entry_id %}
+                <small class="linked-note">Commission from #{{ row.commission_source_source_no }}</small>
+                {% elif row.commission_child_id %}
+                <small class="linked-note">Commission entry #{{ row.commission_child_source_no }} already exists</small>
+                {% endif %}
+                {% if row.profit_expense_account_name %}
+                <small class="linked-note">Company profit &rarr; {{ row.profit_expense_account_name }}</small>
+                {% endif %}
+              </div>
+            </div>
+            <div class="mobile-entry-amounts">
+              <div>
+                <span>{{ row.direction }}</span>
+                <strong class="{% if row.direction == 'IN' %}money-in{% else %}money-out{% endif %}">{{ (row.amount, row.currency)|money_with_symbol }}</strong>
+              </div>
+            </div>
+            <div class="mobile-entry-type">
+              {% if row.exchange_rate %}
+              <span class="type-badge is-fx">FX @ {{ '%.4f'|format(row.exchange_rate) }}</span>
+              {% else %}
+                {% for value, label in type_options %}
+                  {% if row.kind == value %}<span class="type-badge">{{ label }}</span>{% endif %}
+                {% endfor %}
+              {% endif %}
+              {% if row.commission_source_entry_id %}
+              <span class="type-badge is-commission">Commission</span>
+              {% elif row.commission_child_id %}
+              <span class="type-badge is-commission-source">Has Commission</span>
+              {% endif %}
+            </div>
+            <div class="mobile-entry-actions">
+              {% if row.can_auto_commission %}
+              <a href="#entry-{{ row.id }}" data-commission-open="{{ row.id }}" data-role="commission-action" class="text-action">Auto Commission</a>
+              {% elif row.commission_source_entry_id %}
+              <span class="action-status" data-role="commission-action">Commission Row</span>
+              {% elif row.commission_child_id %}
+              <span class="action-status" data-role="commission-action">Commission Exists</span>
+              {% endif %}
+              <a href="#entry-{{ row.id }}" data-edit-open="{{ row.id }}" class="text-action">Edit</a>
+              <form method="post" action="{{ url_for('delete_entry', entry_id=row.id) }}" class="inline-delete" data-confirm-delete>
+                <input type="hidden" name="return_page" value="{{ page }}">
+                <input type="hidden" name="return_per_page" value="{{ per_page_raw }}">
+                <button type="submit" class="text-action delete-action">Del</button>
+              </form>
+            </div>
+          </article>
+          {% endfor %}
+        </div>
       </section>
 
       <section class="pager">
@@ -1161,19 +1361,18 @@
           {% if per_page != 'all' and page > 1 %}
           <a class="button ghost" href="{{ url_for('client_statement', client_id=client.id, page=page-1, per_page=per_page_raw, q=filters.q, currency=filters.currency, category=filters.category, date_from=filters.date_from, date_to=filters.date_to) }}">Newer</a>
           {% endif %}
-          <form method="get" class="pager-jump">
+          <form method="get" class="pager-jump" data-per-page-form>
             <input type="hidden" name="q" value="{{ filters.q }}">
             <input type="hidden" name="currency" value="{{ filters.currency }}">
             <input type="hidden" name="category" value="{{ filters.category }}">
             <input type="hidden" name="date_from" value="{{ filters.date_from }}">
             <input type="hidden" name="date_to" value="{{ filters.date_to }}">
             <span>Lines</span>
-            <select name="per_page" style="width:auto;">
+            <select name="per_page" style="width:auto;" data-per-page-select aria-label="Rows per page">
               {% for value, label in [('10','10'), ('25','25'), ('50','50'), ('all','All')] %}
               <option value="{{ value }}" {% if per_page_raw == value %}selected{% endif %}>{{ label }}</option>
               {% endfor %}
             </select>
-            <button class="button ghost" type="submit">Apply</button>
           </form>
           {% if per_page != 'all' %}
           <form method="get" class="pager-jump">
@@ -1189,16 +1388,18 @@
           </form>
           {% endif %}
           {% if per_page != 'all' and page < total_pages %}
-          <a class="button ghost" href="{{ url_for('client_statement', client_id=client.id, page=page+1, per_page=per_page_raw, q=filters.q, currency=filters.currency, category=filters.category, date_from=filters.date_from, date_to=filters.date_to) }}">Older</a>
+          <a class="button ghost" href="{{ url_for('client_statement', client_id=client.id, page=page+1, per_page=per_page_raw, q=filters.q, currency=filters.currency, category=filters.category, date_from=filters.date_from, date_to=filters.date_to) }}">Previous Page</a>
           {% endif %}
         </div>
       </section>
 
-      <section class="workbench">
-        <section class="card form-card" id="entry-new">
-          <div class="section-head">
-            <h2>Add Statement Row</h2>
+      <div class="entry-modal" data-add-entry-modal hidden>
+        <div class="entry-modal-panel" role="dialog" aria-modal="true" aria-labelledby="add-entry-title">
+          <div class="entry-modal-head">
+            <h2 id="add-entry-title">Add Statement Row</h2>
+            <button class="entry-modal-close" type="button" data-add-entry-close aria-label="Close add entry">&times;</button>
           </div>
+          <section id="entry-new">
           <form method="post" action="{{ url_for('add_entry', client_id=client.id) }}" enctype="multipart/form-data" class="add-entry-layout">
             <input type="hidden" name="return_page" value="{{ page }}">
             <input type="hidden" name="return_per_page" value="{{ per_page_raw }}">
@@ -1293,17 +1494,21 @@
                       {% endfor %}
                     </select>
                   </label>
-                  <p class="field-help">Use this to mirror the commission into Expense Accounts as an IN profit entry. Default account: {{ default_profit_expense_account_name }}.</p>
+                    <p class="field-help">Use this to mirror the commission into Expense Accounts as an IN profit entry. Default account: {{ default_profit_expense_account_name }}.</p>
                 </div>
                 <div class="full">
                   <p class="field-help">Regular is a normal statement row. FX / Transfer is for currency exchange or moving money between wallets/accounts.</p>
-                  <button class="button" type="submit">Add Statement Row</button>
+                  <div class="modal-form-actions">
+                    <button class="button" type="submit">Add Statement Row</button>
+                    <button class="button ghost" type="button" data-add-entry-close>Cancel</button>
+                  </div>
                 </div>
               </div>
             </div>
           </form>
-        </section>
-      </section>
+          </section>
+        </div>
+      </div>
       <div id="page-bottom"></div>
     </main>
     <div id="image-lightbox" class="lightbox-overlay" style="display:none;">
@@ -1413,9 +1618,9 @@
           const amtField = form.querySelector('[name="amount"]');
           if (amtField) amtField.value = {{ quick_submit.amount|tojson }};
           {% endif %}
-          // Scroll to the add-entry form
+          // Open the add-entry modal for quick-submit review.
           setTimeout(function() {
-            document.getElementById('entry-new').scrollIntoView({ behavior: 'smooth', block: 'center' });
+            document.querySelector('[data-add-entry-open]')?.click();
           }, 300);
         }
       })();
