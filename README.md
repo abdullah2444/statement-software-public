@@ -58,6 +58,46 @@ git pull
 docker compose up -d --build
 ```
 
+## Paste-Only Compose Install
+
+If you do not want to clone the repo first, paste this into `compose.yml` on the server:
+
+```yaml
+services:
+  statement-software:
+    build:
+      context: https://gitee.com/abdullah24/statement-software-public.git#main
+      dockerfile: Dockerfile
+    image: statement-software:latest
+    container_name: statement-software
+    ports:
+      - "18451:18451"
+    volumes:
+      - ./statement-software-data:/data
+    environment:
+      PORT: "18451"
+      HOST: "0.0.0.0"
+      FLASK_DEBUG: "0"
+      DATABASE_PATH: /data/statement_software.db
+      UPLOAD_DIR: /data/uploads
+      BACKUP_DIR: /data/backups
+      MAX_UPLOAD_MB: "512"
+      APP_NAME: "Statement Software"
+      BRAND_NAME: "Statement"
+      COMPANY_NAME: "Your Company"
+      DEFAULT_PROFIT_EXPENSE_ACCOUNT_NAME: "Company Profit"
+      SESSION_COOKIE_SECURE: "0"
+    restart: unless-stopped
+```
+
+Then run:
+
+```bash
+docker compose up -d --build
+```
+
+This downloads the source from Gitee during the build. Private app data is stored in `./statement-software-data`, not in Git.
+
 ## Optional One-Command Installer
 
 If GitHub raw access is available, the installer can still be used:
@@ -134,7 +174,12 @@ Important settings:
 
 ## Compose File Format
 
-The checked-in file is YAML and should be named `docker-compose.yml` or `compose.yml`. It builds the local `Dockerfile`, exposes port `18451`, and stores private data under `DATA_DIR`.
+The checked-in files are YAML. Use:
+
+- `docker-compose.yml` after cloning the repo.
+- `docker-compose.remote.yml` as the paste-only version that downloads the repo from Gitee.
+
+On a server, either file can be renamed to `compose.yml`. The default browser port is `18451`.
 
 ## Backups
 
