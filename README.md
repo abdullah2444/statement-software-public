@@ -98,6 +98,52 @@ docker compose up -d --build
 
 This downloads the source from Gitee during the build. Private app data is stored in `./statement-software-data`, not in Git.
 
+To change config, create a `.env` file in the same folder as `compose.yml`:
+
+```bash
+cat > .env <<'EOF'
+PORT=18451
+HOST=0.0.0.0
+APP_NAME="Statement Software"
+BRAND_NAME="Statement"
+COMPANY_NAME="Your Company"
+MAX_UPLOAD_MB=512
+SESSION_COOKIE_SECURE=0
+OPENROUTER_API_KEY=
+FX_PROXY_URL=
+EOF
+```
+
+Then restart the stack:
+
+```bash
+docker compose up -d --build
+```
+
+Fresh installs create this default login:
+
+```env
+INITIAL_ADMIN_USERNAME=admin
+INITIAL_ADMIN_PASSWORD=admin123
+INITIAL_ADMIN_MUST_CHANGE=1
+```
+
+Log in with `admin / admin123`. The app will force a password change immediately after login.
+
+Those admin values are only used when the database has no users yet. If you already started an old install and cannot log in, check the generated bootstrap file:
+
+```bash
+docker compose exec statement-software cat /data/admin_bootstrap.txt
+```
+
+If there is no important data yet, you can recreate the database and get the new default login:
+
+```bash
+docker compose down
+rm -rf statement-software-data
+docker compose up -d --build
+```
+
 Important: run Compose commands on the server/host, in the folder where `compose.yml` exists. Do not run `bash setup.sh quickstart` inside the container. The runtime container only contains the app files:
 
 ```text
@@ -202,6 +248,9 @@ Important settings:
 - `SESSION_COOKIE_SECURE`: use `1` only when serving through HTTPS.
 - `OPENROUTER_API_KEY`: optional AI image parsing key.
 - `FX_PROXY_URL`: optional proxy URL for exchange-rate API calls.
+- `INITIAL_ADMIN_USERNAME`: first-run admin username. Default: `admin`.
+- `INITIAL_ADMIN_PASSWORD`: first-run admin password. Default: `admin123`.
+- `INITIAL_ADMIN_MUST_CHANGE`: set to `1` to force first-run admin to change password after login. Default: `1`.
 
 ## Compose File Format
 
@@ -209,6 +258,7 @@ The checked-in files are YAML. Use:
 
 - `docker-compose.yml` after cloning the repo.
 - `docker-compose.remote.yml` as the paste-only version that downloads the repo from Gitee.
+- `compose.env.example` as a template for the `.env` config file used by the paste-only version.
 
 On a server, either file can be renamed to `compose.yml`. The default browser port is `18451`.
 

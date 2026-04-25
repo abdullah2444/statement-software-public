@@ -68,9 +68,9 @@ OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-flash"
 RESET_SECRET_TOKEN = os.environ.get("RESET_SECRET_TOKEN", "")
 SECRET_KEY_FROM_ENV = bool(os.environ.get("SECRET_KEY"))
-INITIAL_ADMIN_USERNAME = os.environ.get("INITIAL_ADMIN_USERNAME", "").strip()
-INITIAL_ADMIN_PASSWORD = os.environ.get("INITIAL_ADMIN_PASSWORD", "")
-INITIAL_ADMIN_MUST_CHANGE = os.environ.get("INITIAL_ADMIN_MUST_CHANGE", "0") == "1"
+INITIAL_ADMIN_USERNAME = os.environ.get("INITIAL_ADMIN_USERNAME", "admin").strip() or "admin"
+INITIAL_ADMIN_PASSWORD = os.environ.get("INITIAL_ADMIN_PASSWORD", "admin123") or "admin123"
+INITIAL_ADMIN_MUST_CHANGE = os.environ.get("INITIAL_ADMIN_MUST_CHANGE", "1") == "1"
 BOOTSTRAP_CREDENTIAL_PATH = DATA_DIR / "admin_bootstrap.txt"
 DEFAULT_PROFIT_EXPENSE_ACCOUNT_NAME = (
     os.environ.get("DEFAULT_PROFIT_EXPENSE_ACCOUNT_NAME", "Company Profit").strip()

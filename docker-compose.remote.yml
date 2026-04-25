@@ -13,7 +13,7 @@ services:
     container_name: statement-software
     hostname: statement-software
     ports:
-      - "${PORT:-18451}:18451"
+      - "${HOST:-0.0.0.0}:${PORT:-18451}:18451"
     volumes:
       - ./statement-software-data:/data
     environment:
@@ -32,6 +32,10 @@ services:
       SEED_DEMO_DATA: "${SEED_DEMO_DATA:-0}"
       SOURCE_CSV_PATH: "${SOURCE_CSV_PATH:-}"
       DEMO_CLIENT_NAME: "${DEMO_CLIENT_NAME:-Demo Client}"
+      INITIAL_ADMIN_USERNAME: "${INITIAL_ADMIN_USERNAME:-admin}"
+      INITIAL_ADMIN_PASSWORD: "${INITIAL_ADMIN_PASSWORD:-admin123}"
+      INITIAL_ADMIN_MUST_CHANGE: "${INITIAL_ADMIN_MUST_CHANGE:-1}"
+      SECRET_KEY: "${SECRET_KEY:-}"
       SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-0}"
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
       RESET_SECRET_TOKEN: "${RESET_SECRET_TOKEN:-}"
