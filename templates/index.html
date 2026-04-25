@@ -598,7 +598,7 @@
       /* -- Tools row -- */
       .tools-row {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
         gap: 14px;
         margin-bottom: 22px;
       }
@@ -864,14 +864,7 @@
             <p class="hero-copy">A cleaner operating view for cash positions, supplier exposure, and client statement workflows. The dashboard keeps the financial snapshot visible while your working tools stay one scroll away.</p>
             </div>
             <div class="hero-actions">
-              {% if clients|length >= 2 %}
-              <button class="button ghost" id="group-toggle-btn" type="button">Group Clients</button>
-              {% endif %}
               <a class="button ghost" href="{{ url_for('quick_submit_page') }}">Quick Submit</a>
-              <form method="POST" action="{{ url_for('reload_data') }}" style="margin:0;">
-                {{ csrf_input() }}
-                <button class="button ghost" type="submit" onclick="return confirm('Reload statements from the source CSV? This replaces seeded client statement data.');">Reload From CSV</button>
-              </form>
             </div>
           </div>
           {% if bank_balances or suppliers %}
@@ -1273,15 +1266,13 @@
               <button class="button secondary" type="submit">Create</button>
             </form>
           </div>
+          {% if clients|length >= 2 %}
           <div class="tool-card">
-            <h3>Import from CSV</h3>
-            <p>Attach a statement export and place it directly into the dashboard.</p>
-            <form method="post" action="{{ url_for('import_client_csv') }}" enctype="multipart/form-data" class="inline-create">
-              <input type="text" name="name" placeholder="Client name" required>
-              <input type="file" name="statement_csv" accept=".csv,text/csv" required>
-              <button class="button secondary" type="submit">Upload</button>
-            </form>
+            <h3>Organize Clients</h3>
+            <p>Select two or more client statements and group them under one parent.</p>
+            <button class="button secondary" id="group-toggle-btn" type="button">Group Clients</button>
           </div>
+          {% endif %}
         </section>
 
         <div class="search-bar">
