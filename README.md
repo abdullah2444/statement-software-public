@@ -1,13 +1,76 @@
 # Statement Software
 
-Open-source statement management software with Docker/Python setup, full backups, restore, and a friendly `statementsw` terminal command.
+Open-source statement management software with Docker Compose/Python setup, full backups, restore, and a friendly `statementsw` terminal command.
 
-GitHub stores code only. Your `.env`, database, uploads, backups, logs, and business data stay private on your machine or server.
+Git hosting stores code only. Your `.env`, database, uploads, backups, logs, and business data stay private on your machine or server.
 
-## One-Command Install
+## China-Friendly Install
+
+Gitee is the primary mirror for China-friendly access:
+
+- Gitee: https://gitee.com/abdullah24/statement-software-public
+- GitHub mirror: https://github.com/abdullah2444/statement-software-public
+
+Clone from Gitee, then run setup:
+
+```bash
+git clone https://gitee.com/abdullah24/statement-software-public.git
+cd statement-software-public
+bash setup.sh quickstart
+```
+
+If the Gitee repo is private, clone with SSH instead:
+
+```bash
+git clone git@gitee.com:abdullah24/statement-software-public.git
+cd statement-software-public
+bash setup.sh quickstart
+```
+
+After setup, open:
+
+```text
+http://SERVER_IP:18451
+```
+
+## Docker Compose Install
+
+This project includes a ready `docker-compose.yml`. To install manually with Compose:
+
+```bash
+git clone https://gitee.com/abdullah24/statement-software-public.git
+cd statement-software-public
+cp .env.example .env
+```
+
+Edit `.env` and set a private `SECRET_KEY`, then start:
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+Stop or update later:
+
+```bash
+docker compose down
+git pull
+docker compose up -d --build
+```
+
+## Optional One-Command Installer
+
+If GitHub raw access is available, the installer can still be used:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/abdullah2444/statement-software-public/main/scripts/install.sh | bash
+```
+
+Custom install examples:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/abdullah2444/statement-software-public/main/scripts/install.sh | bash -s -- --port 8080
+curl -fsSL https://raw.githubusercontent.com/abdullah2444/statement-software-public/main/scripts/install.sh | bash -s -- --method python --dir ~/statement-software
 ```
 
 After install, use:
@@ -19,13 +82,6 @@ statementsw status
 statementsw doctor
 statementsw backup
 statementsw restore ./statement-full-backup-YYYYMMDD-HHMMSS.tar.gz
-```
-
-Custom install examples:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/abdullah2444/statement-software-public/main/scripts/install.sh | bash -s -- --port 8080
-curl -fsSL https://raw.githubusercontent.com/abdullah2444/statement-software-public/main/scripts/install.sh | bash -s -- --method python --dir ~/statement-software
 ```
 
 ## Useful Commands
@@ -76,6 +132,10 @@ Important settings:
 - `OPENROUTER_API_KEY`: optional AI image parsing key.
 - `FX_PROXY_URL`: optional proxy URL for exchange-rate API calls.
 
+## Compose File Format
+
+The checked-in file is YAML and should be named `docker-compose.yml` or `compose.yml`. It builds the local `Dockerfile`, exposes port `18451`, and stores private data under `DATA_DIR`.
+
 ## Backups
 
 Create a full backup:
@@ -98,7 +158,7 @@ statementsw restore ./data/backups/statement-full-backup-YYYYMMDD-HHMMSS.tar.gz
 
 Legacy raw SQLite exports are still accepted, but they are database-only and do not include uploaded images.
 
-## GitHub Safety
+## Repository Safety
 
 Do not commit:
 

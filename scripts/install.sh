@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-REPO_URL="https://github.com/abdullah2444/statement-software-public.git"
+REPO_URL="https://gitee.com/abdullah24/statement-software-public.git"
 BRANCH="main"
 INSTALL_DIR="$HOME/.statement-software/statement-software-public"
 BIN_DIR="$HOME/.local/bin"
@@ -13,13 +13,18 @@ print_help() {
 Statement Software installer
 
 Usage:
+  git clone https://gitee.com/abdullah24/statement-software-public.git
+  cd statement-software-public
+  bash setup.sh quickstart
+
+Optional GitHub raw installer:
   curl -fsSL https://raw.githubusercontent.com/abdullah2444/statement-software-public/main/scripts/install.sh | bash
   curl -fsSL https://raw.githubusercontent.com/abdullah2444/statement-software-public/main/scripts/install.sh | bash -s -- [options]
 
 Options:
   --dir PATH             Install directory. Default: ~/.statement-software/statement-software-public
   --branch NAME          Git branch. Default: main
-  --repo URL             Git repository URL
+  --repo URL             Git repository URL. Default: Gitee mirror
   --skip-setup           Install the statementsw command but do not run setup
   --help                 Show this help
 

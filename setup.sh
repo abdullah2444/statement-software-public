@@ -85,8 +85,8 @@ Examples:
   ./setup.sh reset-admin-password --admin-user admin
 
 Safety notes:
-  GitHub should store code, templates, static files, scripts, and docs.
-  GitHub should NOT store .env, real databases, uploads, backups, logs, or archives.
+  Git should store code, templates, static files, scripts, and docs.
+  Git should NOT store .env, real databases, uploads, backups, logs, or archives.
 
 Beginner note:
   On Ubuntu/Debian Linux, install will try to install missing tools like Docker,

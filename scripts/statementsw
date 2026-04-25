@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-REPO_URL_DEFAULT="https://github.com/abdullah2444/statement-software-public.git"
+REPO_URL_DEFAULT="https://gitee.com/abdullah24/statement-software-public.git"
 BRANCH="main"
 INSTALL_DIR="${STATEMENTSW_DIR:-$HOME/.statement-software/statement-software-public}"
 
