@@ -713,6 +713,214 @@ def _api_actor_payload(actor: dict | None) -> dict | None:
     }
 
 
+AUDIT_SENSITIVE_FIELDS = {
+    "api_key",
+    "csrf_token",
+    "current_password",
+    "new_password",
+    "confirm_password",
+    "openrouter_api_key",
+    "password",
+    "reset_secret_token",
+    "token",
+    "token_hash",
+}
+
+WEB_AUDIT_SKIP_ENDPOINTS = {
+    "login_action",
+    "logout",
+    "parse_image_api",
+    "api_extract_text",
+}
+
+WEB_AUDIT_ACTIONS = {
+    "change_password": ("change_password", "user"),
+    "reset_secret_key": ("reset_secret_key", "app_setting"),
+    "admin_add_user": ("create_user", "user"),
+    "admin_toggle_user": ("toggle_user", "user"),
+    "admin_change_role": ("change_user_role", "user"),
+    "admin_reset_password": ("reset_user_password", "user"),
+    "admin_delete_user": ("delete_user", "user"),
+    "new_client": ("create_client", "client"),
+    "import_client_csv": ("import_client_csv", "client"),
+    "add_entry": ("create_entry", "statement_entry"),
+    "exchange_balance": ("create_exchange", "statement_entry"),
+    "create_commission": ("create_commission", "statement_entry"),
+    "save_entry": ("update_entry", "statement_entry"),
+    "delete_entry": ("delete_entry", "statement_entry"),
+    "undo_last_change": ("undo_statement_change", "statement_entry"),
+    "delete_client": ("delete_client", "client"),
+    "group_clients": ("group_clients", "client"),
+    "ungroup_client": ("ungroup_client", "client"),
+    "ungroup_all_children": ("ungroup_all_children", "client"),
+    "rename_client": ("rename_client", "client"),
+    "add_bank_balance": ("create_bank_balance", "bank_balance"),
+    "edit_bank_balance": ("update_bank_balance", "bank_balance"),
+    "delete_bank_balance": ("delete_bank_balance", "bank_balance"),
+    "add_supplier": ("create_supplier", "supplier_balance"),
+    "edit_supplier": ("update_supplier", "supplier_balance"),
+    "delete_supplier": ("delete_supplier", "supplier_balance"),
+    "quick_submit_save": ("create_quick_submit", "quick_submit"),
+    "quick_submit_process": ("process_quick_submit", "quick_submit"),
+    "quick_submit_delete": ("delete_quick_submit", "quick_submit"),
+    "api_link_transfer": ("link_transfer", "statement_entry"),
+    "api_fx_refresh": ("refresh_fx_rate", "app_setting"),
+    "settings_save": ("update_settings", "app_setting"),
+    "settings_upload_database": ("restore_database_upload", "database"),
+    "settings_restore_database_backup": ("restore_database_backup", "database"),
+    "reload_data": ("reload_from_csv", "database"),
+    "expense_account_new": ("create_expense_account", "expense_account"),
+    "expense_account_settings": ("update_expense_account_settings", "expense_account"),
+    "expense_account_rename": ("rename_expense_account", "expense_account"),
+    "expense_account_delete": ("delete_expense_account", "expense_account"),
+    "expense_add_entry": ("create_expense_entry", "expense_entry"),
+    "expense_save_entry": ("update_expense_entry", "expense_entry"),
+    "expense_delete_entry": ("delete_expense_entry", "expense_entry"),
+    "expense_undo": ("undo_expense_change", "expense_entry"),
+    "expense_template_new": ("create_expense_template", "expense_template"),
+    "expense_template_edit": ("update_expense_template", "expense_template"),
+    "expense_template_delete": ("delete_expense_template", "expense_template"),
+    "expense_template_toggle": ("toggle_expense_template", "expense_template"),
+    "expense_import_csv": ("import_expenses", "expense_entry"),
+    "admin_create_token": ("create_api_token", "api_token"),
+    "admin_revoke_token": ("revoke_api_token", "api_token"),
+    "admin_activate_token": ("activate_api_token", "api_token"),
+    "admin_delete_token": ("delete_api_token", "api_token"),
+}
+
+
+def _audit_client_ip() -> str:
+    return (request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip())[:64]
+
+
+def _audit_actor_from_api_actor(actor: dict | None = None) -> dict:
+    actor = actor if actor is not None else getattr(g, "api_actor", None)
+    if actor and actor.get("auth_type") == "token":
+        token_name = actor.get("token_name") or "Unknown token"
+        return {
+            "actor_type": "api_token",
+            "actor_id": actor.get("token_id"),
+            "actor_name": token_name,
+            "actor_role": actor.get("access_level") or "",
+            "api_token_id": actor.get("token_id"),
+            "api_token_name": token_name,
+        }
+    if actor and actor.get("user") is not None:
+        user = actor["user"]
+        return {
+            "actor_type": "user",
+            "actor_id": user["id"],
+            "actor_name": user["username"],
+            "actor_role": user["role"],
+            "api_token_id": None,
+            "api_token_name": "",
+        }
+    return {
+        "actor_type": "",
+        "actor_id": None,
+        "actor_name": "",
+        "actor_role": "",
+        "api_token_id": None,
+        "api_token_name": "",
+    }
+
+
+def _audit_actor_from_web_session() -> dict:
+    user = getattr(g, "user", None)
+    if user is None and session.get("user_id"):
+        user = get_db().execute("select * from users where id = ?", (session["user_id"],)).fetchone()
+    if user is None:
+        return _audit_actor_from_api_actor(None)
+    return {
+        "actor_type": "user",
+        "actor_id": user["id"],
+        "actor_name": user["username"],
+        "actor_role": user["role"],
+        "api_token_id": None,
+        "api_token_name": "",
+    }
+
+
+def _sanitize_audit_value(key: str, value):
+    if key.lower() in AUDIT_SENSITIVE_FIELDS:
+        return "[redacted]"
+    if isinstance(value, dict):
+        return {str(k): _sanitize_audit_value(str(k), v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_audit_value(key, item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_audit_value(key, item) for item in value]
+    return value
+
+
+def _audit_request_detail(response=None) -> dict:
+    form_data = {}
+    for key in request.form:
+        values = request.form.getlist(key)
+        clean_values = [_sanitize_audit_value(key, value) for value in values]
+        form_data[key] = clean_values[0] if len(clean_values) == 1 else clean_values
+    file_data = {
+        key: [file.filename for file in files if file and file.filename]
+        for key, files in request.files.lists()
+    }
+    file_data = {key: value[0] if len(value) == 1 else value for key, value in file_data.items() if value}
+    detail = {
+        "endpoint": request.endpoint,
+        "method": request.method,
+        "path": request.path,
+        "view_args": dict(request.view_args or {}),
+        "form": form_data,
+    }
+    if file_data:
+        detail["files"] = file_data
+    if response is not None:
+        detail["status_code"] = response.status_code
+    return detail
+
+
+def _record_activity(
+    action: str,
+    resource_type: str,
+    resource_id: int | None,
+    detail: dict | None = None,
+    undo_data: dict | None = None,
+    *,
+    source: str = "api",
+    actor: dict | None = None,
+) -> None:
+    db = get_db()
+    actor = actor or _audit_actor_from_api_actor()
+    detail_payload = _sanitize_audit_value("detail", detail or {})
+    undo_payload = _sanitize_audit_value("undo_data", undo_data) if undo_data else None
+    db.execute(
+        """insert into api_audit_log
+        (action, resource_type, resource_id, detail, undo_data, created_at,
+         actor_type, actor_id, actor_name, actor_role, api_token_id, api_token_name,
+         source, request_method, request_path, ip_address, user_agent)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            action,
+            resource_type,
+            resource_id,
+            json.dumps(detail_payload),
+            json.dumps(undo_payload) if undo_payload else None,
+            utc_timestamp(),
+            actor.get("actor_type", ""),
+            actor.get("actor_id"),
+            actor.get("actor_name", ""),
+            actor.get("actor_role", ""),
+            actor.get("api_token_id"),
+            actor.get("api_token_name", ""),
+            source,
+            request.method,
+            request.path,
+            _audit_client_ip(),
+            (request.headers.get("User-Agent", "") or "")[:255],
+        ),
+    )
+    db.commit()
+
+
 def _api_token_actor(row: sqlite3.Row) -> dict:
     access_level = row["access_level"] if "access_level" in row.keys() and row["access_level"] in API_ACCESS_LEVELS else API_ACCESS_FULL
     client_id = row["client_id"] if "client_id" in row.keys() else None
@@ -831,12 +1039,15 @@ def _api_assert_client_access(client_id: int | None):
 
 def _api_log(action: str, resource_type: str, resource_id: int | None, detail: dict, undo_data: dict | None = None) -> None:
     """Record an API write action to the audit log."""
-    db = get_db()
-    db.execute(
-        "insert into api_audit_log (action, resource_type, resource_id, detail, undo_data, created_at) values (?, ?, ?, ?, ?, ?)",
-        (action, resource_type, resource_id, json.dumps(detail), json.dumps(undo_data) if undo_data else None, utc_timestamp()),
+    _record_activity(
+        action,
+        resource_type,
+        resource_id,
+        detail,
+        undo_data,
+        source="api",
+        actor=_audit_actor_from_api_actor(getattr(g, "api_actor", None)),
     )
-    db.commit()
 
 
 def api_route(rule, access: str | None = None, auth_required: bool = True, **options):
@@ -907,6 +1118,42 @@ def verify_csrf_token():
     provided = request.form.get("csrf_token") or request.headers.get("X-CSRF-Token")
     if not expected or not provided or not secrets.compare_digest(expected, provided):
         return _csrf_error_response()
+
+
+@app.after_request
+def audit_web_write(response):
+    endpoint = request.endpoint
+    if (
+        request.method in SAFE_HTTP_METHODS
+        or endpoint is None
+        or endpoint in API_ENDPOINTS
+        or endpoint in WEB_AUDIT_SKIP_ENDPOINTS
+        or response.status_code >= 400
+    ):
+        return response
+    try:
+        if not getattr(g, "user", None) and not session.get("user_id"):
+            return response
+        action, resource_type = WEB_AUDIT_ACTIONS.get(
+            endpoint,
+            (f"web_{endpoint}", "web_request"),
+        )
+        resource_id = None
+        for key in ("user_id", "client_id", "entry_id", "balance_id", "supplier_id", "submit_id", "account_id", "template_id", "token_id"):
+            if request.view_args and key in request.view_args:
+                resource_id = request.view_args[key]
+                break
+        _record_activity(
+            action,
+            resource_type,
+            resource_id,
+            _audit_request_detail(response),
+            source="web",
+            actor=_audit_actor_from_web_session(),
+        )
+    except Exception as exc:
+        app.logger.warning("Unable to write web activity audit entry: %s", exc)
+    return response
 
 
 def admin_required(f):
@@ -1083,7 +1330,18 @@ def init_db() -> None:
             detail text not null default '{}',
             undo_data text,
             undone integer not null default 0,
-            created_at text not null
+            created_at text not null,
+            actor_type text not null default '',
+            actor_id integer,
+            actor_name text not null default '',
+            actor_role text not null default '',
+            api_token_id integer,
+            api_token_name text not null default '',
+            source text not null default 'api',
+            request_method text not null default '',
+            request_path text not null default '',
+            ip_address text not null default '',
+            user_agent text not null default ''
         );
         """
     )
@@ -1157,6 +1415,24 @@ def init_db() -> None:
     if "last_used_user_agent" not in token_columns:
         db.execute("alter table api_tokens add column last_used_user_agent text")
     db.execute("update api_tokens set access_level = 'full_control' where access_level is null or access_level = ''")
+    audit_columns = {row[1] for row in db.execute("pragma table_info(api_audit_log)").fetchall()}
+    audit_migrations = {
+        "actor_type": "alter table api_audit_log add column actor_type text not null default ''",
+        "actor_id": "alter table api_audit_log add column actor_id integer",
+        "actor_name": "alter table api_audit_log add column actor_name text not null default ''",
+        "actor_role": "alter table api_audit_log add column actor_role text not null default ''",
+        "api_token_id": "alter table api_audit_log add column api_token_id integer",
+        "api_token_name": "alter table api_audit_log add column api_token_name text not null default ''",
+        "source": "alter table api_audit_log add column source text not null default 'api'",
+        "request_method": "alter table api_audit_log add column request_method text not null default ''",
+        "request_path": "alter table api_audit_log add column request_path text not null default ''",
+        "ip_address": "alter table api_audit_log add column ip_address text not null default ''",
+        "user_agent": "alter table api_audit_log add column user_agent text not null default ''",
+    }
+    for column, ddl in audit_migrations.items():
+        if column not in audit_columns:
+            db.execute(ddl)
+    db.execute("update api_audit_log set source = 'api' where source is null or source = ''")
     backfill_exchange_links(db)
     db.commit()
     db.close()
@@ -4228,21 +4504,12 @@ def settings_page():
     # Mask the API key for display
     raw_key = get_openrouter_api_key()
     masked_key = raw_key[:6] + "..." + raw_key[-4:] if len(raw_key) > 10 else raw_key
-    # Fetch API audit log
-    db = get_db()
-    audit_rows = db.execute("select * from api_audit_log order by id desc limit 10").fetchall()
-    audit_log = []
-    for r in audit_rows:
-        d = dict(r)
-        d["detail"] = json.loads(d["detail"]) if d["detail"] else {}
-        audit_log.append(d)
     return render_template(
         "settings.html",
         api_key_masked=masked_key,
         api_key_set=bool(raw_key),
         current_model=get_openrouter_model(),
         models=_fetch_openrouter_models(),
-        audit_log=audit_log,
         current_db_info=database_file_info(DB_PATH),
         db_backups=list_database_backups(),
         db_path_display=str(DB_PATH),
@@ -4994,7 +5261,14 @@ def admin_tokens():
         order by t.created_at desc"""
     ).fetchall()
     clients = db.execute("select id, name from clients order by name").fetchall()
-    return render_template("admin_tokens.html", tokens=tokens, clients=clients)
+    audit_rows = db.execute("select * from api_audit_log order by id desc limit 10").fetchall()
+    audit_log = []
+    for row in audit_rows:
+        item = dict(row)
+        item["detail"] = json.loads(item["detail"]) if item["detail"] else {}
+        item["undo_data"] = json.loads(item["undo_data"]) if item["undo_data"] else None
+        audit_log.append(item)
+    return render_template("admin_tokens.html", tokens=tokens, clients=clients, audit_log=audit_log)
 
 
 @app.route("/admin/tokens/create", methods=["POST"])
@@ -5251,6 +5525,7 @@ def api_auth_change_password():
         (generate_password_hash(new_pw), user["id"]),
     )
     db.commit()
+    _api_log("change_password", "user", user["id"], {"username": user["username"]})
     return jsonify({"ok": True})
 
 

@@ -333,7 +333,8 @@ paths:
   /audit-log:
     get:
       tags: [Admin]
-      summary: List API write audit log
+      summary: List API and web activity audit log
+      description: Returns recent write activity with actor details, including API token name or signed-in web username.
       responses:
         "200": {$ref: "#/components/responses/Ok"}
 components:

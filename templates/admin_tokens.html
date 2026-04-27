@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css', v=asset_version) }}">
     <style>
       body { background: linear-gradient(180deg, #f8fafc 0%, #f3f6fb 100%); }
-      .admin-shell { max-width: 800px; margin: 40px auto; padding: 0 20px; }
+      .admin-shell { max-width: 1120px; margin: 40px auto; padding: 0 20px; }
       .admin-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; flex-wrap: wrap; gap: 10px; }
       .admin-header h1 { font-size: 24px; font-weight: 700; color: #111827; }
       .btn-back { background: #fff; color: #334155; border: 1px solid #cfd8e3; border-radius: 10px; padding: 10px 16px; font-size: 14px; font-weight: 600; text-decoration: none; }
@@ -42,6 +42,25 @@
       .table-scroll-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
       .info-box { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 14px; font-size: 13px; color: #1e3a8a; margin-bottom: 16px; line-height: 1.6; }
       .info-box code { background: #dbeafe; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+      .log-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      .log-table th { text-align: left; padding: 8px 8px; border-bottom: 2px solid #e5e7eb; font-weight: 600; color: #374151; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+      .log-table td { padding: 9px 8px; border-bottom: 1px solid #f3f4f6; color: #1f2937; vertical-align: top; }
+      .log-table tr:last-child td { border-bottom: none; }
+      .log-table tr.undone td { opacity: 0.45; text-decoration: line-through; }
+      .log-badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+      .log-badge.create { background: #d1fae5; color: #065f46; }
+      .log-badge.update { background: #dbeafe; color: #1e3a8a; }
+      .log-badge.delete { background: #fee2e2; color: #991b1b; }
+      .log-badge.source-api { background: #ede9fe; color: #5b21b6; }
+      .log-badge.source-web { background: #e0f2fe; color: #075985; }
+      .log-detail { font-family: monospace; font-size: 11px; color: #6b7280; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+      .log-detail.expanded { white-space: pre-wrap; word-break: break-all; }
+      .log-empty { text-align: center; color: #9ca3af; padding: 24px; font-size: 13px; }
+      .log-filter { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+      .log-filter select, .log-filter input { padding: 7px 10px; border: 1px solid #cfd8e3; border-radius: 8px; font-size: 12px; }
+      .log-count { font-size: 12px; color: #6b7280; margin-left: auto; }
+      .actor-cell strong { display: block; font-size: 12px; color: #111827; }
+      .actor-cell span { display: block; color: #64748b; font-size: 11px; margin-top: 2px; }
       @media (max-width: 720px) {
         .admin-shell { margin: 20px auto; padding: 0 12px; }
         .admin-card { padding: 16px; }
@@ -49,6 +68,7 @@
         .add-form input { width: 100%; box-sizing: border-box; }
         .add-btn { width: 100%; }
         .tokens-table { min-width: 500px; }
+        .log-table { min-width: 820px; }
       }
     </style>
   </head>
@@ -164,8 +184,154 @@
         <p style="color:#6b7280;font-size:13px;">No tokens created yet.</p>
         {% endif %}
       </div>
+
+      <div class="admin-card">
+        <h2>Activity Audit Log</h2>
+        <p style="color:#6b7280;font-size:13px;margin:0 0 16px;">
+          Latest 10 changes from API tokens and signed-in web users.
+        </p>
+
+        {% if audit_log %}
+        <div class="log-filter">
+          <select id="log-action-filter" onchange="filterLog()">
+            <option value="">All Actions</option>
+            {% set actions_seen = [] %}
+            {% for entry in audit_log %}
+              {% if entry.action not in actions_seen %}
+                {% if actions_seen.append(entry.action) %}{% endif %}
+                <option value="{{ entry.action }}">{{ entry.action.replace('_', ' ').title() }}</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+          <select id="log-source-filter" onchange="filterLog()">
+            <option value="">All Sources</option>
+            <option value="api">API Tokens</option>
+            <option value="web">Web Users</option>
+          </select>
+          <input type="text" id="log-search" placeholder="Search actor, action, details..." oninput="filterLog()">
+          <span class="log-count" id="log-count">{{ audit_log|length }} entries</span>
+        </div>
+        <div class="table-scroll-wrap">
+        <table class="log-table" id="audit-log-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Who</th>
+              <th>Source</th>
+              <th>Action</th>
+              <th>Resource</th>
+              <th>Details</th>
+              <th>Time</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for entry in audit_log %}
+            <tr class="log-row {% if entry.undone %}undone{% endif %}"
+                data-action="{{ entry.action }}"
+                data-source="{{ entry.get('source') or 'api' }}"
+                data-actor="{{ (entry.get('actor_name') or entry.get('api_token_name') or 'legacy')|lower }}"
+                data-detail="{{ entry.detail|tojson }}">
+              <td>{{ entry.id }}</td>
+              <td class="actor-cell">
+                {% if entry.get('actor_type') == 'api_token' %}
+                  <strong>{{ entry.get('actor_name') or entry.get('api_token_name') or 'Unknown token' }}</strong>
+                  <span>API token{% if entry.get('actor_role') %} · {{ entry.get('actor_role').replace('_', ' ') }}{% endif %}</span>
+                {% elif entry.get('actor_type') == 'user' %}
+                  <strong>{{ entry.get('actor_name') or 'Unknown user' }}</strong>
+                  <span>Web user{% if entry.get('actor_role') %} · {{ entry.get('actor_role') }}{% endif %}</span>
+                {% else %}
+                  <strong>Legacy entry</strong>
+                  <span>Older audit row</span>
+                {% endif %}
+              </td>
+              <td>
+                {% set source = entry.get('source') or 'api' %}
+                <span class="log-badge source-{{ source }}">{{ source.upper() }}</span>
+              </td>
+              <td>
+                {% if 'create' in entry.action %}
+                <span class="log-badge create">{{ entry.action.replace('_', ' ') }}</span>
+                {% elif 'update' in entry.action or 'restore' in entry.action or 'reset' in entry.action or 'change' in entry.action %}
+                <span class="log-badge update">{{ entry.action.replace('_', ' ') }}</span>
+                {% elif 'delete' in entry.action or 'revoke' in entry.action %}
+                <span class="log-badge delete">{{ entry.action.replace('_', ' ') }}</span>
+                {% else %}
+                <span class="log-badge">{{ entry.action.replace('_', ' ') }}</span>
+                {% endif %}
+              </td>
+              <td>{{ entry.resource_type.replace('_', ' ') }} {% if entry.resource_id %}#{{ entry.resource_id }}{% endif %}</td>
+              <td>
+                <div class="log-detail" onclick="this.classList.toggle('expanded')" title="Click to expand">
+                  {% set d = entry.detail %}
+                  {% if d.get('description') %}
+                    {{ d.description }} - {{ d.get('currency','') }} {{ d.get('amount','') }}
+                  {% elif d.get('name') %}
+                    {{ d.name }}
+                  {% elif d.get('account_name') %}
+                    {{ d.account_name }} (USD: {{ d.get('usd_balance','') }}, CNY: {{ d.get('cny_balance','') }})
+                  {% elif d.get('supplier_name') %}
+                    {{ d.supplier_name }} - {{ d.get('currency','') }} {{ d.get('amount_owed','') }}
+                  {% elif d.get('before') and d.get('after') %}
+                    Updated: {{ d.after.get('description', d.after.get('account_name', d.after.get('name', 'record'))) }}
+                  {% elif d.get('transfer_group') %}
+                    FX: {{ d.transfer_group }}
+                  {% elif d.get('form') %}
+                    {{ d.get('endpoint', 'web action') }} {{ d.form|tojson|truncate(110) }}
+                  {% else %}
+                    {{ d|tojson|truncate(110) }}
+                  {% endif %}
+                </div>
+              </td>
+              <td style="white-space:nowrap;">{{ entry.created_at[:16].replace('T', ' ') }}</td>
+              <td>
+                {% if entry.undone %}
+                <span class="log-badge delete">Undone</span>
+                {% else %}
+                <span class="log-badge create">Active</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        {% else %}
+        <div class="log-empty">No activity recorded yet. New API and web changes will appear here.</div>
+        {% endif %}
+      </div>
     </div>
     <script>
+      function filterLog() {
+        var actionEl = document.getElementById('log-action-filter');
+        var sourceEl = document.getElementById('log-source-filter');
+        var searchEl = document.getElementById('log-search');
+        if (!actionEl || !sourceEl || !searchEl) return;
+        var action = actionEl.value.toLowerCase();
+        var source = sourceEl.value.toLowerCase();
+        var search = searchEl.value.toLowerCase();
+        var rows = document.querySelectorAll('.log-row');
+        var visible = 0;
+        rows.forEach(function(row) {
+          var rowAction = row.getAttribute('data-action') || '';
+          var rowSource = row.getAttribute('data-source') || '';
+          var rowActor = row.getAttribute('data-actor') || '';
+          var rowDetail = row.getAttribute('data-detail') || '';
+          var showAction = !action || rowAction === action;
+          var showSource = !source || rowSource === source;
+          var haystack = (rowAction + ' ' + rowActor + ' ' + rowDetail).toLowerCase();
+          var showSearch = !search || haystack.indexOf(search) !== -1;
+          if (showAction && showSource && showSearch) {
+            row.style.display = '';
+            visible++;
+          } else {
+            row.style.display = 'none';
+          }
+        });
+        var count = document.getElementById('log-count');
+        if (count) count.textContent = visible + ' entries';
+      }
+
       (function () {
         var access = document.getElementById('token-access');
         var clientField = document.getElementById('token-client-field');

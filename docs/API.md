@@ -109,6 +109,60 @@ Common status codes:
 - `GET /fx-rate?from=USD&to=CNY&amount=100`
 - `POST /fx-refresh` full control/admin only
 
+#### Dashboard numbers for mobile apps
+
+Use `GET /dashboard` for the mobile home screen. The web dashboard and mobile dashboard must use the same accounting meaning.
+
+Important response groups:
+
+- `bank_totals`: cash currently in bank accounts.
+- `supplier_totals`: money owed to suppliers.
+- `stats`: all client statement balances.
+- `company_status`: the final owner/company balance used by the web UI.
+- `exchange_rate_summary.display_rate`: the USD/CNY rate used for approximate RMB display.
+
+Do **not** calculate owner net RMB as only:
+
+```text
+bank approx RMB - supplier approx RMB
+```
+
+That misses the client statement balances.
+
+The web UI owner/company balance is:
+
+```text
+company USD = bank_totals.total_usd - stats.total_usd_balance - supplier_totals.total_usd
+company CNY = bank_totals.total_cny - stats.total_cny_balance - supplier_totals.total_cny
+owner net RMB = company_status.balance_usd * exchange_rate_summary.display_rate
+              + company_status.balance_cny
+```
+
+For mobile apps, prefer these API fields:
+
+```text
+company_status.balance_usd
+company_status.balance_cny
+exchange_rate_summary.display_rate
+```
+
+Then display:
+
+```text
+owner_overview.net_rmb = company_status.balance_usd * display_rate + company_status.balance_cny
+owner_overview.cash_rmb = bank_totals.total_usd * display_rate + bank_totals.total_cny
+owner_overview.clients_rmb = stats.total_usd_balance * display_rate + stats.total_cny_balance
+owner_overview.suppliers_rmb = supplier_totals.total_usd * display_rate + supplier_totals.total_cny
+```
+
+Supplier balances are stored as positive owed amounts. The web UI displays them as negative exposure. If showing supplier RMB as an amount owed, display:
+
+```text
+supplier exposure RMB = -(supplier_totals.total_usd * display_rate + supplier_totals.total_cny)
+```
+
+If `exchange_rate_summary.display_rate` is missing, show USD and CNY separately instead of inventing a rate.
+
 ### Clients
 
 - `GET /clients`
@@ -247,6 +301,9 @@ Admin/full-control only:
 - `PATCH /tokens/{token_id}`
 - `DELETE /tokens/{token_id}`
 - `GET /audit-log`
+  - Lists the recent activity log for API and web changes.
+  - Each row includes `source`, `actor_type`, `actor_name`, `actor_role`, `api_token_id`, `api_token_name`, action, resource, details, and time.
+  - `source: "api"` means an API token or API login made the change. `source: "web"` means a signed-in web user made it from the normal UI.
 
 ## Mobile App Notes
 
