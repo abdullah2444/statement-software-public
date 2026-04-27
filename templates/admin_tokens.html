@@ -34,7 +34,8 @@
       .action-group { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
       .add-form { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
       .add-form label { font-size: 12px; font-weight: 600; color: #374151; }
-      .add-form input { padding: 10px 12px; border: 1px solid #cfd8e3; border-radius: 10px; font-size: 13px; }
+      .add-form input,
+      .add-form select { padding: 10px 12px; border: 1px solid #cfd8e3; border-radius: 10px; font-size: 13px; background: #fff; }
       .add-form input:focus { outline: none; border-color: #1d4ed8; box-shadow: 0 0 0 3px rgba(29,78,216,0.1); }
       .add-btn { background: #1d4ed8; color: #fff; border: none; border-radius: 10px; padding: 10px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
       .add-btn:hover { background: #1e40af; }
@@ -71,9 +72,9 @@
       {% endwith %}
 
       <div class="info-box">
-        API tokens allow external tools (like AI agents) to access all data via JSON endpoints.<br>
+        API tokens allow external tools (like AI agents) to access JSON endpoints with the access level you choose.<br>
         Use header: <code>Authorization: Bearer &lt;token&gt;</code> or <code>X-API-Key: &lt;token&gt;</code><br>
-        Base URL: <code>/api/v1/</code> &mdash; Endpoints: dashboard, clients, bank-balances, supplier-balances, expenses, exchange-rates, search, users, quick-submits
+        Base URL: <code>/api/v1/</code> &mdash; Full control can write, read only can view/export, client portal is limited to one client.
       </div>
 
       <div class="admin-card">
@@ -81,7 +82,24 @@
         <form method="POST" action="{{ url_for('admin_create_token') }}" class="add-form">
           <div style="flex:1;">
             <label for="token-name">Token Name</label><br>
-            <input type="text" id="token-name" name="name" placeholder="e.g. OpenClaw AI Agent" style="width:100%;box-sizing:border-box;">
+            <input type="text" id="token-name" name="name" placeholder="e.g. Mobile App" style="width:100%;box-sizing:border-box;">
+          </div>
+          <div>
+            <label for="token-access">Access</label><br>
+            <select id="token-access" name="access_level">
+              <option value="full_control">Full control</option>
+              <option value="read_only">Read only</option>
+              <option value="client_portal">Client portal</option>
+            </select>
+          </div>
+          <div id="token-client-field">
+            <label for="token-client">Client</label><br>
+            <select id="token-client" name="client_id">
+              <option value="">Choose client</option>
+              {% for client in clients %}
+                <option value="{{ client.id }}">{{ client.name }}</option>
+              {% endfor %}
+            </select>
           </div>
           <button type="submit" class="add-btn">Generate Token</button>
         </form>
@@ -96,6 +114,8 @@
             <tr>
               <th>Name</th>
               <th>Prefix</th>
+              <th>Access</th>
+              <th>Client</th>
               <th>Status</th>
               <th>Created</th>
               <th>Last Used</th>
@@ -107,6 +127,8 @@
             <tr>
               <td>{{ t.name }}</td>
               <td><span class="mono">{{ t.token_prefix }}</span></td>
+              <td>{{ (t.access_level or 'full_control').replace('_', ' ').title() }}</td>
+              <td>{{ t.client_name or 'All' }}</td>
               <td>
                 {% if t.is_active %}
                 <span class="badge badge-active">Active</span>
@@ -143,5 +165,19 @@
         {% endif %}
       </div>
     </div>
+    <script>
+      (function () {
+        var access = document.getElementById('token-access');
+        var clientField = document.getElementById('token-client-field');
+        function syncClientField() {
+          if (!access || !clientField) return;
+          clientField.style.display = access.value === 'client_portal' ? '' : 'none';
+        }
+        if (access) {
+          access.addEventListener('change', syncClientField);
+          syncClientField();
+        }
+      })();
+    </script>
   </body>
 </html>

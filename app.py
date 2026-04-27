@@ -667,10 +667,90 @@ def create_admin_bootstrap_file(password: str) -> None:
 
 PUBLIC_ENDPOINTS = {"login_page", "login_action", "static"}
 API_ENDPOINTS = set()  # populated by @api_route decorator
+API_ACCESS_FULL = "full_control"
+API_ACCESS_READ = "read_only"
+API_ACCESS_CLIENT = "client_portal"
+API_ACCESS_LEVELS = {API_ACCESS_FULL, API_ACCESS_READ, API_ACCESS_CLIENT}
 
 
-def _validate_api_token() -> bool:
-    """Check Authorization header or X-API-Key for a valid token. Returns True if valid."""
+def _api_error(message: str, status: int = 400, **extra):
+    payload = {"error": message}
+    payload.update(extra)
+    return jsonify(payload), status
+
+
+def _api_request_data() -> dict:
+    if request.is_json:
+        return request.get_json(silent=True) or {}
+    return request.form.to_dict()
+
+
+def _api_user_payload(user: sqlite3.Row | dict | None) -> dict | None:
+    if user is None:
+        return None
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "role": user["role"],
+        "is_active": bool(user["is_active"]),
+        "must_change_password": bool(user["must_change_password"]),
+        "last_login": user["last_login"] if "last_login" in user.keys() else None,
+        "created_at": user["created_at"] if "created_at" in user.keys() else None,
+    }
+
+
+def _api_actor_payload(actor: dict | None) -> dict | None:
+    if actor is None:
+        return None
+    return {
+        "auth_type": actor["auth_type"],
+        "access_level": actor["access_level"],
+        "client_id": actor.get("client_id"),
+        "role": actor.get("role"),
+        "token_id": actor.get("token_id"),
+        "token_name": actor.get("token_name"),
+        "user": _api_user_payload(actor.get("user")),
+    }
+
+
+def _api_token_actor(row: sqlite3.Row) -> dict:
+    access_level = row["access_level"] if "access_level" in row.keys() and row["access_level"] in API_ACCESS_LEVELS else API_ACCESS_FULL
+    client_id = row["client_id"] if "client_id" in row.keys() else None
+    if access_level != API_ACCESS_CLIENT:
+        client_id = None
+    return {
+        "auth_type": "token",
+        "access_level": access_level,
+        "client_id": client_id,
+        "role": "admin" if access_level == API_ACCESS_FULL else "api",
+        "token_id": row["id"],
+        "token_name": row["name"],
+        "user": None,
+        "must_change_password": False,
+    }
+
+
+def _session_api_actor() -> dict | None:
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+    db = get_db()
+    user = db.execute("select * from users where id = ?", (user_id,)).fetchone()
+    if not user or not user["is_active"]:
+        session.clear()
+        return None
+    return {
+        "auth_type": "session",
+        "access_level": API_ACCESS_FULL,
+        "client_id": None,
+        "role": user["role"],
+        "user": user,
+        "must_change_password": bool(user["must_change_password"]),
+    }
+
+
+def _validate_api_token() -> dict | None:
+    """Check Authorization header or X-API-Key and return an API actor when valid."""
     auth = request.headers.get("Authorization", "")
     api_key = request.headers.get("X-API-Key", "")
     raw_token = ""
@@ -679,16 +759,74 @@ def _validate_api_token() -> bool:
     elif api_key:
         raw_token = api_key.strip()
     if not raw_token:
-        return False
+        return None
     from hashlib import sha256
     token_hash = sha256(raw_token.encode()).hexdigest()
     db = get_db()
     row = db.execute("select * from api_tokens where token_hash = ? and is_active = 1", (token_hash,)).fetchone()
     if row:
-        db.execute("update api_tokens set last_used_at = ? where id = ?", (utc_timestamp(), row["id"]))
+        columns = {info[1] for info in db.execute("pragma table_info(api_tokens)").fetchall()}
+        updates = ["last_used_at = ?"]
+        params: list[object] = [utc_timestamp()]
+        if "last_used_ip" in columns:
+            updates.append("last_used_ip = ?")
+            params.append(request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip())
+        if "last_used_user_agent" in columns:
+            updates.append("last_used_user_agent = ?")
+            params.append((request.headers.get("User-Agent", "") or "")[:255])
+        params.append(row["id"])
+        db.execute(f"update api_tokens set {', '.join(updates)} where id = ?", params)
         db.commit()
+        return _api_token_actor(row)
+    return None
+
+
+def _api_actor_from_request(auth_required: bool) -> dict | None:
+    actor = _validate_api_token()
+    if actor is None:
+        actor = _session_api_actor()
+    g.api_actor = actor
+    if actor and actor.get("user") is not None:
+        g.user = actor["user"]
+    if actor is None and auth_required:
+        return None
+    return actor
+
+
+def _api_actor_allows(actor: dict | None, access: str) -> bool:
+    if access == "public":
         return True
+    if actor is None:
+        return False
+    if access == "self":
+        return actor["auth_type"] == "session"
+    if access == "read":
+        return True
+    if access == "write":
+        return actor["access_level"] == API_ACCESS_FULL
+    if access == "admin":
+        return actor["access_level"] == API_ACCESS_FULL and (
+            actor["auth_type"] == "token" or actor.get("role") == "admin"
+        )
     return False
+
+
+def _api_client_allowed(client_id: int | None) -> bool:
+    actor = getattr(g, "api_actor", None)
+    if not actor or actor.get("access_level") != API_ACCESS_CLIENT:
+        return True
+    return client_id is not None and int(client_id) == int(actor.get("client_id") or 0)
+
+
+def _api_entry_client_id(entry_id: int) -> int | None:
+    row = get_db().execute("select client_id from statement_entries where id = ?", (entry_id,)).fetchone()
+    return row["client_id"] if row else None
+
+
+def _api_assert_client_access(client_id: int | None):
+    if not _api_client_allowed(client_id):
+        return _api_error("This API token can only access its assigned client.", 403)
+    return None
 
 
 def _api_log(action: str, resource_type: str, resource_id: int | None, detail: dict, undo_data: dict | None = None) -> None:
@@ -701,15 +839,23 @@ def _api_log(action: str, resource_type: str, resource_id: int | None, detail: d
     db.commit()
 
 
-def api_route(rule, **options):
+def api_route(rule, access: str | None = None, auth_required: bool = True, **options):
     """Decorator that registers a route as an API endpoint (token-auth, bypasses session)."""
     def decorator(f):
         endpoint_name = options.pop("endpoint", f.__name__)
+        methods = set(options.get("methods") or ["GET"])
+        required_access = access or ("read" if methods <= SAFE_HTTP_METHODS else "write")
+        route_requires_auth = auth_required and required_access != "public"
         API_ENDPOINTS.add(endpoint_name)
         @wraps(f)
         def wrapper(*args, **kwargs):
-            if not _validate_api_token():
-                return jsonify({"error": "Invalid or missing API token"}), 401
+            actor = _api_actor_from_request(route_requires_auth)
+            if route_requires_auth and actor is None:
+                return _api_error("Invalid, missing, or expired API authentication.", 401)
+            if actor and actor.get("must_change_password") and required_access not in {"self", "public"}:
+                return _api_error("Password change required before using this API.", 403, code="password_change_required")
+            if not _api_actor_allows(actor, required_access):
+                return _api_error("This API access level cannot perform that action.", 403)
             return f(*args, **kwargs)
         app.add_url_rule(rule, endpoint=endpoint_name, view_func=wrapper, **options)
         return wrapper
@@ -920,8 +1066,12 @@ def init_db() -> None:
             name text not null,
             token_hash text not null unique,
             token_prefix text not null,
+            access_level text not null default 'full_control',
+            client_id integer,
             created_at text not null,
             last_used_at text,
+            last_used_ip text,
+            last_used_user_agent text,
             is_active integer not null default 1
         );
 
@@ -997,6 +1147,16 @@ def init_db() -> None:
     tpl_columns = {row[1] for row in db.execute("pragma table_info(recurring_expense_templates)").fetchall()}
     if "every_n_months" not in tpl_columns:
         db.execute("alter table recurring_expense_templates add column every_n_months integer not null default 1")
+    token_columns = {row[1] for row in db.execute("pragma table_info(api_tokens)").fetchall()}
+    if "access_level" not in token_columns:
+        db.execute("alter table api_tokens add column access_level text not null default 'full_control'")
+    if "client_id" not in token_columns:
+        db.execute("alter table api_tokens add column client_id integer")
+    if "last_used_ip" not in token_columns:
+        db.execute("alter table api_tokens add column last_used_ip text")
+    if "last_used_user_agent" not in token_columns:
+        db.execute("alter table api_tokens add column last_used_user_agent text")
+    db.execute("update api_tokens set access_level = 'full_control' where access_level is null or access_level = ''")
     backfill_exchange_links(db)
     db.commit()
     db.close()
@@ -4827,8 +4987,14 @@ def expense_import_csv(account_id):
 @admin_required
 def admin_tokens():
     db = get_db()
-    tokens = db.execute("select * from api_tokens order by created_at desc").fetchall()
-    return render_template("admin_tokens.html", tokens=tokens)
+    tokens = db.execute(
+        """select t.*, c.name as client_name
+        from api_tokens t
+        left join clients c on c.id = t.client_id
+        order by t.created_at desc"""
+    ).fetchall()
+    clients = db.execute("select id, name from clients order by name").fetchall()
+    return render_template("admin_tokens.html", tokens=tokens, clients=clients)
 
 
 @app.route("/admin/tokens/create", methods=["POST"])
@@ -4836,13 +5002,28 @@ def admin_tokens():
 def admin_create_token():
     from hashlib import sha256
     name = request.form.get("name", "").strip() or "Unnamed Token"
+    access_level = request.form.get("access_level", API_ACCESS_FULL).strip()
+    if access_level not in API_ACCESS_LEVELS:
+        access_level = API_ACCESS_FULL
+    client_id = request.form.get("client_id", type=int)
+    db = get_db()
+    if access_level == API_ACCESS_CLIENT:
+        if not client_id:
+            flash("Choose a client for client portal tokens.", "error")
+            return redirect(url_for("admin_tokens"))
+        client = db.execute("select id from clients where id = ?", (client_id,)).fetchone()
+        if client is None:
+            flash("Selected client was not found.", "error")
+            return redirect(url_for("admin_tokens"))
+    else:
+        client_id = None
     raw_token = f"ffs_{secrets.token_hex(32)}"
     token_hash = sha256(raw_token.encode()).hexdigest()
     token_prefix = raw_token[:12] + "..."
-    db = get_db()
     db.execute(
-        "insert into api_tokens(name, token_hash, token_prefix, created_at) values (?, ?, ?, ?)",
-        (name, token_hash, token_prefix, utc_timestamp()),
+        """insert into api_tokens(name, token_hash, token_prefix, access_level, client_id, created_at)
+        values (?, ?, ?, ?, ?, ?)""",
+        (name, token_hash, token_prefix, access_level, client_id, utc_timestamp()),
     )
     db.commit()
     flash(f"Token created! Copy it now (shown only once): {raw_token}", "token")
@@ -4890,8 +5071,213 @@ def admin_delete_token(token_id):
 
 # --- Public JSON API (token-authenticated) ---
 
+def _client_statement_api_payload(client_id: int) -> tuple[dict | None, int]:
+    db = get_db()
+    client = db.execute("select * from clients where id = ?", (client_id,)).fetchone()
+    if client is None:
+        return {"error": "Client not found"}, 404
+    if not _api_client_allowed(client_id):
+        return {"error": "This API token can only access its assigned client."}, 403
+
+    filters = {
+        "q": request.args.get("q", "").strip(),
+        "currency": request.args.get("currency", "").strip().upper(),
+        "category": request.args.get("category", "").strip(),
+        "date_from": request.args.get("date_from", "").strip(),
+        "date_to": request.args.get("date_to", "").strip(),
+    }
+    page = max(request.args.get("page", type=int) or 1, 1)
+    per_page_raw = (request.args.get("per_page") or "50").strip().lower()
+    if per_page_raw == "all":
+        per_page: int | str = "all"
+    else:
+        try:
+            per_page = max(min(int(per_page_raw), 500), 1)
+        except ValueError:
+            per_page = 50
+
+    clauses = ["client_id = ?"]
+    params: list[object] = [client_id]
+    if filters["q"]:
+        clauses.append("(description like ? or cast(amount as text) like ? or cast(source_no as text) like ? or entry_date like ? or currency like ? or direction like ? or kind like ? or coalesce(category_hint,'') like ? or coalesce(transfer_group,'') like ?)")
+        params.extend([f"%{filters['q']}%"] * 9)
+    if filters["currency"] in {"USD", "CNY"}:
+        clauses.append("currency = ?")
+        params.append(filters["currency"])
+    if filters["category"]:
+        clauses.append("category_hint = ?")
+        params.append(filters["category"])
+    if filters["date_from"]:
+        clauses.append("entry_date >= ?")
+        params.append(filters["date_from"])
+    if filters["date_to"]:
+        clauses.append("entry_date <= ?")
+        params.append(filters["date_to"])
+
+    where_sql = " and ".join(clauses)
+    entries = db.execute(
+        f"select * from statement_entries where {where_sql} order by {ENTRY_ORDER}",
+        params,
+    ).fetchall()
+    rows = statement_rows_with_commission_state(db, client_id, entries)
+    total_rows = len(rows)
+    if per_page == "all":
+        page_rows = rows
+        total_pages = 1
+        page = 1
+    else:
+        total_pages = max((total_rows + per_page - 1) // per_page, 1)
+        page = min(page, total_pages)
+        start = (page - 1) * per_page
+        page_rows = rows[start:start + per_page]
+
+    usd_in = sum(float(e["amount"]) for e in entries if e["currency"] == "USD" and e["direction"] == "IN")
+    usd_out = sum(float(e["amount"]) for e in entries if e["currency"] == "USD" and e["direction"] == "OUT")
+    cny_in = sum(float(e["amount"]) for e in entries if e["currency"] == "CNY" and e["direction"] == "IN")
+    cny_out = sum(float(e["amount"]) for e in entries if e["currency"] == "CNY" and e["direction"] == "OUT")
+    fx_summary = exchange_rate_summary()
+    usd_balance = usd_in - usd_out
+    cny_balance = cny_in - cny_out
+    approx_total_rmb = None
+    if fx_summary.get("display_rate") is not None:
+        approx_total_rmb = usd_balance * fx_summary["display_rate"] + cny_balance
+
+    compact_rows = []
+    for row in page_rows:
+        amount_label = "in_amount" if row["direction"] == "IN" else "out_amount"
+        compact_rows.append({
+            "id": row["id"],
+            "source_no": row["source_no"],
+            "date": row["entry_date"],
+            "title": row["description"],
+            "subtitle": row["category_hint"],
+            "currency": row["currency"],
+            "direction": row["direction"],
+            "amount": row["amount"],
+            "amount_field": amount_label,
+            "kind": row["kind"],
+            "category_hint": row["category_hint"],
+            "badges": row.get("type_badges", []),
+            "has_image": bool(row.get("image_path")),
+            "can_create_commission": bool(row.get("can_create_commission")),
+            "commission_status": row.get("commission_status"),
+        })
+
+    return {
+        "client": {"id": client["id"], "name": client["name"], "parent_id": client["parent_id"] if "parent_id" in client.keys() else None},
+        "filters": filters,
+        "pagination": {"page": page, "per_page": per_page, "total_pages": total_pages, "total_rows": total_rows},
+        "summary": {
+            "entry_count": total_rows,
+            "usd_balance": usd_balance,
+            "cny_balance": cny_balance,
+            "approx_total_rmb": approx_total_rmb,
+            "usd_in": usd_in,
+            "usd_out": usd_out,
+            "cny_in": cny_in,
+            "cny_out": cny_out,
+        },
+        "entries": [dict(r) | {
+            "running_usd": r["running_usd"],
+            "running_cny": r["running_cny"],
+            "type_badges": r.get("type_badges", []),
+            "commission_status": r.get("commission_status"),
+            "can_create_commission": r.get("can_create_commission", False),
+        } for r in page_rows],
+        "mobile_cards": compact_rows,
+        "options": {
+            "types": TYPE_OPTIONS,
+            "categories": CATEGORY_OPTIONS,
+            "default_date": china_today().isoformat(),
+        },
+        "fx_summary": fx_summary,
+    }, 200
+
+
+@api_route("/api/v1/auth/login", methods=["POST"], access="public", auth_required=False)
+def api_auth_login():
+    data = _api_request_data()
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    if not username or not password:
+        return _api_error("username and password are required", 400)
+    db = get_db()
+    user = db.execute("select * from users where username = ?", (username,)).fetchone()
+    if not user or not user["is_active"] or not check_password_hash(user["password_hash"], password):
+        return _api_error("Invalid username or password", 401)
+    session.clear()
+    session.permanent = True
+    session["user_id"] = user["id"]
+    db.execute("update users set last_login = ? where id = ?", (utc_timestamp(), user["id"]))
+    db.commit()
+    user = db.execute("select * from users where id = ?", (user["id"],)).fetchone()
+    return jsonify({
+        "ok": True,
+        "user": _api_user_payload(user),
+        "must_change_password": bool(user["must_change_password"]),
+    })
+
+
+@api_route("/api/v1/auth/me", methods=["GET"])
+def api_auth_me():
+    return jsonify({"ok": True, "actor": _api_actor_payload(getattr(g, "api_actor", None))})
+
+
+@api_route("/api/v1/auth/logout", methods=["POST"], access="self")
+def api_auth_logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@api_route("/api/v1/auth/change-password", methods=["POST"], access="self")
+def api_auth_change_password():
+    actor = getattr(g, "api_actor", None)
+    user = actor.get("user") if actor else None
+    if user is None:
+        return _api_error("A user login is required to change password.", 403)
+    data = _api_request_data()
+    current = data.get("current_password") or ""
+    new_pw = data.get("new_password") or ""
+    confirm = data.get("confirm_password") or new_pw
+    if not user["must_change_password"] and not check_password_hash(user["password_hash"], current):
+        return _api_error("Current password is incorrect", 400)
+    if len(new_pw) < 6:
+        return _api_error("Password must be at least 6 characters", 400)
+    if new_pw != confirm:
+        return _api_error("Passwords do not match", 400)
+    db = get_db()
+    db.execute(
+        "update users set password_hash = ?, must_change_password = 0 where id = ?",
+        (generate_password_hash(new_pw), user["id"]),
+    )
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@api_route("/api/v1/options", methods=["GET"])
+def api_options():
+    return jsonify({
+        "statement_types": TYPE_OPTIONS,
+        "statement_categories": CATEGORY_OPTIONS,
+        "expense_currencies": ALL_EXPENSE_CURRENCIES,
+        "expense_categories": [{"value": value, "label": label} for value, label in EXPENSE_CATEGORIES],
+        "token_access_levels": [
+            {"value": API_ACCESS_FULL, "label": "Full control"},
+            {"value": API_ACCESS_READ, "label": "Read only"},
+            {"value": API_ACCESS_CLIENT, "label": "Client portal"},
+        ],
+    })
+
+
 @api_route("/api/v1/dashboard", methods=["GET"])
 def api_dashboard():
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        client_id = actor.get("client_id")
+        if not client_id:
+            return _api_error("Client portal token is not assigned to a client.", 403)
+        payload, status = _client_statement_api_payload(int(client_id))
+        return jsonify({"client_dashboard": payload}), status
     stats = dashboard_stats()
     balances = bank_balance_list()
     suppliers = supplier_balance_list()
@@ -4914,45 +5300,125 @@ def api_dashboard():
 def api_clients():
     clients = client_list()
     groups = grouped_client_list()
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        client_id = int(actor.get("client_id") or 0)
+        clients = [client for client in clients if int(client["id"]) == client_id]
+        groups = [group for group in groups if int(group["id"]) == client_id]
     return jsonify({"clients": clients, "groups": groups})
 
 
 @api_route("/api/v1/clients/<int:client_id>", methods=["GET"])
 def api_client_detail(client_id):
+    payload, status = _client_statement_api_payload(client_id)
+    return jsonify(payload), status
+
+
+@api_route("/api/v1/clients/<int:client_id>", methods=["PUT", "PATCH"], endpoint="api_update_client")
+def api_update_client(client_id):
     db = get_db()
     client = db.execute("select * from clients where id = ?", (client_id,)).fetchone()
     if client is None:
-        return jsonify({"error": "Client not found"}), 404
-    entries = db.execute(
-        f"select * from statement_entries where client_id = ? order by {ENTRY_ORDER}",
-        (client_id,),
-    ).fetchall()
-    rows = statement_rows_with_commission_state(db, client_id, entries)
-    entry_dicts = []
-    for r in rows:
-        d = {k: r[k] for k in r}
-        d["running_usd"] = r["running_usd"]
-        d["running_cny"] = r["running_cny"]
-        entry_dicts.append(d)
-    usd_in = sum(float(e["amount"]) for e in entries if e["currency"] == "USD" and e["direction"] == "IN")
-    usd_out = sum(float(e["amount"]) for e in entries if e["currency"] == "USD" and e["direction"] == "OUT")
-    cny_in = sum(float(e["amount"]) for e in entries if e["currency"] == "CNY" and e["direction"] == "IN")
-    cny_out = sum(float(e["amount"]) for e in entries if e["currency"] == "CNY" and e["direction"] == "OUT")
-    return jsonify({
-        "client": {"id": client["id"], "name": client["name"], "parent_id": client["parent_id"] if "parent_id" in client.keys() else None},
-        "summary": {
-            "entry_count": len(entries),
-            "usd_balance": usd_in - usd_out,
-            "cny_balance": cny_in - cny_out,
-            "usd_in": usd_in, "usd_out": usd_out,
-            "cny_in": cny_in, "cny_out": cny_out,
-        },
-        "entries": entry_dicts,
-    })
+        return _api_error("Client not found", 404)
+    data = _api_request_data()
+    new_name = (data.get("name") or "").strip()
+    parent_id = data.get("parent_id", None)
+    before = dict(client)
+    if new_name:
+        existing = db.execute("select id from clients where name = ? and id != ?", (new_name, client_id)).fetchone()
+        if existing:
+            return _api_error(f'Client name "{new_name}" is already taken.', 409)
+        db.execute("update clients set name = ? where id = ?", (new_name, client_id))
+    if "parent_id" in data:
+        try:
+            parsed_parent = parse_optional_int(parent_id, "parent_id")
+        except ValueError as exc:
+            return _api_error(str(exc), 400)
+        if parsed_parent == client_id:
+            return _api_error("A client cannot be its own parent.", 400)
+        if parsed_parent:
+            parent = db.execute("select id from clients where id = ?", (parsed_parent,)).fetchone()
+            if parent is None:
+                return _api_error("Parent client not found", 404)
+        db.execute("update clients set parent_id = ? where id = ?", (parsed_parent, client_id))
+    db.commit()
+    updated = db.execute("select * from clients where id = ?", (client_id,)).fetchone()
+    _api_log("update_client", "client", client_id, {"before": before, "after": dict(updated)},
+             {"action": "restore_client", "client_id": client_id, "data": before})
+    return jsonify({"ok": True, "client": dict(updated)})
+
+
+@api_route("/api/v1/clients/<int:client_id>", methods=["DELETE"], endpoint="api_delete_client", access="admin")
+def api_delete_client(client_id):
+    db = get_db()
+    client = db.execute("select * from clients where id = ?", (client_id,)).fetchone()
+    if client is None:
+        return _api_error("Client not found", 404)
+    entries = db.execute("select * from statement_entries where client_id = ?", (client_id,)).fetchall()
+    db.execute("delete from statement_entry_events where client_id = ?", (client_id,))
+    db.execute("delete from statement_entries where client_id = ?", (client_id,))
+    db.execute("delete from clients where id = ?", (client_id,))
+    db.commit()
+    _api_log("delete_client", "client", client_id, {"client": dict(client), "entries": [row_to_dict(e) for e in entries]})
+    return jsonify({"ok": True, "deleted_id": client_id})
+
+
+@api_route("/api/v1/clients/group", methods=["POST"], endpoint="api_group_clients")
+def api_group_clients():
+    data = _api_request_data()
+    try:
+        parent_id = int(data.get("parent_id") or 0)
+        child_ids = data.get("child_ids") or []
+        if isinstance(child_ids, str):
+            child_ids = [int(cid.strip()) for cid in child_ids.split(",") if cid.strip()]
+        child_ids = [int(cid) for cid in child_ids if int(cid) != parent_id]
+    except (TypeError, ValueError):
+        return _api_error("parent_id and child_ids must be valid integers", 400)
+    if not parent_id or not child_ids:
+        return _api_error("parent_id and child_ids are required", 400)
+    db = get_db()
+    parent = db.execute("select id from clients where id = ?", (parent_id,)).fetchone()
+    if parent is None:
+        return _api_error("Parent client not found", 404)
+    valid_children = []
+    for cid in child_ids:
+        child = db.execute("select id from clients where id = ?", (cid,)).fetchone()
+        if child:
+            valid_children.append(cid)
+            db.execute("update clients set parent_id = ? where id = ?", (parent_id, cid))
+    db.commit()
+    _api_log("group_clients", "client", parent_id, {"parent_id": parent_id, "child_ids": valid_children})
+    return jsonify({"ok": True, "parent_id": parent_id, "child_ids": valid_children})
+
+
+@api_route("/api/v1/clients/<int:client_id>/ungroup", methods=["POST"], endpoint="api_ungroup_client")
+def api_ungroup_client(client_id):
+    db = get_db()
+    client = db.execute("select * from clients where id = ?", (client_id,)).fetchone()
+    if client is None:
+        return _api_error("Client not found", 404)
+    before = dict(client)
+    db.execute("update clients set parent_id = null where id = ?", (client_id,))
+    db.commit()
+    _api_log("ungroup_client", "client", client_id, {"before": before})
+    return jsonify({"ok": True, "client_id": client_id})
+
+
+@api_route("/api/v1/clients/<int:client_id>/ungroup-all", methods=["POST"], endpoint="api_ungroup_all_children")
+def api_ungroup_all_children(client_id):
+    db = get_db()
+    children = db.execute("select * from clients where parent_id = ?", (client_id,)).fetchall()
+    db.execute("update clients set parent_id = null where parent_id = ?", (client_id,))
+    db.commit()
+    _api_log("ungroup_all_children", "client", client_id, {"children": [dict(child) for child in children]})
+    return jsonify({"ok": True, "client_id": client_id, "ungrouped_count": len(children)})
 
 
 @api_route("/api/v1/clients/<int:client_id>/export.pdf", methods=["GET"], endpoint="api_client_export_pdf")
 def api_client_export_pdf(client_id):
+    denied = _api_assert_client_access(client_id)
+    if denied:
+        return denied
     db = get_db()
     client, rows = _statement_export_data(db, client_id)
     if client is None:
@@ -4965,6 +5431,9 @@ def api_client_export_pdf(client_id):
 
 @api_route("/api/v1/clients/<int:client_id>/export.xlsx", methods=["GET"], endpoint="api_client_export_xlsx")
 def api_client_export_xlsx(client_id):
+    denied = _api_assert_client_access(client_id)
+    if denied:
+        return denied
     db = get_db()
     client, rows = _statement_export_data(db, client_id)
     if client is None:
@@ -4972,23 +5441,124 @@ def api_client_export_xlsx(client_id):
     return _statement_xlsx_response(client, rows)
 
 
+@api_route("/api/v1/clients/<int:client_id>/export.csv", methods=["GET"], endpoint="api_client_export_csv")
+def api_client_export_csv(client_id):
+    denied = _api_assert_client_access(client_id)
+    if denied:
+        return denied
+    return export_statement(client_id)
+
+
 @api_route("/api/v1/bank-balances", methods=["GET"])
 def api_bank_balances():
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        return _api_error("Client portal access cannot view bank balances.", 403)
     balances = bank_balance_list()
     totals = bank_balance_totals(balances)
     return jsonify({"bank_balances": balances, "totals": totals})
 
 
+@api_route("/api/v1/bank-balances/<int:balance_id>", methods=["GET"], endpoint="api_bank_balance_detail")
+def api_bank_balance_detail(balance_id):
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        return _api_error("Client portal access cannot view bank balances.", 403)
+    row = get_db().execute("select * from bank_balances where id = ?", (balance_id,)).fetchone()
+    if row is None:
+        return _api_error("Bank balance not found", 404)
+    return jsonify({"bank_balance": dict(row)})
+
+
 @api_route("/api/v1/supplier-balances", methods=["GET"])
 def api_supplier_balances():
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        return _api_error("Client portal access cannot view supplier balances.", 403)
     suppliers = supplier_balance_list()
     totals = supplier_balance_totals(suppliers)
     return jsonify({"suppliers": suppliers, "totals": totals})
 
 
+@api_route("/api/v1/supplier-balances/<int:supplier_id>", methods=["GET"], endpoint="api_supplier_detail")
+def api_supplier_detail(supplier_id):
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        return _api_error("Client portal access cannot view supplier balances.", 403)
+    row = get_db().execute("select * from supplier_balances where id = ?", (supplier_id,)).fetchone()
+    if row is None:
+        return _api_error("Supplier not found", 404)
+    return jsonify({"supplier": dict(row)})
+
+
 @api_route("/api/v1/exchange-rates", methods=["GET"])
 def api_exchange_rates():
     return jsonify(exchange_rate_summary())
+
+
+@api_route("/api/v1/settings", methods=["GET"], endpoint="api_v1_settings")
+def api_v1_settings():
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        return _api_error("Client portal access cannot view app settings.", 403)
+    raw_key = get_openrouter_api_key()
+    return jsonify({
+        "fx_rate_source": get_setting("fx_rate_source", "live"),
+        "fx_live_rate": get_setting("fx_live_rate", ""),
+        "fx_live_rate_updated_at": get_setting("fx_live_rate_updated_at", ""),
+        "openrouter_configured": bool(raw_key),
+        "openrouter_model": get_openrouter_model(),
+        "upload_limits": {"max_upload_mb": MAX_UPLOAD_MB, "allowed_image_ext": sorted(ALLOWED_IMAGE_EXT)},
+    })
+
+
+@api_route("/api/v1/fx-refresh", methods=["POST"], endpoint="api_v1_fx_refresh", access="admin")
+def api_v1_fx_refresh():
+    rate = _get_live_usd_cny_rate()
+    if rate is None:
+        return _api_error("Unable to fetch live exchange rate", 503)
+    ts = datetime.now(tz=CHINA_TZ).isoformat(timespec="seconds")
+    set_setting("fx_live_rate", str(rate))
+    set_setting("fx_live_rate_updated_at", ts)
+    cached = _fx_cache.get("USD")
+    source = cached.get("source", "api") if cached else "api"
+    _api_log("refresh_fx_rate", "app_setting", None, {"rate": rate, "source": source, "updated_at": ts})
+    return jsonify({"ok": True, "rate": rate, "source": source, "updated_at": ts})
+
+
+@api_route("/api/v1/parse-image", methods=["POST"], endpoint="api_v1_parse_image", access="read")
+def api_v1_parse_image():
+    try:
+        image_data, mime = _resolve_image_upload(file=request.files.get("image"), image_url=request.form.get("image_url"))
+        content = _call_vision(image_data, mime, PARSE_IMAGE_PROMPT)
+        json_match = re.search(r"\{.*\}", content, re.DOTALL)
+        if json_match:
+            return jsonify({"ok": True, "data": json.loads(json_match.group())})
+        return jsonify({"ok": True, "data": {"raw": content}})
+    except ValueError as exc:
+        return _api_error(str(exc), 400)
+    except Exception as exc:
+        return _api_error(str(exc), 500)
+
+
+@api_route("/api/v1/extract-text", methods=["POST"], endpoint="api_v1_extract_text", access="read")
+def api_v1_extract_text():
+    try:
+        image_data, mime = _resolve_image_upload(
+            file=request.files.get("image"),
+            image_url=request.form.get("image_url"),
+        )
+        content = _call_vision(
+            image_data,
+            mime,
+            EXTRACT_TEXT_PROMPT,
+            user_prompt="Extract and structure all visible text from this image.",
+        )
+        return jsonify({"ok": True, "text": content})
+    except ValueError as exc:
+        return _api_error(str(exc), 400)
+    except Exception as exc:
+        return _api_error(str(exc), 500)
 
 
 @api_route("/api/v1/fx-rate", methods=["GET"], endpoint="api_v1_fx_rate")
@@ -5081,21 +5651,71 @@ def api_v1_fx_rate():
 
 @api_route("/api/v1/expenses", methods=["GET"])
 def api_expenses():
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        return _api_error("Client portal access cannot view expenses.", 403)
     accounts = expense_dashboard_data()
     return jsonify({"expense_accounts": accounts})
 
 
+@api_route("/api/v1/expenses", methods=["POST"], endpoint="api_create_expense_account")
+def api_create_expense_account():
+    data = _api_request_data()
+    name = (data.get("name") or "").strip()
+    if not name:
+        return _api_error("name is required", 400)
+    currencies = data.get("currencies") or ["CNY"]
+    if isinstance(currencies, str):
+        currencies = [part.strip().upper() for part in currencies.split(",") if part.strip()]
+    valid = [cur for cur in currencies if cur in ALL_EXPENSE_CURRENCIES] or ["CNY"]
+    db = get_db()
+    existing = db.execute("select id from expense_accounts where name = ?", (name,)).fetchone()
+    if existing:
+        return _api_error(f"Account '{name}' already exists", 409)
+    db.execute(
+        "insert into expense_accounts (name, enabled_currencies, created_at) values (?, ?, ?)",
+        (name, ",".join(valid), utc_timestamp()),
+    )
+    db.commit()
+    account = db.execute("select * from expense_accounts where name = ?", (name,)).fetchone()
+    _api_log("create_expense_account", "expense_account", account["id"], dict(account))
+    return jsonify({"ok": True, "account": dict(account)}), 201
+
+
 @api_route("/api/v1/expenses/<int:account_id>", methods=["GET"])
 def api_expense_detail(account_id):
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        return _api_error("Client portal access cannot view expenses.", 403)
     db = get_db()
     account = db.execute("select * from expense_accounts where id = ?", (account_id,)).fetchone()
     if account is None:
         return jsonify({"error": "Expense account not found"}), 404
     generate_recurring_expenses(account_id)
     currencies = [c.strip() for c in account["enabled_currencies"].split(",") if c.strip()]
+    filters = {
+        "q": request.args.get("q", "").strip(),
+        "category": request.args.get("category", "").strip(),
+        "date_from": request.args.get("date_from", "").strip(),
+        "date_to": request.args.get("date_to", "").strip(),
+    }
+    clauses = ["account_id = ?"]
+    params: list[object] = [account_id]
+    if filters["q"]:
+        clauses.append("description like ?")
+        params.append(f"%{filters['q']}%")
+    if filters["category"]:
+        clauses.append("category = ?")
+        params.append(filters["category"])
+    if filters["date_from"]:
+        clauses.append("entry_date >= ?")
+        params.append(filters["date_from"])
+    if filters["date_to"]:
+        clauses.append("entry_date <= ?")
+        params.append(filters["date_to"])
     entries = db.execute(
-        "select * from expense_entries where account_id = ? order by entry_date, id",
-        (account_id,),
+        f"select * from expense_entries where {' and '.join(clauses)} order by entry_date, id",
+        params,
     ).fetchall()
     rows = expense_running_balances(entries, currencies)
     entry_dicts = []
@@ -5106,13 +5726,87 @@ def api_expense_detail(account_id):
     summary = expense_account_summary(db, account_id)
     return jsonify({
         "account": {"id": account["id"], "name": account["name"], "currencies": currencies},
+        "filters": filters,
         "summary": summary,
         "entries": entry_dicts,
+        "mobile_cards": [
+            {
+                "id": row["id"],
+                "date": row["entry_date"],
+                "title": row["description"],
+                "currency": row["currency"],
+                "direction": row["direction"],
+                "amount": row["amount"],
+                "category": row["category"],
+                "running_balances": row["running_balances"],
+                "has_image": bool(row.get("image_path")),
+                "is_recurring": bool(row.get("is_recurring")),
+            }
+            for row in rows
+        ],
     })
+
+
+@api_route("/api/v1/expenses/<int:account_id>", methods=["PUT", "PATCH"], endpoint="api_update_expense_account")
+def api_update_expense_account(account_id):
+    db = get_db()
+    account = db.execute("select * from expense_accounts where id = ?", (account_id,)).fetchone()
+    if account is None:
+        return _api_error("Expense account not found", 404)
+    data = _api_request_data()
+    name = (data.get("name") or account["name"]).strip()
+    currencies = data.get("currencies")
+    valid = [c.strip().upper() for c in account["enabled_currencies"].split(",") if c.strip()]
+    if currencies is not None:
+        if isinstance(currencies, str):
+            currencies = [part.strip().upper() for part in currencies.split(",") if part.strip()]
+        valid = [cur for cur in currencies if cur in ALL_EXPENSE_CURRENCIES] or ["CNY"]
+    existing = db.execute("select id from expense_accounts where name = ? and id != ?", (name, account_id)).fetchone()
+    if existing:
+        return _api_error(f"Account name '{name}' is already taken", 409)
+    before = dict(account)
+    db.execute(
+        "update expense_accounts set name = ?, enabled_currencies = ? where id = ?",
+        (name, ",".join(valid), account_id),
+    )
+    db.commit()
+    updated = db.execute("select * from expense_accounts where id = ?", (account_id,)).fetchone()
+    _api_log("update_expense_account", "expense_account", account_id, {"before": before, "after": dict(updated)})
+    return jsonify({"ok": True, "account": dict(updated)})
+
+
+@api_route("/api/v1/expenses/<int:account_id>", methods=["DELETE"], endpoint="api_delete_expense_account", access="admin")
+def api_delete_expense_account(account_id):
+    db = get_db()
+    account = db.execute("select * from expense_accounts where id = ?", (account_id,)).fetchone()
+    if account is None:
+        return _api_error("Expense account not found", 404)
+    linked_count = db.execute(
+        "select count(*) from expense_entries where account_id = ? and linked_statement_entry_id is not null",
+        (account_id,),
+    ).fetchone()[0]
+    if linked_count:
+        return _api_error("This account contains statement-linked commission entries.", 409)
+    entries = db.execute("select * from expense_entries where account_id = ?", (account_id,)).fetchall()
+    templates = db.execute("select * from recurring_expense_templates where account_id = ?", (account_id,)).fetchall()
+    db.execute("delete from expense_events where account_id = ?", (account_id,))
+    db.execute("delete from expense_entries where account_id = ?", (account_id,))
+    db.execute("delete from recurring_expense_templates where account_id = ?", (account_id,))
+    db.execute("delete from expense_accounts where id = ?", (account_id,))
+    db.commit()
+    _api_log("delete_expense_account", "expense_account", account_id, {
+        "account": dict(account),
+        "entries": [expense_entry_to_dict(e) for e in entries],
+        "templates": [dict(t) for t in templates],
+    })
+    return jsonify({"ok": True, "deleted_id": account_id})
 
 
 @api_route("/api/v1/expenses/<int:account_id>/templates", methods=["GET"])
 def api_expense_templates(account_id):
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        return _api_error("Client portal access cannot view expenses.", 403)
     db = get_db()
     account = db.execute("select * from expense_accounts where id = ?", (account_id,)).fetchone()
     if account is None:
@@ -5124,8 +5818,111 @@ def api_expense_templates(account_id):
     return jsonify({"templates": [dict(t) for t in templates]})
 
 
+@api_route("/api/v1/expenses/<int:account_id>/templates", methods=["POST"], endpoint="api_create_expense_template")
+def api_create_expense_template(account_id):
+    db = get_db()
+    account = db.execute("select id from expense_accounts where id = ?", (account_id,)).fetchone()
+    if account is None:
+        return _api_error("Expense account not found", 404)
+    data = _api_request_data()
+    description = (data.get("description") or "").strip()
+    if not description:
+        return _api_error("description is required", 400)
+    currency = (data.get("currency") or "CNY").upper()
+    if currency not in ALL_EXPENSE_CURRENCIES:
+        currency = "CNY"
+    direction = (data.get("direction") or "OUT").upper()
+    if direction not in ("IN", "OUT"):
+        direction = "OUT"
+    category = data.get("category", "general")
+    if category not in [c[0] for c in EXPENSE_CATEGORIES]:
+        category = "general"
+    db.execute(
+        """insert into recurring_expense_templates
+        (account_id, description, currency, direction, amount, day_of_month, category, every_n_months, is_active, last_generated, created_at)
+        values (?, ?, ?, ?, ?, ?, ?, ?, 1, '', ?)""",
+        (
+            account_id, description, currency, direction, float(data.get("amount", 0)),
+            int(data.get("day_of_month", 1)), category, int(data.get("every_n_months", 1)),
+            utc_timestamp(),
+        ),
+    )
+    db.commit()
+    template = db.execute("select * from recurring_expense_templates where account_id = ? order by id desc limit 1", (account_id,)).fetchone()
+    _api_log("create_expense_template", "expense_template", template["id"], dict(template))
+    return jsonify({"ok": True, "template": dict(template)}), 201
+
+
+@api_route("/api/v1/expenses/templates/<int:template_id>", methods=["PUT", "PATCH"], endpoint="api_update_expense_template")
+def api_update_expense_template(template_id):
+    db = get_db()
+    tpl = db.execute("select * from recurring_expense_templates where id = ?", (template_id,)).fetchone()
+    if tpl is None:
+        return _api_error("Expense template not found", 404)
+    data = _api_request_data()
+    currency = (data.get("currency") or tpl["currency"]).upper()
+    if currency not in ALL_EXPENSE_CURRENCIES:
+        currency = tpl["currency"]
+    direction = (data.get("direction") or tpl["direction"]).upper()
+    if direction not in ("IN", "OUT"):
+        direction = tpl["direction"]
+    category = data.get("category", tpl["category"])
+    if category not in [c[0] for c in EXPENSE_CATEGORIES]:
+        category = tpl["category"]
+    before = dict(tpl)
+    db.execute(
+        """update recurring_expense_templates
+        set description = ?, currency = ?, direction = ?, amount = ?,
+            day_of_month = ?, category = ?, every_n_months = ?, is_active = ?
+        where id = ?""",
+        (
+            (data.get("description") or tpl["description"]).strip(),
+            currency,
+            direction,
+            float(data.get("amount", tpl["amount"])),
+            int(data.get("day_of_month", tpl["day_of_month"])),
+            category,
+            int(data.get("every_n_months", tpl["every_n_months"] if "every_n_months" in tpl.keys() else 1)),
+            1 if parse_bool_flag(data.get("is_active", tpl["is_active"])) else 0,
+            template_id,
+        ),
+    )
+    db.commit()
+    updated = db.execute("select * from recurring_expense_templates where id = ?", (template_id,)).fetchone()
+    _api_log("update_expense_template", "expense_template", template_id, {"before": before, "after": dict(updated)})
+    return jsonify({"ok": True, "template": dict(updated)})
+
+
+@api_route("/api/v1/expenses/templates/<int:template_id>/toggle", methods=["POST"], endpoint="api_toggle_expense_template")
+def api_toggle_expense_template(template_id):
+    db = get_db()
+    tpl = db.execute("select * from recurring_expense_templates where id = ?", (template_id,)).fetchone()
+    if tpl is None:
+        return _api_error("Expense template not found", 404)
+    db.execute("update recurring_expense_templates set is_active = ? where id = ?", (0 if tpl["is_active"] else 1, template_id))
+    db.commit()
+    updated = db.execute("select * from recurring_expense_templates where id = ?", (template_id,)).fetchone()
+    _api_log("toggle_expense_template", "expense_template", template_id, {"before": dict(tpl), "after": dict(updated)})
+    return jsonify({"ok": True, "template": dict(updated)})
+
+
+@api_route("/api/v1/expenses/templates/<int:template_id>", methods=["DELETE"], endpoint="api_delete_expense_template")
+def api_delete_expense_template(template_id):
+    db = get_db()
+    tpl = db.execute("select * from recurring_expense_templates where id = ?", (template_id,)).fetchone()
+    if tpl is None:
+        return _api_error("Expense template not found", 404)
+    db.execute("delete from recurring_expense_templates where id = ?", (template_id,))
+    db.commit()
+    _api_log("delete_expense_template", "expense_template", template_id, dict(tpl))
+    return jsonify({"ok": True, "deleted_id": template_id})
+
+
 @api_route("/api/v1/expenses/<int:account_id>/export.pdf", methods=["GET"], endpoint="api_expense_export_pdf")
 def api_expense_export_pdf(account_id):
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        return _api_error("Client portal access cannot view expenses.", 403)
     db = get_db()
     account, currencies, rows, totals = _expense_export_data(db, account_id)
     if account is None:
@@ -5138,6 +5935,9 @@ def api_expense_export_pdf(account_id):
 
 @api_route("/api/v1/expenses/<int:account_id>/export.xlsx", methods=["GET"], endpoint="api_expense_export_xlsx")
 def api_expense_export_xlsx(account_id):
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        return _api_error("Client portal access cannot view expenses.", 403)
     db = get_db()
     account, currencies, rows, _ = _expense_export_data(db, account_id)
     if account is None:
@@ -5145,15 +5945,252 @@ def api_expense_export_xlsx(account_id):
     return _expense_xlsx_response(account, currencies, rows)
 
 
-@api_route("/api/v1/users", methods=["GET"])
+@api_route("/api/v1/expenses/<int:account_id>/export.csv", methods=["GET"], endpoint="api_expense_export_csv")
+def api_expense_export_csv(account_id):
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        return _api_error("Client portal access cannot view expenses.", 403)
+    return expense_export_csv(account_id)
+
+
+@api_route("/api/v1/expenses/<int:account_id>/import", methods=["POST"], endpoint="api_expense_import")
+def api_expense_import(account_id):
+    db = get_db()
+    account = db.execute("select * from expense_accounts where id = ?", (account_id,)).fetchone()
+    if account is None:
+        return _api_error("Expense account not found", 404)
+    rows = None
+    upload = request.files.get("csv_file") or request.files.get("file")
+    if upload and upload.filename:
+        try:
+            content = upload.read().decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return _api_error("CSV must be UTF-8 encoded", 400)
+        rows = [dict(row) for row in csv.DictReader(io.StringIO(content))]
+    else:
+        data = request.get_json(silent=True) or {}
+        rows = data.get("rows")
+    if not rows:
+        return _api_error("No rows to import", 400)
+    imported = 0
+    valid_cats = [c[0] for c in EXPENSE_CATEGORIES]
+    for row in rows:
+        entry_date = (row.get("date") or row.get("entry_date") or "").strip()
+        description = (row.get("description") or "").strip()
+        amount_raw = row.get("amount")
+        if not entry_date or not description or amount_raw in (None, ""):
+            continue
+        try:
+            amount = float(amount_raw)
+        except (TypeError, ValueError):
+            continue
+        currency = (row.get("currency") or "CNY").strip().upper()
+        if currency not in ALL_EXPENSE_CURRENCIES:
+            currency = "CNY"
+        direction = (row.get("direction") or "OUT").strip().upper()
+        if direction not in ("IN", "OUT"):
+            direction = "OUT"
+        category = (row.get("category") or "general").strip()
+        if category not in valid_cats:
+            category = "general"
+        db.execute(
+            """insert into expense_entries
+            (account_id, seq_no, entry_date, description, currency, direction,
+             amount, category, is_recurring, template_id, created_at)
+            values (?, 0, ?, ?, ?, ?, ?, ?, 0, null, ?)""",
+            (account_id, entry_date, description, currency, direction, amount, category, utc_timestamp()),
+        )
+        imported += 1
+    db.commit()
+    resequence_expense_entries(account_id)
+    _api_log("import_expenses", "expense_account", account_id, {"imported": imported})
+    return jsonify({"ok": True, "imported": imported})
+
+
+@api_route("/api/v1/users", methods=["GET"], access="admin")
 def api_users():
     db = get_db()
     users = db.execute("select id, username, role, is_active, last_login, created_at from users order by id").fetchall()
     return jsonify({"users": [dict(u) for u in users]})
 
 
+@api_route("/api/v1/users", methods=["POST"], endpoint="api_create_user", access="admin")
+def api_create_user():
+    data = _api_request_data()
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    role = data.get("role") if data.get("role") in {"admin", "user"} else "user"
+    must_change = 1 if parse_bool_flag(data.get("must_change_password", True)) else 0
+    if not username or len(password) < 6:
+        return _api_error("username and password with at least 6 characters are required", 400)
+    db = get_db()
+    existing = db.execute("select id from users where username = ?", (username,)).fetchone()
+    if existing:
+        return _api_error("Username already exists", 409)
+    db.execute(
+        "insert into users(username, password_hash, role, must_change_password, created_at) values (?, ?, ?, ?, ?)",
+        (username, generate_password_hash(password), role, must_change, utc_timestamp()),
+    )
+    db.commit()
+    user = db.execute("select id, username, role, is_active, must_change_password, last_login, created_at from users where username = ?", (username,)).fetchone()
+    _api_log("create_user", "user", user["id"], dict(user))
+    return jsonify({"ok": True, "user": dict(user)}), 201
+
+
+@api_route("/api/v1/users/<int:user_id>", methods=["PUT", "PATCH"], endpoint="api_update_user", access="admin")
+def api_update_user(user_id):
+    db = get_db()
+    user = db.execute("select * from users where id = ?", (user_id,)).fetchone()
+    if user is None:
+        return _api_error("User not found", 404)
+    data = _api_request_data()
+    role = data.get("role", user["role"])
+    if role not in {"admin", "user"}:
+        role = user["role"]
+    is_active = 1 if parse_bool_flag(data.get("is_active", user["is_active"])) else 0
+    must_change = 1 if parse_bool_flag(data.get("must_change_password", user["must_change_password"])) else 0
+    before = _api_user_payload(user)
+    db.execute(
+        "update users set role = ?, is_active = ?, must_change_password = ? where id = ?",
+        (role, is_active, must_change, user_id),
+    )
+    db.commit()
+    updated = db.execute("select * from users where id = ?", (user_id,)).fetchone()
+    _api_log("update_user", "user", user_id, {"before": before, "after": _api_user_payload(updated)})
+    return jsonify({"ok": True, "user": _api_user_payload(updated)})
+
+
+@api_route("/api/v1/users/<int:user_id>/reset-password", methods=["POST"], endpoint="api_reset_user_password", access="admin")
+def api_reset_user_password(user_id):
+    data = _api_request_data()
+    password = data.get("password") or ""
+    if len(password) < 6:
+        return _api_error("password must be at least 6 characters", 400)
+    db = get_db()
+    user = db.execute("select id, username from users where id = ?", (user_id,)).fetchone()
+    if user is None:
+        return _api_error("User not found", 404)
+    db.execute(
+        "update users set password_hash = ?, must_change_password = 1 where id = ?",
+        (generate_password_hash(password), user_id),
+    )
+    db.commit()
+    _api_log("reset_user_password", "user", user_id, {"username": user["username"]})
+    return jsonify({"ok": True, "user_id": user_id, "must_change_password": True})
+
+
+@api_route("/api/v1/users/<int:user_id>", methods=["DELETE"], endpoint="api_delete_user", access="admin")
+def api_delete_user(user_id):
+    db = get_db()
+    user = db.execute("select * from users where id = ?", (user_id,)).fetchone()
+    if user is None:
+        return _api_error("User not found", 404)
+    if g.api_actor and g.api_actor.get("user") is not None and int(g.api_actor["user"]["id"]) == user_id:
+        return _api_error("You cannot delete your own user.", 409)
+    db.execute("delete from users where id = ?", (user_id,))
+    db.commit()
+    _api_log("delete_user", "user", user_id, _api_user_payload(user))
+    return jsonify({"ok": True, "deleted_id": user_id})
+
+
+@api_route("/api/v1/tokens", methods=["GET"], access="admin")
+def api_tokens():
+    db = get_db()
+    tokens = db.execute(
+        """select t.id, t.name, t.token_prefix, t.access_level, t.client_id, c.name as client_name,
+                  t.created_at, t.last_used_at, t.last_used_ip, t.last_used_user_agent, t.is_active
+        from api_tokens t
+        left join clients c on c.id = t.client_id
+        order by t.created_at desc"""
+    ).fetchall()
+    return jsonify({"tokens": [dict(t) for t in tokens]})
+
+
+@api_route("/api/v1/tokens", methods=["POST"], endpoint="api_create_token", access="admin")
+def api_create_token():
+    from hashlib import sha256
+    data = _api_request_data()
+    name = (data.get("name") or "Unnamed Token").strip()
+    access_level = (data.get("access_level") or API_ACCESS_FULL).strip()
+    if access_level not in API_ACCESS_LEVELS:
+        access_level = API_ACCESS_FULL
+    try:
+        client_id = parse_optional_int(data.get("client_id"), "client_id")
+    except ValueError as exc:
+        return _api_error(str(exc), 400)
+    db = get_db()
+    if access_level == API_ACCESS_CLIENT:
+        if not client_id:
+            return _api_error("client_id is required for client_portal tokens", 400)
+        if db.execute("select id from clients where id = ?", (client_id,)).fetchone() is None:
+            return _api_error("Client not found", 404)
+    else:
+        client_id = None
+    raw_token = f"ffs_{secrets.token_hex(32)}"
+    token_hash = sha256(raw_token.encode()).hexdigest()
+    token_prefix = raw_token[:12] + "..."
+    db.execute(
+        """insert into api_tokens(name, token_hash, token_prefix, access_level, client_id, created_at)
+        values (?, ?, ?, ?, ?, ?)""",
+        (name, token_hash, token_prefix, access_level, client_id, utc_timestamp()),
+    )
+    db.commit()
+    token = db.execute("select * from api_tokens where token_hash = ?", (token_hash,)).fetchone()
+    _api_log("create_api_token", "api_token", token["id"], {"name": name, "access_level": access_level, "client_id": client_id})
+    return jsonify({"ok": True, "token": raw_token, "token_record": dict(token)}), 201
+
+
+@api_route("/api/v1/tokens/<int:token_id>", methods=["PATCH"], endpoint="api_update_token", access="admin")
+def api_update_token(token_id):
+    data = _api_request_data()
+    db = get_db()
+    token = db.execute("select * from api_tokens where id = ?", (token_id,)).fetchone()
+    if token is None:
+        return _api_error("Token not found", 404)
+    name = (data.get("name") or token["name"]).strip()
+    access_level = (data.get("access_level") or token["access_level"] or API_ACCESS_FULL).strip()
+    if access_level not in API_ACCESS_LEVELS:
+        access_level = API_ACCESS_FULL
+    try:
+        client_id = parse_optional_int(data.get("client_id", token["client_id"]), "client_id")
+    except ValueError as exc:
+        return _api_error(str(exc), 400)
+    if access_level == API_ACCESS_CLIENT:
+        if not client_id:
+            return _api_error("client_id is required for client_portal tokens", 400)
+        if db.execute("select id from clients where id = ?", (client_id,)).fetchone() is None:
+            return _api_error("Client not found", 404)
+    else:
+        client_id = None
+    is_active = 1 if parse_bool_flag(data.get("is_active", token["is_active"])) else 0
+    before = dict(token)
+    db.execute(
+        "update api_tokens set name = ?, access_level = ?, client_id = ?, is_active = ? where id = ?",
+        (name, access_level, client_id, is_active, token_id),
+    )
+    db.commit()
+    updated = db.execute("select * from api_tokens where id = ?", (token_id,)).fetchone()
+    _api_log("update_api_token", "api_token", token_id, {"before": before, "after": dict(updated)})
+    return jsonify({"ok": True, "token_record": dict(updated)})
+
+
+@api_route("/api/v1/tokens/<int:token_id>", methods=["DELETE"], endpoint="api_delete_token", access="admin")
+def api_delete_token(token_id):
+    db = get_db()
+    token = db.execute("select * from api_tokens where id = ?", (token_id,)).fetchone()
+    if token is None:
+        return _api_error("Token not found", 404)
+    db.execute("delete from api_tokens where id = ?", (token_id,))
+    db.commit()
+    _api_log("delete_api_token", "api_token", token_id, dict(token))
+    return jsonify({"ok": True, "deleted_id": token_id})
+
+
 @api_route("/api/v1/quick-submits", methods=["GET"])
 def api_quick_submits():
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        return _api_error("Client portal access cannot view quick submits.", 403)
     db = get_db()
     rows = db.execute(
         """select qs.*, c.name as client_name
@@ -5163,6 +6200,69 @@ def api_quick_submits():
     return jsonify({"quick_submits": [dict(r) for r in rows]})
 
 
+@api_route("/api/v1/quick-submits", methods=["POST"], endpoint="api_create_quick_submit")
+def api_create_quick_submit():
+    image_file = request.files.get("image")
+    if not image_file or not image_file.filename:
+        return _api_error("image is required", 400)
+    data = request.form.to_dict()
+    client_id = int(data.get("client_id") or 0)
+    db = get_db()
+    client = db.execute("select id from clients where id = ?", (client_id,)).fetchone()
+    if client is None:
+        return _api_error("Client not found", 404)
+    image_filename = save_upload_image(image_file)
+    if not image_filename:
+        return _api_error(f"Invalid image type. Allowed: {', '.join(ALLOWED_IMAGE_EXT)}", 400)
+    amount_raw = (data.get("amount") or "").strip()
+    amount = float(amount_raw) if amount_raw else None
+    actor = getattr(g, "api_actor", None)
+    created_by = ""
+    if actor:
+        created_by = actor.get("token_name") or (actor.get("user")["username"] if actor.get("user") else "")
+    db.execute(
+        "insert into quick_submits (client_id, description, amount, image_path, status, created_at, created_by) values (?, ?, ?, ?, 'pending', ?, ?)",
+        (client_id, data.get("description", "").strip(), amount, image_filename, utc_timestamp(), created_by),
+    )
+    db.commit()
+    row = db.execute("select * from quick_submits order by id desc limit 1").fetchone()
+    _api_log("create_quick_submit", "quick_submit", row["id"], dict(row))
+    return jsonify({"ok": True, "quick_submit": dict(row)}), 201
+
+
+@api_route("/api/v1/quick-submits/<int:submit_id>/process", methods=["POST"], endpoint="api_process_quick_submit")
+def api_process_quick_submit(submit_id):
+    db = get_db()
+    row = db.execute(
+        "select qs.*, c.name as client_name from quick_submits qs left join clients c on c.id = qs.client_id where qs.id = ?",
+        (submit_id,),
+    ).fetchone()
+    if row is None:
+        return _api_error("Quick submit not found", 404)
+    preload = {"image_path": row["image_path"], "description": row["description"], "amount": row["amount"]}
+    return jsonify({
+        "ok": True,
+        "client_id": row["client_id"],
+        "client_name": row["client_name"],
+        "quick_submit": dict(row),
+        "preload": preload,
+        "web_url": url_for("client_statement", client_id=row["client_id"], quick_submit_id=submit_id),
+    })
+
+
+@api_route("/api/v1/quick-submits/<int:submit_id>", methods=["DELETE"], endpoint="api_delete_quick_submit")
+def api_delete_quick_submit(submit_id):
+    db = get_db()
+    row = db.execute("select * from quick_submits where id = ?", (submit_id,)).fetchone()
+    if row is None:
+        return _api_error("Quick submit not found", 404)
+    _delete_image_file(row["image_path"])
+    db.execute("delete from quick_submits where id = ?", (submit_id,))
+    db.commit()
+    _api_log("delete_quick_submit", "quick_submit", submit_id, dict(row))
+    return jsonify({"ok": True, "deleted_id": submit_id})
+
+
 @api_route("/api/v1/search", methods=["GET"])
 def api_search():
     """Search entries across all clients by description keyword."""
@@ -5170,12 +6270,18 @@ def api_search():
     if not q:
         return jsonify({"error": "Missing 'q' query parameter"}), 400
     db = get_db()
+    actor = getattr(g, "api_actor", None)
+    client_clause = ""
+    params: list[object] = [f"%{q}%"]
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        client_clause = " and se.client_id = ?"
+        params.append(int(actor.get("client_id") or 0))
     entries = db.execute(
         """select se.*, c.name as client_name
         from statement_entries se join clients c on se.client_id = c.id
-        where se.description like ?
+        where se.description like ?""" + client_clause + """
         order by se.entry_date desc limit 100""",
-        (f"%{q}%",),
+        tuple(params),
     ).fetchall()
     return jsonify({"query": q, "results": [dict(e) for e in entries]})
 
@@ -5392,6 +6498,41 @@ def api_delete_entry(entry_id):
     return jsonify({"ok": True, "deleted_id": entry_id})
 
 
+@api_route("/api/v1/entries/link-transfer", methods=["POST"], endpoint="api_v1_link_transfer")
+def api_v1_link_transfer():
+    data = _api_request_data()
+    entry_id_1 = data.get("entry_id_1")
+    entry_id_2 = data.get("entry_id_2")
+    if not entry_id_1 or not entry_id_2:
+        return _api_error("entry_id_1 and entry_id_2 are required", 400)
+    try:
+        entry_id_1 = int(entry_id_1)
+        entry_id_2 = int(entry_id_2)
+    except (TypeError, ValueError):
+        return _api_error("entry IDs must be valid integers", 400)
+    db = get_db()
+    selected_entries = db.execute(
+        "select id, client_id, commission_source_entry_id from statement_entries where id in (?, ?)",
+        (entry_id_1, entry_id_2),
+    ).fetchall()
+    if len(selected_entries) != 2:
+        return _api_error("One or more entries no longer exist", 404)
+    client_ids = {row["client_id"] for row in selected_entries}
+    if len(client_ids) != 1:
+        return _api_error("Entries must belong to the same client", 409)
+    if any(row["commission_source_entry_id"] for row in selected_entries):
+        return _api_error("Generated commission rows cannot be linked into an FX transfer.", 409)
+    group = make_transfer_group()
+    db.execute("update statement_entries set transfer_group = ? where id = ?", (group, entry_id_1))
+    db.execute("update statement_entries set transfer_group = ? where id = ?", (group, entry_id_2))
+    db.commit()
+    sync_exchange_group(db, group)
+    db.commit()
+    entries = db.execute("select * from statement_entries where transfer_group = ? order by id", (group,)).fetchall()
+    _api_log("link_transfer", "statement_entry", int(entry_id_1), {"transfer_group": group, "entry_ids": [entry_id_1, entry_id_2]})
+    return jsonify({"ok": True, "transfer_group": group, "entries": [row_to_dict(e) for e in entries]})
+
+
 @api_route("/api/v1/entries/<int:entry_id>/commission", methods=["POST"], endpoint="api_create_commission")
 def api_create_commission(entry_id):
     db = get_db()
@@ -5558,7 +6699,7 @@ def api_add_expense_entry(account_id):
     account = db.execute("select * from expense_accounts where id = ?", (account_id,)).fetchone()
     if account is None:
         return jsonify({"error": "Expense account not found"}), 404
-    data = request.get_json(silent=True) or {}
+    data = request.form.to_dict() if request.content_type and request.content_type.startswith("multipart/form-data") else (request.get_json(silent=True) or {})
     required = ["entry_date", "description", "amount"]
     missing = [f for f in required if not data.get(f)]
     if missing:
@@ -5573,13 +6714,14 @@ def api_add_expense_entry(account_id):
     valid_cats = [c[0] for c in EXPENSE_CATEGORIES]
     if category not in valid_cats:
         category = "general"
+    image_filename = save_upload_image(request.files.get("image"))
     db.execute(
         """insert into expense_entries
         (account_id, seq_no, entry_date, description, currency, direction,
-         amount, category, is_recurring, template_id, created_at)
-        values (?, 0, ?, ?, ?, ?, ?, ?, 0, null, ?)""",
+         amount, category, is_recurring, template_id, image_path, created_at)
+        values (?, 0, ?, ?, ?, ?, ?, ?, 0, null, ?, ?)""",
         (account_id, data["entry_date"], data["description"].strip(),
-         currency, direction, float(data["amount"]), category, utc_timestamp()),
+         currency, direction, float(data["amount"]), category, image_filename, utc_timestamp()),
     )
     db.commit()
     entry = db.execute("select * from expense_entries where account_id = ? order by id desc limit 1", (account_id,)).fetchone()
@@ -5588,6 +6730,141 @@ def api_add_expense_entry(account_id):
     _api_log("create_expense_entry", "expense_entry", entry["id"], expense_entry_to_dict(entry),
              {"action": "delete_expense_entry", "entry_id": entry["id"], "account_id": account_id})
     return jsonify({"ok": True, "entry": expense_entry_to_dict(entry)}), 201
+
+
+@api_route("/api/v1/expenses/entries/<int:entry_id>", methods=["PUT", "PATCH"], endpoint="api_update_expense_entry")
+def api_update_expense_entry(entry_id):
+    db = get_db()
+    entry = db.execute("select * from expense_entries where id = ?", (entry_id,)).fetchone()
+    if entry is None:
+        return _api_error("Expense entry not found", 404)
+    if entry["linked_statement_entry_id"]:
+        return _api_error(linked_expense_entry_message(db, entry), 409)
+    data = request.form.to_dict() if request.content_type and request.content_type.startswith("multipart/form-data") else (request.get_json(silent=True) or {})
+    before = expense_entry_to_dict(entry)
+    currency = (data.get("currency") or entry["currency"]).upper()
+    if currency not in ALL_EXPENSE_CURRENCIES:
+        currency = entry["currency"]
+    direction = (data.get("direction") or entry["direction"]).upper()
+    if direction not in ("IN", "OUT"):
+        direction = entry["direction"]
+    category = data.get("category", entry["category"])
+    valid_cats = [c[0] for c in EXPENSE_CATEGORIES]
+    if category not in valid_cats:
+        category = entry["category"]
+    old_image = entry["image_path"]
+    new_image = save_upload_image(request.files.get("image"))
+    image_path = new_image if new_image else old_image
+    if str(data.get("remove_image", "")).strip() == "1":
+        image_path = None
+    if old_image and old_image != image_path:
+        _delete_image_file(old_image)
+    db.execute(
+        """update expense_entries
+        set entry_date = ?, description = ?, currency = ?, direction = ?,
+            amount = ?, category = ?, image_path = ?
+        where id = ?""",
+        (
+            data.get("entry_date", entry["entry_date"]),
+            (data.get("description") or entry["description"]).strip(),
+            currency,
+            direction,
+            float(data.get("amount", entry["amount"])),
+            category,
+            image_path,
+            entry_id,
+        ),
+    )
+    db.commit()
+    updated = db.execute("select * from expense_entries where id = ?", (entry_id,)).fetchone()
+    expense_record_event(entry["account_id"], entry_id, "edit", {"before": before, "after": expense_entry_to_dict(updated)})
+    resequence_expense_entries(entry["account_id"])
+    _api_log("update_expense_entry", "expense_entry", entry_id, {"before": before, "after": expense_entry_to_dict(updated)},
+             {"action": "restore_expense_entry", "entry_id": entry_id, "data": before})
+    return jsonify({"ok": True, "entry": expense_entry_to_dict(updated)})
+
+
+@api_route("/api/v1/expenses/entries/<int:entry_id>", methods=["DELETE"], endpoint="api_delete_expense_entry")
+def api_delete_expense_entry(entry_id):
+    db = get_db()
+    entry = db.execute("select * from expense_entries where id = ?", (entry_id,)).fetchone()
+    if entry is None:
+        return _api_error("Expense entry not found", 404)
+    if entry["linked_statement_entry_id"]:
+        return _api_error(linked_expense_entry_message(db, entry), 409)
+    entry_data = expense_entry_to_dict(entry)
+    expense_record_event(entry["account_id"], entry_id, "delete", {"entry": entry_data})
+    _delete_image_file(entry["image_path"])
+    db.execute("delete from expense_entries where id = ?", (entry_id,))
+    db.commit()
+    resequence_expense_entries(entry["account_id"])
+    _api_log("delete_expense_entry", "expense_entry", entry_id, entry_data,
+             {"action": "recreate_expense_entry", "account_id": entry["account_id"], "data": entry_data})
+    return jsonify({"ok": True, "deleted_id": entry_id})
+
+
+@api_route("/api/v1/expenses/<int:account_id>/balances", methods=["GET"], endpoint="api_expense_balances")
+def api_expense_balances(account_id):
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        return _api_error("Client portal access cannot view expenses.", 403)
+    return expense_account_balances(account_id)
+
+
+@api_route("/api/v1/expenses/<int:account_id>/undo", methods=["POST"], endpoint="api_expense_undo")
+def api_expense_undo(account_id):
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        return _api_error("Client portal access cannot view expenses.", 403)
+    db = get_db()
+    account = db.execute("select id from expense_accounts where id = ?", (account_id,)).fetchone()
+    if account is None:
+        return _api_error("Expense account not found", 404)
+    event = db.execute(
+        "select * from expense_events where account_id = ? and undone_at is null order by id desc limit 1",
+        (account_id,),
+    ).fetchone()
+    if event is None:
+        return _api_error("Nothing to undo", 404)
+    payload = json.loads(event["payload"])
+    if event["action"] == "add":
+        entry = payload.get("entry", {})
+        db.execute("delete from expense_entries where id = ?", (entry.get("id"),))
+    elif event["action"] == "edit":
+        before = payload.get("before", {})
+        db.execute(
+            """update expense_entries
+            set entry_date = ?, description = ?, currency = ?, direction = ?,
+                amount = ?, category = ?, image_path = ?, linked_statement_entry_id = ?
+            where id = ?""",
+            (
+                before.get("entry_date"), before.get("description"), before.get("currency"),
+                before.get("direction"), before.get("amount"), before.get("category"),
+                before.get("image_path"), before.get("linked_statement_entry_id"), before.get("id"),
+            ),
+        )
+    elif event["action"] == "delete":
+        entry = payload.get("entry", {})
+        db.execute(
+            """insert into expense_entries
+            (id, account_id, seq_no, entry_date, description, currency, direction,
+             amount, category, is_recurring, template_id, image_path, linked_statement_entry_id, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                entry.get("id"), entry.get("account_id"), entry.get("seq_no", 0),
+                entry.get("entry_date"), entry.get("description"), entry.get("currency"),
+                entry.get("direction"), entry.get("amount"), entry.get("category"),
+                entry.get("is_recurring", 0), entry.get("template_id"), entry.get("image_path"),
+                entry.get("linked_statement_entry_id"), utc_timestamp(),
+            ),
+        )
+    else:
+        return _api_error(f"Unknown undo action: {event['action']}", 400)
+    db.execute("update expense_events set undone_at = ? where id = ?", (utc_timestamp(), event["id"]))
+    db.commit()
+    resequence_expense_entries(account_id)
+    _api_log("undo_expense", "expense_account", account_id, {"event_id": event["id"], "action": event["action"]})
+    return jsonify({"ok": True, "undone_event_id": event["id"]})
 
 
 @api_route("/api/v1/clients/<int:client_id>/exchange", methods=["POST"], endpoint="api_exchange")
@@ -5637,6 +6914,9 @@ def api_exchange(client_id):
 
 @api_route("/api/v1/audit-log", methods=["GET"], endpoint="api_audit_log")
 def api_audit_log():
+    actor = getattr(g, "api_actor", None)
+    if actor and actor.get("access_level") == API_ACCESS_CLIENT:
+        return _api_error("Client portal access cannot view audit logs.", 403)
     db = get_db()
     action_filter = request.args.get("action", "").strip()
     limit = min(int(request.args.get("limit", 50)), 500)

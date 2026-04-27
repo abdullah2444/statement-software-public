@@ -1,0 +1,394 @@
+openapi: 3.0.3
+info:
+  title: Firefly Statement API
+  version: "1.0"
+  description: JSON API for Firefly Statement Software. Built for integrations and future mobile apps.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+  - apiKeyAuth: []
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in with username and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: {type: string}
+                password: {type: string}
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+        "401": {$ref: "#/components/responses/Error"}
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Return current API actor
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Log out a cookie-based API session
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+  /auth/change-password:
+    post:
+      tags: [Auth]
+      summary: Change the current logged-in user's password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                current_password: {type: string}
+                new_password: {type: string}
+                confirm_password: {type: string}
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+  /dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Dashboard summary, balances, suppliers, FX, and company status
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+  /options:
+    get:
+      tags: [Dashboard]
+      summary: Lists app option values for mobile forms
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+  /clients:
+    get:
+      tags: [Clients]
+      summary: List clients and client groups
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+    post:
+      tags: [Clients]
+      summary: Create a client
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+      responses:
+        "201": {$ref: "#/components/responses/Ok"}
+  /clients/{client_id}:
+    parameters:
+      - $ref: "#/components/parameters/ClientId"
+    get:
+      tags: [Clients]
+      summary: Client statement with filters, pagination, entries, and mobile_cards
+      parameters:
+        - {name: q, in: query, schema: {type: string}}
+        - {name: currency, in: query, schema: {type: string, enum: [USD, CNY]}}
+        - {name: category, in: query, schema: {type: string}}
+        - {name: date_from, in: query, schema: {type: string, format: date}}
+        - {name: date_to, in: query, schema: {type: string, format: date}}
+        - {name: page, in: query, schema: {type: integer, minimum: 1}}
+        - {name: per_page, in: query, schema: {oneOf: [{type: integer}, {type: string, enum: [all]}]}}
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+    patch:
+      tags: [Clients]
+      summary: Rename or regroup a client
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string}
+                parent_id: {type: integer, nullable: true}
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+    delete:
+      tags: [Clients]
+      summary: Delete a client
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+  /clients/group:
+    post:
+      tags: [Clients]
+      summary: Group child clients under one parent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [parent_id, child_ids]
+              properties:
+                parent_id: {type: integer}
+                child_ids:
+                  type: array
+                  items: {type: integer}
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+  /clients/{client_id}/entries:
+    post:
+      tags: [Statement Entries]
+      summary: Create a statement entry; supports JSON or multipart image upload
+      parameters:
+        - $ref: "#/components/parameters/ClientId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StatementEntryInput"
+          multipart/form-data:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/StatementEntryInput"
+                - type: object
+                  properties:
+                    image: {type: string, format: binary}
+      responses:
+        "201": {$ref: "#/components/responses/Ok"}
+  /entries/{entry_id}:
+    parameters:
+      - $ref: "#/components/parameters/EntryId"
+    patch:
+      tags: [Statement Entries]
+      summary: Update a statement entry
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+    delete:
+      tags: [Statement Entries]
+      summary: Delete a statement entry
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+  /entries/{entry_id}/commission:
+    post:
+      tags: [Statement Entries]
+      summary: Create an automatic commission row
+      parameters:
+        - $ref: "#/components/parameters/EntryId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [percentage]
+              properties:
+                percentage: {type: number}
+                commission_date: {type: string, format: date}
+                note: {type: string}
+      responses:
+        "201": {$ref: "#/components/responses/Ok"}
+  /clients/{client_id}/exchange:
+    post:
+      tags: [Statement Entries]
+      summary: Create a USD to CNY exchange pair for a client
+      parameters:
+        - $ref: "#/components/parameters/ClientId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                exchange_date: {type: string, format: date}
+                usd_amount: {type: number}
+                cny_amount: {type: number}
+                exchange_rate: {type: number}
+                note: {type: string}
+      responses:
+        "201": {$ref: "#/components/responses/Ok"}
+  /bank-balances:
+    get:
+      tags: [Balances]
+      summary: List bank balances
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+    post:
+      tags: [Balances]
+      summary: Create a bank balance
+      responses:
+        "201": {$ref: "#/components/responses/Ok"}
+  /supplier-balances:
+    get:
+      tags: [Balances]
+      summary: List supplier balances
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+    post:
+      tags: [Balances]
+      summary: Create a supplier balance
+      responses:
+        "201": {$ref: "#/components/responses/Ok"}
+  /expenses:
+    get:
+      tags: [Expenses]
+      summary: List expense accounts
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+    post:
+      tags: [Expenses]
+      summary: Create an expense account
+      responses:
+        "201": {$ref: "#/components/responses/Ok"}
+  /expenses/{account_id}:
+    parameters:
+      - $ref: "#/components/parameters/AccountId"
+    get:
+      tags: [Expenses]
+      summary: Expense account detail with entries and mobile_cards
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+    patch:
+      tags: [Expenses]
+      summary: Rename or configure an expense account
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+    delete:
+      tags: [Expenses]
+      summary: Delete an expense account
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+  /expenses/{account_id}/entries:
+    post:
+      tags: [Expenses]
+      summary: Create an expense entry
+      parameters:
+        - $ref: "#/components/parameters/AccountId"
+      responses:
+        "201": {$ref: "#/components/responses/Ok"}
+  /quick-submits:
+    get:
+      tags: [Quick Submit]
+      summary: List quick submissions
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+    post:
+      tags: [Quick Submit]
+      summary: Upload a quick submission image
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [client_id, image]
+              properties:
+                client_id: {type: integer}
+                description: {type: string}
+                amount: {type: number}
+                image: {type: string, format: binary}
+      responses:
+        "201": {$ref: "#/components/responses/Ok"}
+  /search:
+    get:
+      tags: [Search]
+      summary: Search statement entries
+      parameters:
+        - {name: q, in: query, required: true, schema: {type: string}}
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+  /parse-image:
+    post:
+      tags: [AI]
+      summary: Extract transaction fields from an uploaded image
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+  /extract-text:
+    post:
+      tags: [AI]
+      summary: OCR and structure text from an uploaded image
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+  /users:
+    get:
+      tags: [Admin]
+      summary: List users
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+    post:
+      tags: [Admin]
+      summary: Create a user
+      responses:
+        "201": {$ref: "#/components/responses/Ok"}
+  /tokens:
+    get:
+      tags: [Admin]
+      summary: List API tokens
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+    post:
+      tags: [Admin]
+      summary: Create an API token; raw token is returned once
+      responses:
+        "201": {$ref: "#/components/responses/Ok"}
+  /audit-log:
+    get:
+      tags: [Admin]
+      summary: List API write audit log
+      responses:
+        "200": {$ref: "#/components/responses/Ok"}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  parameters:
+    ClientId:
+      name: client_id
+      in: path
+      required: true
+      schema: {type: integer}
+    EntryId:
+      name: entry_id
+      in: path
+      required: true
+      schema: {type: integer}
+    AccountId:
+      name: account_id
+      in: path
+      required: true
+      schema: {type: integer}
+  schemas:
+    StatementEntryInput:
+      type: object
+      required: [entry_date, description, currency, direction, amount]
+      properties:
+        entry_date: {type: string, format: date}
+        description: {type: string}
+        currency: {type: string, enum: [USD, CNY]}
+        direction: {type: string, enum: [IN, OUT]}
+        amount: {type: number}
+        kind: {type: string, enum: [movement, transfer]}
+        category_hint: {type: string}
+        transfer_group: {type: string}
+    Error:
+      type: object
+      properties:
+        error: {type: string}
+        code: {type: string}
+  responses:
+    Ok:
+      description: Successful JSON response
+      content:
+        application/json:
+          schema:
+            type: object
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

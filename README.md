@@ -252,6 +252,15 @@ Important settings:
 - `INITIAL_ADMIN_PASSWORD`: first-run admin password. Default: `admin123`.
 - `INITIAL_ADMIN_MUST_CHANGE`: set to `1` to force first-run admin to change password after login. Default: `1`.
 
+## API
+
+The app includes a JSON API for integrations and future mobile apps. It supports normal username/password login for people and API tokens for tools.
+
+- Beginner guide: `docs/API.md`
+- OpenAPI file: `docs/openapi.yaml`
+
+API token access levels are simple: `full_control`, `read_only`, and `client_portal`.
+
 ## Compose File Format
 
 The checked-in files are YAML. Use:
