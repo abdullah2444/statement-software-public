@@ -1,0 +1,3 @@
+display_name: Statement Software Operator
+short_description: Operate statement software through its API from text or images.
+default_prompt: Add a statement entry, update a balance, undo a change, or send a statement export using the statement software API.
