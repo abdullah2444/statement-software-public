@@ -1,5 +1,4 @@
 *.sh text eol=lf
-scripts/statementsw text eol=lf
 Dockerfile text eol=lf
 docker-compose.yml text eol=lf
 *.py text eol=lf

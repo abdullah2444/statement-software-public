@@ -4,13 +4,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>New Client</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=asset_version) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=asset_version) }}">
   </head>
   <body>
     <main class="shell shell-narrow">
       <section class="hero">
         <div>
-          <p class="eyebrow">{{ brand_name }}</p>
+          <p class="eyebrow">Firefly</p>
           <h1>New Client</h1>
         </div>
         <a class="button secondary" href="{{ url_for('index') }}">Back</a>

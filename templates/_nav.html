@@ -46,21 +46,21 @@
   }
 </style>
 <script>
-window.statementSoftwareCsrfToken = {{ csrf_token()|tojson }};
+window.fireflyCsrfToken = {{ csrf_token()|tojson }};
 (function() {
   function appendCsrfToken(form) {
-    if (!form || !window.statementSoftwareCsrfToken) return;
+    if (!form || !window.fireflyCsrfToken) return;
     var method = (form.getAttribute('method') || 'GET').toUpperCase();
     if (method === 'GET') return;
     var existing = form.querySelector('input[name="csrf_token"]');
     if (existing) {
-      existing.value = window.statementSoftwareCsrfToken;
+      existing.value = window.fireflyCsrfToken;
       return;
     }
     var input = document.createElement('input');
     input.type = 'hidden';
     input.name = 'csrf_token';
-    input.value = window.statementSoftwareCsrfToken;
+    input.value = window.fireflyCsrfToken;
     form.appendChild(input);
   }
 
@@ -86,9 +86,9 @@ window.statementSoftwareCsrfToken = {{ csrf_token()|tojson }};
     var options = init ? Object.assign({}, init) : {};
     var method = options.method || 'GET';
     var target = typeof resource === 'string' ? resource : ((resource && resource.url) || window.location.href);
-    if (window.statementSoftwareCsrfToken && isUnsafeMethod(method) && isSameOrigin(target)) {
+    if (window.fireflyCsrfToken && isUnsafeMethod(method) && isSameOrigin(target)) {
       var headers = new Headers(options.headers || (resource && resource.headers) || {});
-      if (!headers.has('X-CSRF-Token')) headers.set('X-CSRF-Token', window.statementSoftwareCsrfToken);
+      if (!headers.has('X-CSRF-Token')) headers.set('X-CSRF-Token', window.fireflyCsrfToken);
       if (!headers.has('X-Requested-With')) headers.set('X-Requested-With', 'XMLHttpRequest');
       options.headers = headers;
     }
@@ -98,13 +98,13 @@ window.statementSoftwareCsrfToken = {{ csrf_token()|tojson }};
   var originalOpen = XMLHttpRequest.prototype.open;
   var originalSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.open = function(method, url) {
-    this._statementSoftwareMethod = method;
-    this._statementSoftwareUrl = url;
+    this._fireflyMethod = method;
+    this._fireflyUrl = url;
     return originalOpen.apply(this, arguments);
   };
   XMLHttpRequest.prototype.send = function() {
-    if (window.statementSoftwareCsrfToken && isUnsafeMethod(this._statementSoftwareMethod) && isSameOrigin(this._statementSoftwareUrl || window.location.href)) {
-      this.setRequestHeader('X-CSRF-Token', window.statementSoftwareCsrfToken);
+    if (window.fireflyCsrfToken && isUnsafeMethod(this._fireflyMethod) && isSameOrigin(this._fireflyUrl || window.location.href)) {
+      this.setRequestHeader('X-CSRF-Token', window.fireflyCsrfToken);
       this.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
     }
     return originalSend.apply(this, arguments);
@@ -112,7 +112,7 @@ window.statementSoftwareCsrfToken = {{ csrf_token()|tojson }};
 
   function bootCsrf() {
     ensureCsrfFields(document);
-    if (!document.body || window._statementSoftwareCsrfObserver) return;
+    if (!document.body || window._fireflyCsrfObserver) return;
     var observer = new MutationObserver(function(mutations) {
       mutations.forEach(function(mutation) {
         mutation.addedNodes.forEach(function(node) {
@@ -121,7 +121,7 @@ window.statementSoftwareCsrfToken = {{ csrf_token()|tojson }};
       });
     });
     observer.observe(document.body, { childList: true, subtree: true });
-    window._statementSoftwareCsrfObserver = observer;
+    window._fireflyCsrfObserver = observer;
   }
 
   window.appendCsrfToken = appendCsrfToken;
@@ -157,7 +157,7 @@ window.statementSoftwareCsrfToken = {{ csrf_token()|tojson }};
     <button class="hamburger" id="mobile-menu-toggle" aria-label="Menu">
       <span></span><span></span><span></span>
     </button>
-    <span class="mobile-title">{{ brand_name }}</span>
+    <span class="mobile-title">Firefly</span>
     <span class="mobile-user">{{ g.user.username if g.user else session.get('username', '') }}</span>
   </div>
   <div class="mobile-drawer" id="mobile-drawer">

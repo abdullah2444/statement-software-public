@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-APP_NAME="Statement Software"
-SERVICE_NAME="statement-software"
+APP_NAME="Statement Software v4"
+SERVICE_NAME="statement-software-v4"
 DEFAULT_METHOD="docker"
 DEFAULT_PORT="18451"
 DEFAULT_HOST="0.0.0.0"
@@ -42,7 +42,7 @@ have_cmd() {
 
 print_help() {
   cat <<'HELP'
-Statement Software setup
+Statement Software v4 setup
 
 Usage:
   bash setup.sh quickstart [options]
@@ -81,12 +81,12 @@ Examples:
   ./setup.sh backup
   ./setup.sh export
   ./setup.sh restore ./data/backups/statement-full-backup-20260424-210000.tar.gz
-  ./setup.sh restore ~/Downloads/statement_software.db
+  ./setup.sh restore ~/Downloads/firefly_statement.db
   ./setup.sh reset-admin-password --admin-user admin
 
 Safety notes:
-  Git should store code, templates, static files, scripts, and docs.
-  Git should NOT store .env, real databases, uploads, backups, logs, or archives.
+  GitHub should store code, templates, static files, scripts, and docs.
+  GitHub should NOT store .env, real databases, uploads, backups, logs, or archives.
 
 Beginner note:
   On Ubuntu/Debian Linux, install will try to install missing tools like Docker,
@@ -135,11 +135,7 @@ prompt_default() {
     printf '%s' "$default"
     return
   fi
-  if [[ -r /dev/tty ]]; then
-    read -r -p "$label [$default]: " value </dev/tty
-  else
-    read -r -p "$label [$default]: " value
-  fi
+  read -r -p "$label [$default]: " value
   printf '%s' "${value:-$default}"
 }
 
@@ -151,13 +147,8 @@ prompt_secret() {
     return
   fi
   while [[ -z "$value" ]]; do
-    if [[ -r /dev/tty ]]; then
-      read -r -s -p "$label: " value </dev/tty
-      printf '\n' >/dev/tty
-    else
-      read -r -s -p "$label: " value
-      printf '\n'
-    fi
+    read -r -s -p "$label: " value
+    printf '\n'
     [[ -n "$value" ]] || warn "Password cannot be empty."
   done
   printf '%s' "$value"
@@ -266,12 +257,10 @@ load_env() {
   PORT="${PORT:-$DEFAULT_PORT}"
   HOST="${HOST:-$DEFAULT_HOST}"
   DATA_DIR="${DATA_DIR:-$DEFAULT_DATA_DIR}"
-  DATABASE_PATH="${DATABASE_PATH:-$DATA_DIR/statement_software.db}"
+  DATABASE_PATH="${DATABASE_PATH:-$DATA_DIR/firefly_statement.db}"
   UPLOAD_DIR="${UPLOAD_DIR:-$DATA_DIR/uploads}"
   BACKUP_DIR="${BACKUP_DIR:-$DATA_DIR/backups}"
   MAX_UPLOAD_MB="${MAX_UPLOAD_MB:-512}"
-  FX_PROXY_URL="${FX_PROXY_URL:-}"
-  LEGACY_DATABASE_FILENAME="${LEGACY_DATABASE_FILENAME:-}"
 }
 
 write_env_file() {
@@ -282,26 +271,18 @@ PORT=$PORT
 HOST=$HOST
 DATA_DIR=$DATA_DIR
 
-DATABASE_PATH=$DATA_DIR/statement_software.db
+DATABASE_PATH=$DATA_DIR/firefly_statement.db
 UPLOAD_DIR=$DATA_DIR/uploads
 BACKUP_DIR=$DATA_DIR/backups
 MAX_UPLOAD_MB=$MAX_UPLOAD_MB
 
-APP_NAME="Statement Software"
-BRAND_NAME="Statement"
-COMPANY_NAME="Your Company"
-DEFAULT_PROFIT_EXPENSE_ACCOUNT_NAME="Company Profit"
-LEGACY_DATABASE_FILENAME=
-
 SEED_DEMO_DATA=0
 SOURCE_CSV_PATH=
-DEMO_CLIENT_NAME="Demo Client"
 
 SECRET_KEY=$secret_key
 SESSION_COOKIE_SECURE=$SECURE_COOKIES
 OPENROUTER_API_KEY=$OPENROUTER_KEY
 RESET_SECRET_TOKEN=
-FX_PROXY_URL=
 EOF
   chmod 600 .env || true
   ok "Wrote .env"
@@ -309,19 +290,21 @@ EOF
 
 ensure_data_dirs() {
   mkdir -p "$DATA_DIR/uploads" "$DATA_DIR/backups"
-  touch "$DATA_DIR/statement_software.db"
+  touch "$DATA_DIR/firefly_statement.db"
 }
 
-migrate_existing_data() {
-  if [[ -s "$DATA_DIR/statement_software.db" ]]; then
+migrate_existing_v4_data() {
+  if [[ -s "$DATA_DIR/firefly_statement.db" ]]; then
     return
   fi
-  if [[ -n "${LEGACY_DATABASE_FILENAME:-}" && -f "$LEGACY_DATABASE_FILENAME" ]]; then
+  if [[ -f statement-software-v4-data/firefly_statement.db ]]; then
+    info "Copying existing v4 database into $DATA_DIR"
+    cp statement-software-v4-data/firefly_statement.db "$DATA_DIR/firefly_statement.db"
+    [[ -d statement-software-v4-data/uploads ]] && cp -a statement-software-v4-data/uploads/. "$DATA_DIR/uploads/" || true
+    [[ -d statement-software-v4-data/backups ]] && cp -a statement-software-v4-data/backups/. "$DATA_DIR/backups/" || true
+  elif [[ -f firefly_statement.db ]]; then
     info "Copying existing database into $DATA_DIR"
-    cp "$LEGACY_DATABASE_FILENAME" "$DATA_DIR/statement_software.db"
-  elif [[ -f statement_software.db ]]; then
-    info "Copying existing database into $DATA_DIR"
-    cp statement_software.db "$DATA_DIR/statement_software.db"
+    cp firefly_statement.db "$DATA_DIR/firefly_statement.db"
   fi
 }
 
@@ -398,7 +381,7 @@ init_admin_python() {
   INITIAL_ADMIN_USERNAME="$ADMIN_USER" \
   INITIAL_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   INITIAL_ADMIN_MUST_CHANGE="0" \
-  DATABASE_PATH="$DATA_DIR/statement_software.db" \
+  DATABASE_PATH="$DATA_DIR/firefly_statement.db" \
   UPLOAD_DIR="$DATA_DIR/uploads" \
   BACKUP_DIR="$DATA_DIR/backups" \
   SECRET_KEY="${SECRET_KEY:-}" \
@@ -465,7 +448,7 @@ reset_admin_password_python() {
   local python_bin="$1"
   RESET_ADMIN_USERNAME="$ADMIN_USER" \
   RESET_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
-  DATABASE_PATH="$DATA_DIR/statement_software.db" \
+  DATABASE_PATH="$DATA_DIR/firefly_statement.db" \
   UPLOAD_DIR="$DATA_DIR/uploads" \
   BACKUP_DIR="$DATA_DIR/backups" \
   SECRET_KEY="${SECRET_KEY:-}" \
@@ -595,7 +578,7 @@ install_app() {
   write_env_file "$secret_key"
   load_env
   ensure_data_dirs
-  migrate_existing_data
+  migrate_existing_v4_data
 
   if [[ "$METHOD" == "docker" ]]; then
     local compose
@@ -628,7 +611,7 @@ start_app() {
       ok "App is already running with PID $(cat "$DATA_DIR/app.pid")"
       return
     fi
-    DATABASE_PATH="$DATABASE_PATH" UPLOAD_DIR="$UPLOAD_DIR" BACKUP_DIR="$BACKUP_DIR" MAX_UPLOAD_MB="${MAX_UPLOAD_MB:-512}" HOST="$HOST" PORT="$PORT" SECRET_KEY="${SECRET_KEY:-}" SESSION_COOKIE_SECURE="${SESSION_COOKIE_SECURE:-0}" OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" RESET_SECRET_TOKEN="${RESET_SECRET_TOKEN:-}" FX_PROXY_URL="${FX_PROXY_URL:-}" \
+    DATABASE_PATH="$DATABASE_PATH" UPLOAD_DIR="$UPLOAD_DIR" BACKUP_DIR="$BACKUP_DIR" MAX_UPLOAD_MB="${MAX_UPLOAD_MB:-512}" HOST="$HOST" PORT="$PORT" SECRET_KEY="${SECRET_KEY:-}" SESSION_COOKIE_SECURE="${SESSION_COOKIE_SECURE:-0}" OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" RESET_SECRET_TOKEN="${RESET_SECRET_TOKEN:-}" \
       nohup .venv/bin/python app.py > "$DATA_DIR/app.out.log" 2> "$DATA_DIR/app.err.log" &
     echo "$!" > "$DATA_DIR/app.pid"
   fi
@@ -780,7 +763,7 @@ def upload_file_count(path):
 
 with tempfile.TemporaryDirectory() as tmp:
     tmp_path = Path(tmp)
-    db_copy = tmp_path / "statement_software.db"
+    db_copy = tmp_path / "firefly_statement.db"
     manifest = tmp_path / "manifest.json"
     src = sqlite3.connect(db_path)
     dst = sqlite3.connect(db_copy)
@@ -793,16 +776,16 @@ with tempfile.TemporaryDirectory() as tmp:
         uploads_source.mkdir()
     manifest.write_text(json.dumps({
         "format_version": 1,
-        "app_name": os.environ.get("APP_NAME", "Statement Software"),
+        "app_name": "Statement Software v4",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        "database_file": "statement_software.db",
+        "database_file": "firefly_statement.db",
         "uploads_dir": "uploads",
         "upload_file_count": upload_file_count(uploads_source),
         "notes": "Statement Software full backup. Includes SQLite database and uploads only.",
     }, indent=2), encoding="utf-8")
     with tarfile.open(backup_file, "w:gz") as tar:
         tar.add(manifest, arcname="manifest.json")
-        tar.add(db_copy, arcname="statement_software.db")
+        tar.add(db_copy, arcname="firefly_statement.db")
         tar.add(uploads_source, arcname="uploads")
 print(backup_file)
 PY
@@ -888,22 +871,10 @@ with tempfile.TemporaryDirectory() as tmp:
     if tarfile.is_tarfile(restore_source):
         safe_extract_archive(restore_source, tmp_path)
         validate_manifest(tmp_path / "manifest.json")
-        manifest_path = tmp_path / "manifest.json"
-        restored_db = tmp_path / "statement_software.db"
-        if manifest_path.exists():
-            try:
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                manifest_database = str(manifest.get("database_file") or "").strip()
-                if manifest_database:
-                    restored_db = tmp_path / manifest_database
-            except Exception:
-                pass
-        legacy_database = os.environ.get("LEGACY_DATABASE_FILENAME", "").strip()
-        if not restored_db.exists() and legacy_database:
-            restored_db = tmp_path / legacy_database
-        if not restored_db.exists():
-            raise SystemExit("backup does not contain statement_software.db")
+        restored_db = tmp_path / "firefly_statement.db"
         restored_uploads = tmp_path / "uploads"
+        if not restored_db.exists():
+            raise SystemExit("backup does not contain firefly_statement.db")
         restored_uploads.mkdir(exist_ok=True)
     elif restore_source.suffix.lower() in allowed_db_ext:
         restored_db = restore_source

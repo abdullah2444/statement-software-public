@@ -36,9 +36,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = Path(__file__).resolve().parent
 # Allow database path to be set via environment variable for Docker support
-DEFAULT_DATABASE_FILENAME = "statement_software.db"
-LEGACY_DATABASE_FILENAME = os.environ.get("LEGACY_DATABASE_FILENAME", "").strip()
-DB_PATH = Path(os.environ.get("DATABASE_PATH", BASE_DIR / DEFAULT_DATABASE_FILENAME))
+DB_PATH = Path(os.environ.get("DATABASE_PATH", BASE_DIR / "firefly_statement.db"))
 DATA_DIR = DB_PATH.parent
 UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", DATA_DIR / "uploads"))
 BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", DATA_DIR / "backups"))
@@ -47,15 +45,10 @@ try:
 except ValueError:
     MAX_UPLOAD_MB = 512
 SEED_DEMO_DATA = os.environ.get("SEED_DEMO_DATA", "0").strip().lower() in {"1", "true", "yes", "on"}
-SOURCE_CSV_PATH = os.environ.get("SOURCE_CSV_PATH", "").strip()
-SOURCE_CSV = Path(SOURCE_CSV_PATH) if SOURCE_CSV_PATH else None
-DEMO_CLIENT_NAME = os.environ.get("DEMO_CLIENT_NAME", "Demo Client").strip() or "Demo Client"
+SOURCE_CSV = Path(os.environ.get("SOURCE_CSV_PATH") or "/root/ahmed_abdelmonem_statement_normalized.csv")
 UNCATEGORIZED = "uncategorized"
 BACKUP_FORMAT_VERSION = 1
 FULL_BACKUP_NOTES = "Statement Software full backup. Includes SQLite database and uploads only."
-APP_NAME = os.environ.get("APP_NAME", "Statement Software").strip() or "Statement Software"
-BRAND_NAME = os.environ.get("BRAND_NAME", "Statement").strip() or "Statement"
-COMPANY_NAME = os.environ.get("COMPANY_NAME", "Your Company").strip() or "Your Company"
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
 ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic"}
 ALLOWED_DB_EXT = {".db", ".sqlite", ".sqlite3"}
@@ -68,14 +61,11 @@ OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-flash"
 RESET_SECRET_TOKEN = os.environ.get("RESET_SECRET_TOKEN", "")
 SECRET_KEY_FROM_ENV = bool(os.environ.get("SECRET_KEY"))
-INITIAL_ADMIN_USERNAME = os.environ.get("INITIAL_ADMIN_USERNAME", "admin").strip() or "admin"
-INITIAL_ADMIN_PASSWORD = os.environ.get("INITIAL_ADMIN_PASSWORD", "admin123") or "admin123"
-INITIAL_ADMIN_MUST_CHANGE = os.environ.get("INITIAL_ADMIN_MUST_CHANGE", "1") == "1"
+INITIAL_ADMIN_USERNAME = os.environ.get("INITIAL_ADMIN_USERNAME", "").strip()
+INITIAL_ADMIN_PASSWORD = os.environ.get("INITIAL_ADMIN_PASSWORD", "")
+INITIAL_ADMIN_MUST_CHANGE = os.environ.get("INITIAL_ADMIN_MUST_CHANGE", "0") == "1"
 BOOTSTRAP_CREDENTIAL_PATH = DATA_DIR / "admin_bootstrap.txt"
-DEFAULT_PROFIT_EXPENSE_ACCOUNT_NAME = (
-    os.environ.get("DEFAULT_PROFIT_EXPENSE_ACCOUNT_NAME", "Company Profit").strip()
-    or "Company Profit"
-)
+DEFAULT_PROFIT_EXPENSE_ACCOUNT_NAME = "Firefly Trading"
 
 
 def _asset_version() -> str:
@@ -108,18 +98,74 @@ SAFE_HTTP_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 # Cached vision-capable models from OpenRouter
 _openrouter_models_cache: dict = {}  # {"models": [...], "fetched_at": float}
 _MODELS_CACHE_TTL = 3600  # 1 hour
+_MODELS_ERROR_CACHE_TTL = 60
+_OPENROUTER_FALLBACK_MODELS = [
+    (DEFAULT_OPENROUTER_MODEL, "Google: Gemini 2.5 Flash (default)"),
+    ("openai/gpt-5.5", "OpenAI: GPT-5.5"),
+    ("openai/gpt-5.5-mini", "OpenAI: GPT-5.5 Mini"),
+    ("openai/gpt-5.1", "OpenAI: GPT-5.1"),
+    ("openai/gpt-4.1", "OpenAI: GPT-4.1"),
+    ("openai/gpt-4o", "OpenAI: GPT-4o"),
+    ("anthropic/claude-sonnet-4.5", "Anthropic: Claude Sonnet 4.5"),
+    ("anthropic/claude-opus-4.1", "Anthropic: Claude Opus 4.1"),
+    ("google/gemini-3.1-flash-lite", "Google: Gemini 3.1 Flash Lite"),
+    ("google/gemini-2.5-pro", "Google: Gemini 2.5 Pro"),
+    ("qwen/qwen3.6-flash", "Qwen: Qwen3.6 Flash"),
+]
+_PROXY_ENV_KEYS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
 
 
-def _fetch_openrouter_models() -> list[tuple[str, str]]:
+def _clear_proxy_env() -> None:
+    for key in _PROXY_ENV_KEYS:
+        os.environ.pop(key, None)
+
+
+_clear_proxy_env()
+
+
+def _dedupe_model_options(models: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    seen = set()
+    unique = []
+    for model_id, label in models:
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        unique.append((model_id, label or model_id))
+    return unique
+
+
+def _openrouter_models_status() -> dict:
+    if not _openrouter_models_cache:
+        return {"source": "none", "error": ""}
+    return {
+        "source": _openrouter_models_cache.get("source", "unknown"),
+        "error": _openrouter_models_cache.get("error", ""),
+    }
+
+
+def _fetch_openrouter_models(api_key: str = "", current_model: str = "") -> list[tuple[str, str]]:
     """Fetch vision-capable models from OpenRouter API, with 1-hour cache."""
     import time
     now = time.time()
     cached = _openrouter_models_cache
-    if cached and (now - cached["fetched_at"]) < _MODELS_CACHE_TTL:
+    cache_ttl = _MODELS_CACHE_TTL if cached.get("source") == "live" else _MODELS_ERROR_CACHE_TTL
+    if cached and (now - cached["fetched_at"]) < cache_ttl:
         return cached["models"]
 
     try:
-        resp = http_requests.get(OPENROUTER_MODELS_URL, timeout=10)
+        headers = {"Accept": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        with http_requests.Session() as session:
+            session.trust_env = False
+            resp = session.get(OPENROUTER_MODELS_URL, headers=headers, timeout=15)
         resp.raise_for_status()
         data = resp.json().get("data", [])
         models = []
@@ -131,14 +177,29 @@ def _fetch_openrouter_models() -> list[tuple[str, str]]:
                 ctx = m.get("context_length")
                 label = f"{name} ({ctx // 1000}K)" if ctx else name
                 models.append((model_id, label))
+        models = _dedupe_model_options(models)
+        if current_model and all(model_id != current_model for model_id, _ in models):
+            models.insert(0, (current_model, f"{current_model} (saved model)"))
+        if not models:
+            raise ValueError("OpenRouter returned no vision-capable models")
         _openrouter_models_cache["models"] = models
         _openrouter_models_cache["fetched_at"] = now
+        _openrouter_models_cache["source"] = "live"
+        _openrouter_models_cache["error"] = ""
         return models
-    except Exception:
-        # Return cached if available, otherwise a minimal fallback
+    except Exception as exc:
+        # Return cached if available, otherwise a practical built-in fallback.
+        error = str(exc)
         if cached and cached.get("models"):
             return cached["models"]
-        return [(DEFAULT_OPENROUTER_MODEL, "Gemini 2.5 Flash (default)")]
+        models = _dedupe_model_options(_OPENROUTER_FALLBACK_MODELS)
+        if current_model and all(model_id != current_model for model_id, _ in models):
+            models.insert(0, (current_model, f"{current_model} (saved model)"))
+        _openrouter_models_cache["models"] = models
+        _openrouter_models_cache["fetched_at"] = now
+        _openrouter_models_cache["source"] = "fallback"
+        _openrouter_models_cache["error"] = error
+        return models
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
@@ -147,6 +208,11 @@ app.config["PERMANENT_SESSION_LIFETIME"] = 8 * 60 * 60  # 8 hours
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "0") == "1"
+
+
+@app.context_processor
+def inject_asset_version() -> dict[str, str]:
+    return {"asset_version": ASSET_VERSION}
 
 
 def ensure_runtime_dirs() -> None:
@@ -191,15 +257,7 @@ def csrf_input() -> Markup:
 
 @app.context_processor
 def inject_template_helpers() -> dict:
-    return {
-        "csrf_token": get_csrf_token,
-        "csrf_input": csrf_input,
-        "app_name": APP_NAME,
-        "brand_name": BRAND_NAME,
-        "company_name": COMPANY_NAME,
-        "default_profit_expense_account_name": DEFAULT_PROFIT_EXPENSE_ACCOUNT_NAME,
-        "asset_version": ASSET_VERSION,
-    }
+    return {"csrf_token": get_csrf_token, "csrf_input": csrf_input}
 
 
 def get_setting(key: str, default: str = "") -> str:
@@ -233,6 +291,7 @@ def _call_vision(image_data: str, mime: str, system_prompt: str, user_prompt: st
     model = get_openrouter_model()
     if not api_key:
         raise ValueError("OpenRouter API key not configured. Go to Settings to add it.")
+    _clear_proxy_env()
     with OpenRouter(api_key=api_key) as client:
         response = client.chat.send(
             model=model,
@@ -450,7 +509,7 @@ def create_full_backup(target_path: Path) -> Path:
     target_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=DATA_DIR) as tmp:
         tmp_path = Path(tmp)
-        db_copy = tmp_path / DEFAULT_DATABASE_FILENAME
+        db_copy = tmp_path / "firefly_statement.db"
         manifest_path = tmp_path / "manifest.json"
         uploads_source = UPLOAD_DIR
         if not uploads_source.exists():
@@ -459,9 +518,9 @@ def create_full_backup(target_path: Path) -> Path:
         snapshot_database(db_copy)
         manifest = {
             "format_version": BACKUP_FORMAT_VERSION,
-            "app_name": APP_NAME,
+            "app_name": "Statement Software v4",
             "created_at_utc": utc_timestamp(),
-            "database_file": DEFAULT_DATABASE_FILENAME,
+            "database_file": "firefly_statement.db",
             "uploads_dir": "uploads",
             "upload_file_count": count_upload_files(uploads_source),
             "notes": FULL_BACKUP_NOTES,
@@ -469,7 +528,7 @@ def create_full_backup(target_path: Path) -> Path:
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         with tarfile.open(target_path, "w:gz") as tar:
             tar.add(manifest_path, arcname="manifest.json")
-            tar.add(db_copy, arcname=DEFAULT_DATABASE_FILENAME)
+            tar.add(db_copy, arcname="firefly_statement.db")
             tar.add(uploads_source, arcname="uploads")
     return target_path
 
@@ -530,7 +589,7 @@ def extract_backup_archive(archive_path: Path, target_dir: Path) -> None:
 def stage_restore_source(source_path: Path, original_name: str) -> tuple[Path, Path | None, str, str, Path]:
     ensure_runtime_dirs()
     staging_dir = Path(tempfile.mkdtemp(prefix="restore-", dir=DATA_DIR))
-    candidate_db = staging_dir / DEFAULT_DATABASE_FILENAME
+    candidate_db = staging_dir / "firefly_statement.db"
     staged_uploads: Path | None = None
     try:
         if is_full_backup_file(source_path):
@@ -538,20 +597,9 @@ def stage_restore_source(source_path: Path, original_name: str) -> tuple[Path, P
             extracted_dir.mkdir()
             extract_backup_archive(source_path, extracted_dir)
             validate_backup_manifest(extracted_dir / "manifest.json")
-            manifest_path = extracted_dir / "manifest.json"
-            restored_db = extracted_dir / DEFAULT_DATABASE_FILENAME
-            if manifest_path.exists():
-                try:
-                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                    manifest_database = str(manifest.get("database_file") or "").strip()
-                    if manifest_database:
-                        restored_db = extracted_dir / manifest_database
-                except (json.JSONDecodeError, OSError):
-                    pass
-            if not restored_db.exists() and LEGACY_DATABASE_FILENAME:
-                restored_db = extracted_dir / LEGACY_DATABASE_FILENAME
+            restored_db = extracted_dir / "firefly_statement.db"
             if not restored_db.exists():
-                raise ValueError(f"Backup archive does not contain {DEFAULT_DATABASE_FILENAME}.")
+                raise ValueError("Backup archive does not contain firefly_statement.db.")
             validate_database_file(restored_db)
             copy_database_contents(restored_db, candidate_db)
             staged_uploads = extracted_dir / "uploads"
@@ -649,7 +697,7 @@ def activate_database_candidate(candidate_path: Path, label: str) -> Path:
 def create_admin_bootstrap_file(password: str) -> None:
     ensure_runtime_dirs()
     content = (
-        f"{APP_NAME} bootstrap admin credentials\n"
+        "Firefly Statements bootstrap admin credentials\n"
         f"Generated: {utc_timestamp()}\n"
         "Username: admin\n"
         f"Password: {password}\n"
@@ -1440,17 +1488,14 @@ def init_db() -> None:
 
 
 def seed_from_csv() -> bool:
-    if SOURCE_CSV is None:
-        print("[seed] SOURCE_CSV_PATH is not set; skipping demo import.")
-        return False
     if not SOURCE_CSV.exists():
         print(f"[seed] Demo CSV not found at {SOURCE_CSV}; skipping demo import.")
         return False
 
     db = sqlite3.connect(DB_PATH)
     cur = db.cursor()
-    cur.execute("insert or ignore into clients(name) values (?)", (DEMO_CLIENT_NAME,))
-    client_id = cur.execute("select id from clients where name = ?", (DEMO_CLIENT_NAME,)).fetchone()[0]
+    cur.execute("insert or ignore into clients(name) values (?)", ("Ahmed Abdelmonem",))
+    client_id = cur.execute("select id from clients where name = ?", ("Ahmed Abdelmonem",)).fetchone()[0]
 
     cur.execute("delete from statement_entries where client_id = ?", (client_id,))
 
@@ -2135,11 +2180,10 @@ def _get_live_usd_cny_rate() -> float | None:
         if rate is not None:
             return float(rate)
 
-    proxies = {"http": FX_PROXY_URL, "https": FX_PROXY_URL} if FX_PROXY_URL else None
     ts = datetime.now(tz=CHINA_TZ).isoformat(timespec="seconds")
 
     try:
-        usd_rates = _fetch_moneyconvert(proxies)
+        usd_rates = _fetch_moneyconvert()
         if usd_rates:
             _fx_cache["USD"] = {"rates": usd_rates, "fetched_at": now, "timestamp": ts, "source": "moneyconvert"}
             rate = usd_rates.get("CNY")
@@ -2149,7 +2193,7 @@ def _get_live_usd_cny_rate() -> float | None:
         pass
 
     try:
-        rates = _fetch_er_api("USD", proxies)
+        rates = _fetch_er_api("USD")
         if rates:
             _fx_cache["USD"] = {"rates": rates, "fetched_at": now, "timestamp": ts, "source": "exchangerate-api"}
             rate = rates.get("CNY")
@@ -4348,14 +4392,13 @@ _FX_CACHE_TTL = 3600  # 1 hour
 
 MONEYCONVERT_URL = "https://cdn.moneyconvert.net/api/latest.json"
 ER_API_URL = "https://open.er-api.com/v6/latest/{base}"
-FX_PROXY_URL = os.environ.get("FX_PROXY_URL", "").strip()
 
 
-def _fetch_moneyconvert(proxies):
+def _fetch_moneyconvert():
     """Fetch from moneyconvert.net (hourly updates, all rates based on USD)."""
     with http_requests.Session() as session:
         session.trust_env = False
-        resp = session.get(MONEYCONVERT_URL, proxies=proxies, timeout=8)
+        resp = session.get(MONEYCONVERT_URL, timeout=8)
     resp.raise_for_status()
     data = resp.json()
     rates = data.get("rates")
@@ -4364,11 +4407,11 @@ def _fetch_moneyconvert(proxies):
     return None
 
 
-def _fetch_er_api(base, proxies):
+def _fetch_er_api(base):
     """Fetch from open.er-api.com (daily updates, any base currency)."""
     with http_requests.Session() as session:
         session.trust_env = False
-        resp = session.get(ER_API_URL.format(base=base), proxies=proxies, timeout=8)
+        resp = session.get(ER_API_URL.format(base=base), timeout=8)
     resp.raise_for_status()
     data = resp.json()
     if data.get("result") == "success":
@@ -4410,12 +4453,11 @@ def api_fx_rate():
         if rate is not None:
             return jsonify({"rate": rate, "from": from_cur, "to": to_cur, "source": cached["source"], "timestamp": cached["timestamp"]})
 
-    proxies = {"http": FX_PROXY_URL, "https": FX_PROXY_URL} if FX_PROXY_URL else None
     ts = datetime.now(tz=CHINA_TZ).isoformat(timespec="seconds")
 
     # 1) Try moneyconvert.net (hourly, USD-based)
     try:
-        usd_rates = _fetch_moneyconvert(proxies)
+        usd_rates = _fetch_moneyconvert()
         if usd_rates:
             if from_cur == "USD":
                 rates = usd_rates
@@ -4431,7 +4473,7 @@ def api_fx_rate():
 
     # 2) Try open.er-api.com (daily, any base)
     try:
-        rates = _fetch_er_api(from_cur, proxies)
+        rates = _fetch_er_api(from_cur)
         if rates:
             _fx_cache[from_cur] = {"rates": rates, "fetched_at": now, "timestamp": ts, "source": "exchangerate-api"}
             rate = rates.get(to_cur)
@@ -4504,12 +4546,15 @@ def settings_page():
     # Mask the API key for display
     raw_key = get_openrouter_api_key()
     masked_key = raw_key[:6] + "..." + raw_key[-4:] if len(raw_key) > 10 else raw_key
+    current_model = get_openrouter_model()
+    models = _fetch_openrouter_models(api_key=raw_key, current_model=current_model)
     return render_template(
         "settings.html",
         api_key_masked=masked_key,
         api_key_set=bool(raw_key),
-        current_model=get_openrouter_model(),
-        models=_fetch_openrouter_models(),
+        current_model=current_model,
+        models=models,
+        model_fetch_status=_openrouter_models_status(),
         current_db_info=database_file_info(DB_PATH),
         db_backups=list_database_backups(),
         db_path_display=str(DB_PATH),
@@ -4529,6 +4574,7 @@ def settings_save():
     fx_source = request.form.get("fx_rate_source", "").strip()
     if api_key:
         db.execute("insert or replace into app_settings(key, value) values (?, ?)", ("openrouter_api_key", api_key))
+        _openrouter_models_cache.clear()
     if model:
         db.execute("insert or replace into app_settings(key, value) values (?, ?)", ("openrouter_model", model))
     if fx_source in ("live", "average"):
@@ -4645,7 +4691,7 @@ def reload_data():
     if seed_from_csv():
         flash("Demo data reloaded.", "success")
     else:
-        flash("Demo CSV is not configured. Set SOURCE_CSV_PATH to import demo data.", "error")
+        flash(f"Demo CSV not found at {SOURCE_CSV}. Set SOURCE_CSV_PATH to import demo data.", "error")
     return redirect(url_for("index"))
 
 
@@ -5871,12 +5917,11 @@ def api_v1_fx_rate():
                 result["converted"] = round(float(amount) * rate, 2)
             return jsonify(result)
 
-    proxies = {"http": FX_PROXY_URL, "https": FX_PROXY_URL} if FX_PROXY_URL else None
     ts = datetime.now(tz=CHINA_TZ).isoformat(timespec="seconds")
 
     # 1) Try moneyconvert.net
     try:
-        usd_rates = _fetch_moneyconvert(proxies)
+        usd_rates = _fetch_moneyconvert()
         if usd_rates:
             rates = usd_rates if from_cur == "USD" else _convert_rates_from_usd(usd_rates, from_cur)
             if rates:
@@ -5893,7 +5938,7 @@ def api_v1_fx_rate():
 
     # 2) Try open.er-api.com
     try:
-        rates = _fetch_er_api(from_cur, proxies)
+        rates = _fetch_er_api(from_cur)
         if rates:
             _fx_cache[from_cur] = {"rates": rates, "fetched_at": now, "timestamp": ts, "source": "exchangerate-api"}
             rate = rates.get(to_cur)

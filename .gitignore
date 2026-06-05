@@ -5,8 +5,8 @@
 
 # Runtime data
 data/
-statement-software-data/
-statement_software.db
+statement-software-v4-data/
+firefly_statement.db
 *.db
 *.sqlite
 *.sqlite3
@@ -16,6 +16,7 @@ backups/
 # Logs and process files
 *.log
 *.pid
+firefly-v4.*.log
 server.out.log
 server.err.log
 
@@ -35,7 +36,7 @@ Dockerfile.cached
 *.zip
 *.backup
 *.bak
-statement-software/
+statement-software-v4/
 
 # Local editor / tool state
 .claude/

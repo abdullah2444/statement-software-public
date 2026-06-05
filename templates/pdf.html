@@ -152,7 +152,9 @@
   </head>
   <body>
     <!-- Running header elements (removed from flow, repeated on each page) -->
-    <div class="header-left">{{ company_name }}</div>
+    <div class="header-left">
+      <img src="file:///app/static/logo.png" alt="Firefly Trading">
+    </div>
     <div class="header-right-el">
       Account Statement<br>
       Generated: {{ generated_date }}
@@ -203,7 +205,7 @@
 
     <div class="footer-line">
       <span>{{ client.name }} &mdash; Account Statement</span>
-      <span>{{ company_name }}</span>
+      <span>Firefly Trading</span>
     </div>
   </body>
 </html>

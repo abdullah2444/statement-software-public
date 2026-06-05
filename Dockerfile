@@ -24,15 +24,9 @@ RUN mkdir -p /data /data/uploads /data/backups
 ENV PORT=18451
 ENV FLASK_DEBUG=0
 ENV HOST=0.0.0.0
-ENV DATABASE_PATH=/data/statement_software.db
+ENV DATABASE_PATH=/data/firefly_statement.db
 ENV UPLOAD_DIR=/data/uploads
 ENV BACKUP_DIR=/data/backups
-ENV APP_NAME="Statement Software"
-ENV BRAND_NAME="Statement"
-ENV COMPANY_NAME="Your Company"
-ENV DEFAULT_PROFIT_EXPENSE_ACCOUNT_NAME="Company Profit"
-ENV LEGACY_DATABASE_FILENAME=""
-ENV DEMO_CLIENT_NAME="Demo Client"
 
 EXPOSE 18451
 

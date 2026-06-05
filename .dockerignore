@@ -6,9 +6,9 @@
 !.env.example
 
 data/
-statement-software-data/
-statement-software/
-statement_software.db
+statement-software-v4-data/
+statement-software-v4/
+firefly_statement.db
 *.db
 *.sqlite
 *.sqlite3
