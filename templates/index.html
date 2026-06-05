@@ -634,15 +634,15 @@
       .search-bar input { width: 100%; padding: 16px 18px 16px 48px; border: 1px solid #d9e4e6; border-radius: 999px; background: rgba(255,255,255,0.92); font-size: 0.94rem; box-shadow: 0 16px 30px rgba(19,32,40,0.05); }
       .search-bar input:focus { border-color: var(--accent-2); box-shadow: 0 0 0 4px rgba(47,105,114,0.1); }
       .search-bar svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; color: var(--muted); pointer-events: none; }
-      .search-results { position: absolute; top: 100%; left: 0; right: 0; z-index: 100; background: #fff; border: 1px solid #d9e4e6; border-radius: 14px; margin-top: 4px; max-height: 400px; overflow-y: auto; box-shadow: 0 16px 40px rgba(19,32,40,0.12); display: none; }
+      .search-results { position: absolute; z-index: 1000; background: #fff; border: 1px solid #d9e4e6; border-radius: 14px; max-height: 70vh; overflow-y: auto; box-shadow: 0 16px 40px rgba(19,32,40,0.12); display: none; }
       .search-results.active { display: block; }
-      .search-result-item { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid #f3f4f6; cursor: pointer; text-decoration: none; color: inherit; transition: background 0.1s; }
+      .search-result-item { display: flex; align-items: flex-start; gap: 14px; padding: 14px 18px; border-bottom: 1px solid #f3f4f6; cursor: pointer; text-decoration: none; color: inherit; transition: background 0.1s; }
       .search-result-item:last-child { border-bottom: none; }
       .search-result-item:hover { background: #f8fafc; }
-      .sr-client { font-size: 0.75rem; color: var(--accent-2); font-weight: 600; min-width: 90px; }
-      .sr-desc { flex: 1; font-size: 0.85rem; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .sr-amount { font-size: 0.85rem; font-weight: 700; white-space: nowrap; }
-      .sr-date { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+      .sr-client { font-size: 0.85rem; color: var(--accent-2); font-weight: 600; min-width: 120px; }
+      .sr-desc { flex: 1; font-size: 0.95rem; line-height: 1.4; color: var(--ink); white-space: normal; overflow-wrap: anywhere; }
+      .sr-amount { font-size: 0.95rem; font-weight: 700; white-space: nowrap; }
+      .sr-date { font-size: 0.85rem; color: var(--muted); white-space: nowrap; }
       .sr-empty { padding: 14px 16px; text-align: center; color: var(--muted); font-size: 0.85rem; }
 
       /* -- Group wrapper -- */
@@ -1530,6 +1530,21 @@
       const groupList = document.getElementById('group-list');
       const searchResults = document.getElementById('search-results');
       let searchTimer = null;
+      // Render the results dropdown on <body> so it is never clipped by the
+      // collapsible client-section (which uses overflow:hidden + backdrop-filter).
+      if (searchResults && searchResults.parentElement !== document.body) {
+        document.body.appendChild(searchResults);
+      }
+      function positionSearchResults() {
+        if (!searchInput || !searchResults) return;
+        const r = searchInput.getBoundingClientRect();
+        searchResults.style.top = (r.bottom + window.scrollY + 4) + 'px';
+        searchResults.style.left = (r.left + window.scrollX) + 'px';
+        searchResults.style.width = r.width + 'px';
+      }
+      window.addEventListener('resize', () => {
+        if (searchResults && searchResults.classList.contains('active')) positionSearchResults();
+      });
       if (searchInput && groupList) {
         searchInput.addEventListener('input', () => {
           const q = searchInput.value.toLowerCase().trim();
@@ -1558,7 +1573,7 @@
                     const amtClass = e.direction === 'IN' ? 'money-in' : 'balance-negative';
                     const link = document.createElement('a');
                     link.className = 'search-result-item';
-                    link.href = '/clients/' + encodeURIComponent(e.client_id) + '?q=' + encodeURIComponent(searchInput.value.trim());
+                    link.href = '/clients/' + encodeURIComponent(e.client_id) + '?per_page=all#entry-' + encodeURIComponent(e.id);
 
                     const clientSpan = document.createElement('span');
                     clientSpan.className = 'sr-client';
@@ -1583,6 +1598,7 @@
                     searchResults.appendChild(link);
                   });
                 }
+                positionSearchResults();
                 searchResults.classList.add('active');
               });
           }, 300);

@@ -14,6 +14,17 @@
       .row-just-saved {
         animation: row-saved 2s ease-out;
       }
+      @keyframes row-highlight-pulse {
+        0% { background: #ffe69c; }
+        100% { background: #fff3cd; }
+      }
+      .row-highlighted td {
+        background: #fff3cd !important;
+        animation: row-highlight-pulse 1.2s ease-out;
+      }
+      .row-highlighted td:first-child {
+        box-shadow: inset 3px 0 0 #f0ad4e;
+      }
     </style>
     <script>
       function renderExtractedText(text) {
@@ -827,7 +838,10 @@
 
         if (hash && hash.startsWith('#entry-')) {
           const target = document.querySelector(hash);
-          if (target) target.scrollIntoView({ block: 'center' });
+          if (target) {
+            target.scrollIntoView({ block: 'center' });
+            target.classList.add('row-highlighted');
+          }
         }
 
       });
