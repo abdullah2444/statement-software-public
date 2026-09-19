@@ -16,6 +16,7 @@ else
 fi
 
 METHOD=""
+METHOD_EXPLICIT="0"
 PORT=""
 HOST=""
 DATA_DIR=""
@@ -98,7 +99,7 @@ parse_options() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --method)
-        METHOD="${2:-}"; shift 2 ;;
+        METHOD="${2:-}"; METHOD_EXPLICIT="1"; shift 2 ;;
       --port)
         PORT="${2:-}"; shift 2 ;;
       --host)
@@ -214,6 +215,61 @@ python_cmd() {
   else
     return 1
   fi
+}
+
+docker_usable() {
+  # True only if we can actually talk to a running Docker daemon AND have compose.
+  compose_cmd >/dev/null 2>&1
+}
+
+auto_detect_non_interactive() {
+  # Without a real terminal, read prompts would hang forever. Fall back to
+  # non-interactive defaults automatically so quickstart never blocks.
+  if [[ "$NON_INTERACTIVE" != "1" && ! -t 0 ]]; then
+    NON_INTERACTIVE="1"
+    info "No interactive terminal detected; running in non-interactive mode with defaults."
+  fi
+}
+
+resolve_install_method() {
+  # Choose docker vs python sensibly instead of blindly defaulting to docker.
+  if [[ -z "$METHOD" ]]; then
+    if docker_usable; then
+      METHOD="docker"
+    elif python_cmd >/dev/null 2>&1; then
+      METHOD="python"
+      info "Docker is not available; using Python mode."
+    else
+      METHOD="$DEFAULT_METHOD"
+    fi
+    return
+  fi
+
+  # If the user did not force docker but docker is unusable, fall back to
+  # Python instead of attempting a heavy/destructive system install.
+  if [[ "$METHOD" == "docker" && "$METHOD_EXPLICIT" != "1" ]] && ! docker_usable; then
+    if python_cmd >/dev/null 2>&1; then
+      warn "Docker is not usable on this machine; falling back to Python mode."
+      warn "To force Docker, re-run with: --method docker"
+      METHOD="python"
+    fi
+  fi
+}
+
+wait_for_app() {
+  # Poll until the app answers (or the timeout elapses) so status/doctor
+  # checks don't race the server startup and report false failures.
+  local url="$1"
+  local attempts="${2:-30}"
+  local i=0
+  while (( i < attempts )); do
+    if http_responds "$url" || port_is_listening "$PORT"; then
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  return 1
 }
 
 http_responds() {
@@ -560,13 +616,26 @@ PY
 
 install_app() {
   parse_options "$@"
+  auto_detect_non_interactive
+  # Auto-pick docker vs python when the user did not force a choice.
+  resolve_install_method
   METHOD="${METHOD:-$(prompt_default "Install method: docker or python" "$DEFAULT_METHOD")}"
   PORT="${PORT:-$(prompt_default "Browser port" "$DEFAULT_PORT")}"
   HOST="${HOST:-$(prompt_default "Bind host" "$DEFAULT_HOST")}"
   DATA_DIR="${DATA_DIR:-$(prompt_default "Private data folder" "$DEFAULT_DATA_DIR")}"
   ADMIN_USER="${ADMIN_USER:-admin}"
   if [[ -z "$ADMIN_PASSWORD" ]]; then
-    ADMIN_PASSWORD="$(prompt_secret "First admin password for '$ADMIN_USER'")"
+    if [[ "$NON_INTERACTIVE" == "1" ]]; then
+      # Never block a non-interactive install: generate a strong password
+      # and print it clearly so the operator can log in and change it.
+      ADMIN_PASSWORD="$(random_secret | cut -c1-16)"
+      warn "No admin password supplied; generated one automatically."
+      info "Admin username: $ADMIN_USER"
+      info "Admin password: $ADMIN_PASSWORD"
+      info "Please change this password after your first login."
+    else
+      ADMIN_PASSWORD="$(prompt_secret "First admin password for '$ADMIN_USER'")"
+    fi
   fi
   [[ "$METHOD" == "docker" || "$METHOD" == "python" ]] || die "--method must be docker or python."
   [[ "$PORT" =~ ^[0-9]+$ ]] || die "--port must be a number."
@@ -614,8 +683,20 @@ start_app() {
     DATABASE_PATH="$DATABASE_PATH" UPLOAD_DIR="$UPLOAD_DIR" BACKUP_DIR="$BACKUP_DIR" MAX_UPLOAD_MB="${MAX_UPLOAD_MB:-512}" HOST="$HOST" PORT="$PORT" SECRET_KEY="${SECRET_KEY:-}" SESSION_COOKIE_SECURE="${SESSION_COOKIE_SECURE:-0}" OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" RESET_SECRET_TOKEN="${RESET_SECRET_TOKEN:-}" \
       nohup .venv/bin/python app.py > "$DATA_DIR/app.out.log" 2> "$DATA_DIR/app.err.log" &
     echo "$!" > "$DATA_DIR/app.pid"
+    # Fail fast if the Python process died immediately (bad deps, port in use).
+    sleep 1
+    if ! kill -0 "$(cat "$DATA_DIR/app.pid")" >/dev/null 2>&1; then
+      fail "App process exited right after start. Recent errors:"
+      tail -n 20 "$DATA_DIR/app.err.log" 2>/dev/null || true
+      die "Could not start the app. See $DATA_DIR/app.err.log for details."
+    fi
   fi
-  ok "Started $APP_NAME"
+  if wait_for_app "http://127.0.0.1:$PORT" 30; then
+    ok "Started $APP_NAME"
+  else
+    warn "Started $APP_NAME, but it is not responding yet on port $PORT."
+    warn "Check logs with: ./setup.sh status (and $DATA_DIR/app.err.log in Python mode)."
+  fi
   info "Open: http://127.0.0.1:$PORT"
 }
 

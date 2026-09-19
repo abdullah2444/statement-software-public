@@ -1414,9 +1414,10 @@
             <button class="entry-modal-close" type="button" data-add-entry-close aria-label="Close add entry">&times;</button>
           </div>
           <section id="entry-new">
-          <form method="post" action="{{ url_for('add_entry', client_id=client.id) }}" enctype="multipart/form-data" class="add-entry-layout">
+          <form method="post" action="{{ url_for('add_entry', client_id=client.id) }}" enctype="multipart/form-data" class="add-entry-layout" data-dedupe-form>
             <input type="hidden" name="return_page" value="{{ page }}">
             <input type="hidden" name="return_per_page" value="{{ per_page_raw }}">
+            <input type="hidden" name="submission_token" value="">
             {% if quick_submit_id and quick_submit %}
             <input type="hidden" name="quick_submit_id" value="{{ quick_submit_id }}">
             <input type="hidden" name="existing_image_path" value="{{ quick_submit.image_path }}">
@@ -1639,6 +1640,54 @@
         }
       })();
       {% endif %}
+    </script>
+    <script>
+      // --- Duplicate-submit protection ---
+      // Prevents a flaky connection / double-click from creating two entries.
+      // 1) Stamps a one-time submission_token (also enforced server-side).
+      // 2) Disables the submit button on submit, re-enabling only on error
+      //    or when the page is restored from the back/forward cache.
+      (function() {
+        function makeToken() {
+          try {
+            if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+          } catch (e) {}
+          return 'tok-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+        }
+        document.querySelectorAll('form[data-dedupe-form]').forEach(function(form) {
+          const tokenField = form.querySelector('input[name="submission_token"]');
+          const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]');
+          function resetForm() {
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              if (submitBtn.dataset.originalText) submitBtn.textContent = submitBtn.dataset.originalText;
+            }
+            if (tokenField) tokenField.value = makeToken();
+            form.dataset.submitting = '';
+          }
+          if (tokenField && !tokenField.value) tokenField.value = makeToken();
+          form.addEventListener('submit', function(e) {
+            if (form.dataset.submitting === '1') {
+              e.preventDefault();
+              return;
+            }
+            if (tokenField && !tokenField.value) tokenField.value = makeToken();
+            form.dataset.submitting = '1';
+            if (submitBtn) {
+              submitBtn.dataset.originalText = submitBtn.textContent;
+              // Disable after the current submit so the value is still sent.
+              setTimeout(function() {
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Saving...';
+              }, 0);
+            }
+          });
+          // Re-enable if the user returns via back/forward (bfcache restore).
+          window.addEventListener('pageshow', function(ev) {
+            if (ev.persisted) resetForm();
+          });
+        });
+      })();
     </script>
   {% include '_calculator.html' %}
   </body>

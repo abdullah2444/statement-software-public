@@ -582,6 +582,23 @@ def extract_backup_archive(archive_path: Path, target_dir: Path) -> None:
                 if not target.is_relative_to(base):
                     raise ValueError(f"Backup archive contains unsafe path: {member.name}")
             tar.extractall(target_dir)
+        
+        # Fix permissions on extracted files to ensure they're readable
+        for root, dirs, files in os.walk(target_dir):
+            # Make directories traversable and readable
+            for dir_name in dirs:
+                dir_path = Path(root) / dir_name
+                try:
+                    dir_path.chmod(0o755)
+                except OSError:
+                    pass
+            # Make files readable
+            for file_name in files:
+                file_path = Path(root) / file_name
+                try:
+                    file_path.chmod(0o644)
+                except OSError:
+                    pass
     except tarfile.TarError as exc:
         raise ValueError("Backup archive is not a valid .tar.gz file.") from exc
 
@@ -1390,6 +1407,11 @@ def init_db() -> None:
             request_path text not null default '',
             ip_address text not null default '',
             user_agent text not null default ''
+        );
+
+        create table if not exists submission_tokens (
+            token text primary key,
+            created_at text not null
         );
         """
     )
@@ -3139,12 +3161,36 @@ def _get_quick_submit(qs_id: int | None) -> dict | None:
     return {"image_path": row["image_path"], "description": row["description"], "amount": row["amount"]}
 
 
+def claim_submission_token(db: sqlite3.Connection, token: str | None) -> bool:
+    """Atomically claim a one-time submission token.
+
+    Returns True if this is the first time the token is seen (caller should
+    process the request), or False if the token was already used (duplicate
+    submission — caller should skip the insert). Prevents the same form from
+    creating two rows when a flaky connection triggers a retry or a
+    double-click. Empty tokens are always allowed through.
+    """
+    if not token:
+        return True
+    cur = db.execute(
+        "insert or ignore into submission_tokens(token, created_at) values (?, ?)",
+        (token, utc_timestamp()),
+    )
+    return cur.rowcount > 0
+
+
 @app.route("/clients/<int:client_id>/entries", methods=["POST"])
 def add_entry(client_id: int):
     db = get_db()
     client = db.execute("select id from clients where id = ?", (client_id,)).fetchone()
     if client is None:
         abort(404)
+    # Idempotency guard: ignore duplicate submissions of the same form.
+    submission_token = request.form.get("submission_token", "").strip() or None
+    if not claim_submission_token(db, submission_token):
+        db.commit()
+        flash("This entry was already submitted.", "success")
+        return redirect(_return_url(client_id, "entry-new"))
     entry_date = request.form["entry_date"]
     description = request.form["description"].strip()
     currency = request.form["currency"]
@@ -3674,10 +3720,41 @@ def _statement_pdf_response(client: sqlite3.Row, rows: list[dict]):
     return _attachment_response(pdf_bytes, "application/pdf", filename)
 
 
+def _parse_export_date(value):
+    """Best-effort parse of a stored entry date into a real date object.
+
+    Entry dates are stored as text and may arrive in several shapes
+    (ISO date, ISO datetime, slash separated, etc.). Returning a real
+    ``date`` lets Excel treat the cell as a date instead of showing it as
+    a raw serial number or an unparseable text string.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    # Handle ISO datetimes like "2026-05-01T00:00:00" or with a space.
+    iso_candidate = text.replace("T", " ").split(" ")[0]
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(iso_candidate, fmt).date()
+        except (ValueError, TypeError):
+            continue
+    # Last resort: let Python's ISO parser try the full string.
+    try:
+        return datetime.fromisoformat(text).date()
+    except (ValueError, TypeError):
+        return None
+
+
 def _statement_xlsx_response(client: sqlite3.Row, rows: list[dict]):
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "personal Statment"
+    ws.title = "Main"
 
     header_font = Font(bold=True, size=14)
     col_font = Font(bold=True, size=10)
@@ -3691,7 +3768,7 @@ def _statement_xlsx_response(client: sqlite3.Row, rows: list[dict]):
     cny_symbol = currency_symbol("CNY")
     money_fmt_usd = '"$"#,##0.00'
     money_fmt_cny = f"{cny_symbol}#,##0.00"
-    date_fmt = "YYYY-MM-DD"
+    date_fmt = "yyyy-mm-dd"
     rate_fmt = "0.0000"
     neg_usd = '"$"#,##0.00;[Red]\\-"$"#,##0.00'
     neg_cny = f"{cny_symbol}#,##0.00;[Red]\\-{cny_symbol}#,##0.00"
@@ -3733,10 +3810,11 @@ def _statement_xlsx_response(client: sqlite3.Row, rows: list[dict]):
 
         date_cell = ws.cell(row=r, column=3)
         date_cell.border = thin_border
-        try:
-            date_cell.value = datetime.strptime(row["entry_date"], "%Y-%m-%d")
+        parsed_date = _parse_export_date(row["entry_date"])
+        if parsed_date is not None:
+            date_cell.value = parsed_date
             date_cell.number_format = date_fmt
-        except (ValueError, TypeError):
+        else:
             date_cell.value = row["entry_date"]
 
         in_usd_cell = ws.cell(row=r, column=4)
@@ -3842,7 +3920,7 @@ def _expense_xlsx_response(account: sqlite3.Row, currencies: list[str], rows: li
         top=Side(style="thin"), bottom=Side(style="thin"),
     )
     money_fmt = "#,##0.00"
-    date_fmt = "YYYY-MM-DD"
+    date_fmt = "yyyy-mm-dd"
 
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4 + len(currencies) * 3)
     ws["A1"] = f"{account['name']} - Expense Report"
@@ -3866,10 +3944,11 @@ def _expense_xlsx_response(account: sqlite3.Row, currencies: list[str], rows: li
         ws.cell(row=r, column=1, value=row["seq_no"]).border = thin_border
         date_cell = ws.cell(row=r, column=2)
         date_cell.border = thin_border
-        try:
-            date_cell.value = datetime.strptime(row["entry_date"], "%Y-%m-%d")
+        parsed_date = _parse_export_date(row["entry_date"])
+        if parsed_date is not None:
+            date_cell.value = parsed_date
             date_cell.number_format = date_fmt
-        except (ValueError, TypeError):
+        else:
             date_cell.value = row["entry_date"]
         ws.cell(row=r, column=3, value=row["description"]).border = thin_border
 
