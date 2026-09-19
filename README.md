@@ -113,6 +113,35 @@ The app includes a JSON API for integrations and future mobile apps. It supports
 
 API token access levels are simple: `full_control`, `read_only`, and `client_portal`.
 
+## Automated GitHub Backups
+
+Set up hourly automatic backups of your database to a private GitHub repository:
+
+```bash
+bash scripts/setup-github-backup.sh
+```
+
+**Features:**
+- 🔄 **Automatic hourly backups** via cron
+- 📦 **Version history** - every backup is a Git commit
+- 🔒 **Private repository** - your data stays secure
+- 🗄️ **7-day retention** - keeps last 168 hourly snapshots
+- ⚡ **One-time setup** - wizard guides you through configuration
+
+**What you need:**
+1. A private GitHub repository (e.g., `username/statement-backups`)
+2. A GitHub Personal Access Token with `repo` scope
+
+**Manual backup:**
+```bash
+bash scripts/backup-to-github.sh
+```
+
+**View backup logs:**
+```bash
+tail -f data/backup-github.log
+```
+
 ## Install Examples
 
 Interactive Docker install:
