@@ -113,7 +113,17 @@ The app includes a JSON API for integrations and future mobile apps. It supports
 
 API token access levels are simple: `full_control`, `read_only`, and `client_portal`.
 
-## Automated GitHub Backups
+## Automatic Full Backups from Settings
+
+Open **Settings → GitHub Backup**, enter your private backup repository and token, choose **Every 30 minutes**, and save. This backs up the database and uploaded images together in a `.tar.gz` archive. The app checks once a minute and runs a backup when the selected interval has elapsed since the last successful backup.
+
+Configure this separately on each installation. Your local machine must be running the app and connected to the internet. Use separate private repositories for installations with different data. No cron setup is needed for this in-app schedule.
+
+After updating a Docker installation, run `docker compose up -d --build` to load the new code and settings UI. For Python installations, restart the application after updating.
+
+## Separate Database-Only GitHub Backup Script
+
+The optional script below backs up only the database and has its own cron schedule. It is separate from the full-backup settings in the app.
 
 Set up automatic backups every 30 minutes of your database to a private GitHub repository:
 

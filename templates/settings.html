@@ -431,6 +431,89 @@
         </div>
       </div>
 
+      <!-- ── GitHub Backup ───────────────────────────────────── -->
+      <div class="settings-card" id="github-backup">
+        <h2>
+          GitHub Backup
+          {% if github_backup_repo and github_backup_token_set %}
+            <span class="key-status configured">Configured</span>
+          {% else %}
+            <span class="key-status missing">Not Set</span>
+          {% endif %}
+        </h2>
+        <p>Automatically save a full backup of your database and uploaded images to your private GitHub repository.</p>
+
+        {% if github_last_backup %}
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:#166534;">
+          ✅ Last backup: <strong>{{ github_last_backup[:16].replace('T',' ') }} UTC</strong>
+          {% if github_backup_repo %}
+          — <a href="https://github.com/{{ github_backup_repo }}" target="_blank" style="color:#15803d;">View on GitHub ↗</a>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        {% if not github_backup_repo or not github_backup_token_set %}
+        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:#92400e;">
+          <strong>Setup required:</strong>
+          <ol style="margin:6px 0 0 16px;padding:0;line-height:1.8;">
+            <li>Create a <strong>private</strong> GitHub repository at <a href="https://github.com/new" target="_blank" style="color:#b45309;">github.com/new</a></li>
+            <li>Create a Personal Access Token at <a href="https://github.com/settings/tokens/new" target="_blank" style="color:#b45309;">github.com/settings/tokens/new</a> with <strong>repo</strong> scope</li>
+            <li>Fill in the fields below and click Save</li>
+          </ol>
+        </div>
+        {% endif %}
+
+        <form method="POST" action="{{ url_for('settings_github_backup_save') }}">
+          {{ csrf_input() }}
+          <div class="settings-field">
+            <label for="github_backup_repo">Backup Repository</label>
+            <input type="text" id="github_backup_repo" name="github_backup_repo"
+                   value="{{ github_backup_repo }}"
+                   placeholder="username/statement-backups">
+            <div class="field-hint">Format: <code>your-username/repo-name</code> (must be a GitHub repository you own)</div>
+          </div>
+          <div class="settings-field">
+            <label for="github_backup_token">Personal Access Token</label>
+            {% if github_backup_token_set %}
+            <div class="field-hint" style="margin-bottom:6px;">Current: <code>{{ github_backup_token_masked }}</code></div>
+            {% endif %}
+            <input type="password" id="github_backup_token" name="github_backup_token"
+                   value=""
+                   placeholder="{% if github_backup_token_set %}Enter new token to replace{% else %}ghp_xxxxxxxxxxxx{% endif %}">
+            <div class="field-hint">
+              Create at <a href="https://github.com/settings/tokens/new" target="_blank">github.com/settings/tokens/new</a> — requires <strong>repo</strong> scope.
+              Leave blank to keep current token.
+            </div>
+          </div>
+          <div class="settings-field" style="margin-top:8px;">
+            <label for="github_backup_interval_hours">Auto-Backup Schedule</label>
+            <select id="github_backup_interval_hours" name="github_backup_interval_hours" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;background:#fff;cursor:pointer;">
+              <option value="0"  {% if github_backup_interval_hours == '0'  %}selected{% endif %}>Disabled (manual only)</option>
+              <option value="0.5" {% if github_backup_interval_hours == '0.5' %}selected{% endif %}>Every 30 minutes</option>
+              <option value="1" {% if github_backup_interval_hours == '1' %}selected{% endif %}>Every hour</option>
+              <option value="6"  {% if github_backup_interval_hours == '6'  %}selected{% endif %}>Every 6 hours</option>
+              <option value="12" {% if github_backup_interval_hours == '12' %}selected{% endif %}>Every 12 hours</option>
+              <option value="24" {% if github_backup_interval_hours == '24' %}selected{% endif %}>Daily (every 24 hours)</option>
+              <option value="48" {% if github_backup_interval_hours == '48' %}selected{% endif %}>Every 2 days</option>
+              <option value="168" {% if github_backup_interval_hours == '168' %}selected{% endif %}>Weekly</option>
+            </select>
+            <div class="field-hint">Backup runs automatically in the background while the app is running.</div>
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:4px;">
+            <button type="submit" class="btn-save">Save GitHub Backup Settings</button>
+            {% if github_backup_repo and github_backup_token_set %}
+            <button type="button" id="gh-backup-run-btn" class="btn-secondary" style="display:flex;align-items:center;gap:6px;">
+              <span id="gh-backup-icon">☁️</span> Run Backup Now
+            </button>
+            {% endif %}
+          </div>
+        </form>
+
+        <div id="gh-backup-result" style="display:none;margin-top:14px;padding:10px 14px;border-radius:8px;font-size:13px;"></div>
+
+        <div class="field-hint" style="margin-top:16px;">The selected schedule runs on this installation while the app is open or its service is running and the machine is online. Configure each machine separately; use separate backup repositories for separate data.</div>
+      </div>
+
     </div>
 
     <script>
@@ -455,6 +538,61 @@
             fxTestResult.textContent = 'Connection error: ' + err.message;
             fxTestResult.style.color = '#dc2626';
           });
+      });
+    }
+    // ── GitHub Backup: Run Now button ──
+    var ghRunBtn = document.getElementById('gh-backup-run-btn');
+    var ghResult = document.getElementById('gh-backup-result');
+    if (ghRunBtn) {
+      ghRunBtn.addEventListener('click', function() {
+        ghRunBtn.disabled = true;
+        ghRunBtn.innerHTML = '⏳ Backing up…';
+        ghResult.style.display = 'none';
+
+        var csrfToken = document.querySelector('meta[name="csrf-token"]') ?
+          document.querySelector('meta[name="csrf-token"]').content :
+          (document.querySelector('input[name="csrf_token"]') ?
+            document.querySelector('input[name="csrf_token"]').value : '');
+
+        fetch('/api/github-backup/run', {
+          method: 'POST',
+          headers: {
+            'X-CSRF-Token': csrfToken,
+            'Content-Type': 'application/json'
+          },
+          body: '{}'
+        })
+        .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+        .then(function(res) {
+          var d = res.data;
+          if (res.ok && d.ok) {
+            ghResult.style.background = '#f0fdf4';
+            ghResult.style.border = '1px solid #bbf7d0';
+            ghResult.style.color = '#166534';
+            var rUrl = d.repo_url ? ' — <a href="' + d.repo_url + '" target="_blank" style="color:#15803d;">View on GitHub ↗</a>' : '';
+            ghResult.innerHTML = '✅ Backup successful! ' + (d.archive_size_kb || d.db_size_kb || '?') + ' KB committed.' + rUrl +
+              (d.warnings && d.warnings.length ? '<br><span style="color:#b45309;">⚠ ' + d.warnings.join('; ') + '</span>' : '');
+            ghRunBtn.innerHTML = '✅ Done';
+          } else {
+            ghResult.style.background = '#fef2f2';
+            ghResult.style.border = '1px solid #fecaca';
+            ghResult.style.color = '#991b1b';
+            ghResult.innerHTML = '❌ ' + (d.error || 'Backup failed');
+            ghRunBtn.innerHTML = '☁️ Run Backup Now';
+            ghRunBtn.disabled = false;
+          }
+          ghResult.style.display = 'block';
+          setTimeout(function() { if (res.ok && d.ok) { ghRunBtn.innerHTML = '☁️ Run Backup Now'; ghRunBtn.disabled = false; } }, 3000);
+        })
+        .catch(function(err) {
+          ghResult.style.display = 'block';
+          ghResult.style.background = '#fef2f2';
+          ghResult.style.border = '1px solid #fecaca';
+          ghResult.style.color = '#991b1b';
+          ghResult.innerHTML = '❌ Network error: ' + err.message;
+          ghRunBtn.innerHTML = '☁️ Run Backup Now';
+          ghRunBtn.disabled = false;
+        });
       });
     }
     </script>
