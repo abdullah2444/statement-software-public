@@ -2,7 +2,7 @@ services:
   statement-software-v5:
     build:
       context: .
-      dockerfile: Dockerfile.cached
+      dockerfile: Dockerfile
     image: statement-software:v5.0
     container_name: statement-software-v5
     hostname: statement-software-v5

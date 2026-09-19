@@ -375,6 +375,35 @@ migrate_existing_data() {
   fi
 }
 
+migrate_docker_data() {
+  # Docker mode mounts a SIBLING data folder (../statement-software-v5-data),
+  # NOT the ./data folder used by python mode. When upgrading from v4, the
+  # user's real data lives in ../statement-software-v4-data. Seed the v5 data
+  # folder from it BEFORE `compose up`, otherwise Docker auto-creates an empty
+  # folder and the user's database/uploads/backups appear to vanish.
+  local v5_dir="../statement-software-v5-data"
+  local v4_dir="../statement-software-v4-data"
+
+  # v5 data already present -> nothing to do.
+  if [[ -s "$v5_dir/firefly_statement.db" ]]; then
+    return
+  fi
+
+  mkdir -p "$v5_dir/uploads" "$v5_dir/backups"
+
+  if [[ -f "$v4_dir/firefly_statement.db" ]]; then
+    info "Migrating existing v4 Docker data to v5..."
+    cp "$v4_dir/firefly_statement.db" "$v5_dir/firefly_statement.db"
+    [[ -d "$v4_dir/uploads" ]] && cp -a "$v4_dir/uploads/." "$v5_dir/uploads/" || true
+    [[ -d "$v4_dir/backups" ]] && cp -a "$v4_dir/backups/." "$v5_dir/backups/" || true
+    ok "v4 Docker data migrated to v5 successfully"
+  else
+    # Ensure the db mount target exists as a FILE so Docker does not create it
+    # as a directory (which would break the bind mount).
+    [[ -e "$v5_dir/firefly_statement.db" ]] || touch "$v5_dir/firefly_statement.db"
+  fi
+}
+
 install_docker_deps() {
   start_docker_service
 
@@ -663,6 +692,7 @@ install_app() {
   if [[ "$METHOD" == "docker" ]]; then
     local compose
     install_docker_deps
+    migrate_docker_data
     compose="$(compose_cmd)" || die "Docker Compose is required for Docker mode."
     $compose build
     init_admin_docker
@@ -682,6 +712,7 @@ start_app() {
   if [[ "$METHOD" == "docker" ]]; then
     local compose
     compose="$(compose_cmd)" || die "Docker Compose is required for Docker mode."
+    migrate_docker_data
     info "Recreating Docker container"
     $compose down --remove-orphans >/dev/null 2>&1 || true
     $compose up -d --force-recreate
