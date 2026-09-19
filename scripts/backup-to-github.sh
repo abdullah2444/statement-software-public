@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # GitHub Auto-Backup Script for Statement Software
-# Commits database snapshots to a GitHub repository hourly
+# Commits database snapshots to a GitHub repository every 30 minutes
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -143,16 +143,16 @@ commit_and_push() {
 cleanup_old_backups() {
   cd "$BACKUP_CLONE_DIR/database"
   
-  # Keep only the last 168 hourly backups (1 week)
+  # Keep only the last 336 half-hourly backups (1 week)
   local backup_count=$(ls -1 firefly_statement_*.db 2>/dev/null | grep -v latest | wc -l)
   
-  if [[ $backup_count -gt 168 ]]; then
-    log_info "Cleaning up old backups (keeping last 168)..."
-    ls -1t firefly_statement_*.db | grep -v latest | tail -n +169 | xargs rm -f
+  if [[ $backup_count -gt 336 ]]; then
+    log_info "Cleaning up old backups (keeping last 336)..."
+    ls -1t firefly_statement_*.db | grep -v latest | tail -n +337 | xargs rm -f
     
     cd "$BACKUP_CLONE_DIR"
     git add database/
-    git commit -m "Cleanup: Removed old backups (keeping last 168)" || true
+    git commit -m "Cleanup: Removed old backups (keeping last 336)" || true
     git_authenticated push origin main || true
   fi
 }
