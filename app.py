@@ -518,7 +518,7 @@ def create_full_backup(target_path: Path) -> Path:
         snapshot_database(db_copy)
         manifest = {
             "format_version": BACKUP_FORMAT_VERSION,
-            "app_name": "Statement Software v4",
+            "app_name": "Statement Software v5",
             "created_at_utc": utc_timestamp(),
             "database_file": "firefly_statement.db",
             "uploads_dir": "uploads",

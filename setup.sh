@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-APP_NAME="Statement Software v4"
-SERVICE_NAME="statement-software-v4"
+APP_NAME="Statement Software v5"
+SERVICE_NAME="statement-software-v5"
 DEFAULT_METHOD="docker"
 DEFAULT_PORT="18451"
 DEFAULT_HOST="0.0.0.0"
@@ -43,7 +43,7 @@ have_cmd() {
 
 print_help() {
   cat <<'HELP'
-Statement Software v4 setup
+Statement Software v5 setup
 
 Usage:
   bash setup.sh quickstart [options]
@@ -349,15 +349,26 @@ ensure_data_dirs() {
   touch "$DATA_DIR/firefly_statement.db"
 }
 
-migrate_existing_v4_data() {
+migrate_existing_data() {
+  # If data directory already has a database, nothing to migrate
   if [[ -s "$DATA_DIR/firefly_statement.db" ]]; then
     return
   fi
+  
+  # Check for v4 data directory and migrate
   if [[ -f statement-software-v4-data/firefly_statement.db ]]; then
-    info "Copying existing v4 database into $DATA_DIR"
+    info "Migrating existing v4 data to v5..."
     cp statement-software-v4-data/firefly_statement.db "$DATA_DIR/firefly_statement.db"
     [[ -d statement-software-v4-data/uploads ]] && cp -a statement-software-v4-data/uploads/. "$DATA_DIR/uploads/" || true
     [[ -d statement-software-v4-data/backups ]] && cp -a statement-software-v4-data/backups/. "$DATA_DIR/backups/" || true
+    ok "v4 data migrated successfully"
+  # Check for v5 data in old location
+  elif [[ -f statement-software-v5-data/firefly_statement.db ]]; then
+    info "Copying existing v5 database into $DATA_DIR"
+    cp statement-software-v5-data/firefly_statement.db "$DATA_DIR/firefly_statement.db"
+    [[ -d statement-software-v5-data/uploads ]] && cp -a statement-software-v5-data/uploads/. "$DATA_DIR/uploads/" || true
+    [[ -d statement-software-v5-data/backups ]] && cp -a statement-software-v5-data/backups/. "$DATA_DIR/backups/" || true
+  # Check for database in current directory (legacy)
   elif [[ -f firefly_statement.db ]]; then
     info "Copying existing database into $DATA_DIR"
     cp firefly_statement.db "$DATA_DIR/firefly_statement.db"
@@ -647,7 +658,7 @@ install_app() {
   write_env_file "$secret_key"
   load_env
   ensure_data_dirs
-  migrate_existing_v4_data
+  migrate_existing_data
 
   if [[ "$METHOD" == "docker" ]]; then
     local compose
@@ -857,7 +868,7 @@ with tempfile.TemporaryDirectory() as tmp:
         uploads_source.mkdir()
     manifest.write_text(json.dumps({
         "format_version": 1,
-        "app_name": "Statement Software v4",
+        "app_name": "Statement Software v5",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "database_file": "firefly_statement.db",
         "uploads_dir": "uploads",

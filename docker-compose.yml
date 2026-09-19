@@ -1,17 +1,17 @@
 services:
-  statement-software-v4:
+  statement-software-v5:
     build:
       context: .
       dockerfile: Dockerfile.cached
-    image: statement-software:v4.0
-    container_name: statement-software-v4
-    hostname: statement-software-v4
+    image: statement-software:v5.0
+    container_name: statement-software-v5
+    hostname: statement-software-v5
     ports:
       - "18451:18451"
     volumes:
-      - ../statement-software-v4-data/firefly_statement.db:/data/firefly_statement.db
-      - ../statement-software-v4-data/uploads:/data/uploads
-      - ../statement-software-v4-data/backups:/data/backups
+      - ../statement-software-v5-data/firefly_statement.db:/data/firefly_statement.db
+      - ../statement-software-v5-data/uploads:/data/uploads
+      - ../statement-software-v5-data/backups:/data/backups
     environment:
       PORT: "18451"
       HOST: "0.0.0.0"
