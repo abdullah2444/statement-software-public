@@ -2,6 +2,36 @@
 
 Private statement management software for Firefly Trading.
 
+## 🚀 Quick Install
+
+**One-line install (fresh install or update):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/abdullah2444/statement-software-public/main/scripts/install.sh | bash
+```
+
+That's it! The installer will:
+- ✅ Install or update to the latest v5
+- ✅ Auto-migrate v4 → v5 data (if upgrading)
+- ✅ Start the service automatically
+- ✅ Access at `http://YOUR_SERVER_IP:18451`
+
+**Custom installation:**
+
+```bash
+# Custom port
+curl -fsSL https://raw.githubusercontent.com/abdullah2444/statement-software-public/main/scripts/install.sh | \
+  bash -s -- --port 8080 --admin-password YourSecurePass123
+
+# Python mode instead of Docker
+curl -fsSL https://raw.githubusercontent.com/abdullah2444/statement-software-public/main/scripts/install.sh | \
+  bash -s -- --method python
+```
+
+---
+
+## About
+
 This project is meant to keep code in GitHub and keep real business data on the server.
 
 ## What Belongs In GitHub
