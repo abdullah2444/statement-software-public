@@ -54,17 +54,26 @@ check_config() {
   fi
 }
 
+git_authenticated() {
+  GITHUB_BACKUP_TOKEN="$BACKUP_TOKEN" \
+    GIT_ASKPASS="$SCRIPT_DIR/github-backup-askpass.sh" \
+    GIT_TERMINAL_PROMPT=0 git -c credential.helper= "$@"
+}
+
 setup_backup_repo() {
-  local repo_url="https://${BACKUP_TOKEN}@github.com/${BACKUP_REPO}.git"
+  local repo_url="https://github.com/${BACKUP_REPO}.git"
   
   if [[ -d "$BACKUP_CLONE_DIR/.git" ]]; then
     log_info "Backup repository already cloned, updating..."
     cd "$BACKUP_CLONE_DIR"
-    git pull --ff-only origin main 2>/dev/null || true
+    # Remove legacy credentials from both fetch and push URLs before networking.
+    git config --replace-all remote.origin.url "$repo_url"
+    git config --unset-all remote.origin.pushurl || [[ $? == 5 ]]
+    git_authenticated pull --ff-only origin main 2>/dev/null || true
   else
     log_info "Cloning backup repository..."
     rm -rf "$BACKUP_CLONE_DIR"
-    git clone "$repo_url" "$BACKUP_CLONE_DIR" 2>&1 | grep -v "$BACKUP_TOKEN" || {
+    git_authenticated clone "$repo_url" "$BACKUP_CLONE_DIR" || {
       log_error "Failed to clone repository. Make sure $BACKUP_REPO exists on GitHub."
       log_error "Create it at: https://github.com/new"
       exit 1
@@ -123,7 +132,7 @@ commit_and_push() {
   
   # Push to GitHub
   log_info "Pushing to GitHub..."
-  git push origin main 2>&1 | grep -v "$BACKUP_TOKEN" || {
+  git_authenticated push origin main || {
     log_error "Failed to push to GitHub"
     exit 1
   }
@@ -144,7 +153,7 @@ cleanup_old_backups() {
     cd "$BACKUP_CLONE_DIR"
     git add database/
     git commit -m "Cleanup: Removed old backups (keeping last 168)" || true
-    git push origin main 2>&1 | grep -v "$BACKUP_TOKEN" || true
+    git_authenticated push origin main || true
   fi
 }
 
