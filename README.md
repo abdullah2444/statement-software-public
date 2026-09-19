@@ -115,22 +115,31 @@ API token access levels are simple: `full_control`, `read_only`, and `client_por
 
 ## Automated GitHub Backups
 
-Set up hourly automatic backups of your database to a private GitHub repository:
+Set up automatic backups every 30 minutes of your database to a private GitHub repository:
 
 ```bash
 bash scripts/setup-github-backup.sh
 ```
 
 **Features:**
-- 🔄 **Automatic hourly backups** via cron
+- 🔄 **Automatic backups every 30 minutes** via cron
 - 📦 **Version history** - every backup is a Git commit
 - 🔒 **Private repository** - your data stays secure
-- 🗄️ **7-day retention** - keeps last 168 hourly snapshots
+- 🗄️ **Snapshot cleanup** - keeps the last 336 snapshots in the working tree (about 7 days); older snapshots remain in Git history
 - ⚡ **One-time setup** - wizard guides you through configuration
 
 **What you need:**
 1. A private GitHub repository (e.g., `username/statement-backups`)
 2. A GitHub Personal Access Token with `repo` scope
+
+**Update an existing installation’s schedule:**
+
+```bash
+git pull
+bash scripts/setup-github-backup.sh --schedule-only
+```
+
+Run this on each Linux machine that needs backups. Each installation with separate data should use its own private backup repository. The machine must be running and connected to the internet at backup time; cron does not catch up while it is powered off.
 
 **Manual backup:**
 ```bash

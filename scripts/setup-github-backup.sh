@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Setup script for GitHub hourly backups
+# Setup script for GitHub 30-minute backups
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -40,9 +40,20 @@ prompt() {
   eval "$var_name='$value'"
 }
 
+if [[ "${1:-}" == "--schedule-only" ]]; then
+  mkdir -p "$PROJECT_DIR/data"
+  existing_cron="$(crontab -l 2>/dev/null || true)"
+  {
+    printf '%s\n' "$existing_cron" | sed '\|backup-to-github.sh|d'
+    printf '*/30 * * * * cd "%s" && bash scripts/backup-to-github.sh >> data/backup-github.log 2>&1\n' "$PROJECT_DIR"
+  } | crontab -
+  log_ok "Backup schedule updated: every 30 minutes"
+  exit 0
+fi
+
 print_header
 
-log_info "This wizard will help you set up hourly GitHub backups for your database."
+log_info "This wizard will help you set up 30-minute GitHub backups for your database."
 echo ""
 
 # Check if already configured
@@ -115,10 +126,10 @@ fi
 
 # Setup cron job
 echo ""
-log_info "Step 4: Setting up hourly cron job"
+log_info "Step 4: Setting up 30-minute cron job"
 echo "────────────────────────────────────────────────"
 
-CRON_CMD="0 * * * * cd $PROJECT_DIR && bash scripts/backup-to-github.sh >> data/backup-github.log 2>&1"
+CRON_CMD="*/30 * * * * cd $PROJECT_DIR && bash scripts/backup-to-github.sh >> data/backup-github.log 2>&1"
 
 # Check if cron job already exists
 if crontab -l 2>/dev/null | grep -F "backup-to-github.sh" >/dev/null; then
@@ -137,7 +148,7 @@ fi
 if [[ -n "$CRON_CMD" ]]; then
   # Add new cron job
   (crontab -l 2>/dev/null; echo "$CRON_CMD") | crontab -
-  log_ok "Cron job added (runs every hour at minute 0)"
+  log_ok "Cron job added (runs every 30 minutes)"
 fi
 
 # Summary
@@ -147,9 +158,8 @@ echo "║   ✅ GitHub Backup Setup Complete!                         ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 echo ""
 log_info "Backup repository: https://github.com/$BACKUP_REPO"
-log_info "Schedule: Every hour (at minute 0)"
-log_info "Next backup: $(date -d 'next hour' '+%Y-%m-%d %H:00:00' 2>/dev/null || date '+%Y-%m-%d %H:00:00')"
-log_info "Retention: Last 168 hourly backups (1 week)"
+log_info "Schedule: Every 30 minutes (at minutes 0 and 30)"
+log_info "Retention: Last 336 snapshots in the working tree (about 1 week)"
 echo ""
 log_info "Useful commands:"
 echo "  • Manual backup:  bash scripts/backup-to-github.sh"
@@ -157,4 +167,4 @@ echo "  • View cron jobs: crontab -l | grep backup"
 echo "  • View logs:      tail -f data/backup-github.log"
 echo "  • Disable backup: crontab -e  (then comment out the line)"
 echo ""
-log_ok "Your database will be backed up to GitHub every hour!"
+log_ok "Your database will be backed up to GitHub every 30 minutes!"
