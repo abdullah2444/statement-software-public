@@ -30,7 +30,7 @@ class RetentionTests(unittest.TestCase):
         cls.tmp.cleanup()
 
     def entry(self, filename):
-        return {'path': 'backups/' + filename, 'type': 'blob', 'mode': '100644'}
+        return {'path': 'backups/' + filename, 'type': 'blob', 'mode': '100644', 'sha': 'existing-blob'}
 
     def test_calendar_boundary_and_protected_files(self):
         entries = [self.entry(name) for name in [
@@ -49,13 +49,15 @@ class RetentionTests(unittest.TestCase):
         self.assertEqual(self.module._github_cleanup_candidates(entries, 7,
                          datetime(2026, 10, 3, tzinfo=timezone.utc)), entries[:1])
 
-    def cleanup(self, days='7', truncated=False, changed=False, delete_all=False):
+    def cleanup(self, days='7', truncated=False, changed=False, delete_all=False, backups_only=False):
         calls = []
         settings = {'github_backup_retention_days': days, 'github_backup_repo': 'owner/repo',
                     'github_backup_token': 'test-token'}
         entries = [self.entry('statement-full-backup-20260901-120000.tar.gz'),
                    self.entry('statement-full-backup-20261003-120000.tar.gz'),
                    self.entry('statement-full-backup-latest.tar.gz'), self.entry('unrelated.txt')]
+        if backups_only:
+            entries.pop()
         refs = 0
         def urlopen(request, timeout):
             nonlocal refs
@@ -84,7 +86,9 @@ class RetentionTests(unittest.TestCase):
         result, calls = self.cleanup()
         self.assertEqual(result['deleted'], 1)
         tree = next(body for method, path, body in calls if path == '/git/trees' and method == 'POST')
-        self.assertEqual(tree['tree'][0]['sha'], None)
+        self.assertNotIn('base_tree', tree)
+        self.assertNotIn('backups/statement-full-backup-20260901-120000.tar.gz', [entry['path'] for entry in tree['tree']])
+        self.assertTrue(all(entry['sha'] == 'existing-blob' for entry in tree['tree']))
         self.assertEqual(calls[-1][2]['force'], False)
 
     def test_disabled_does_not_contact_github(self):
@@ -97,8 +101,13 @@ class RetentionTests(unittest.TestCase):
         self.assertEqual(result['deleted'], 3)
         tree = next(body for method, path, body in calls if path == '/git/trees' and method == 'POST')
         paths = [entry['path'] for entry in tree['tree']]
-        self.assertIn('backups/statement-full-backup-latest.tar.gz', paths)
-        self.assertNotIn('backups/unrelated.txt', paths)
+        self.assertEqual(paths, ['backups/unrelated.txt'])
+
+    def test_delete_all_with_no_remaining_files_creates_non_backup_marker(self):
+        result, calls = self.cleanup(delete_all=True, backups_only=True)
+        self.assertEqual(result['deleted'], 3)
+        tree = next(body for method, path, body in calls if path == '/git/trees' and method == 'POST')
+        self.assertEqual(tree, {'tree': [{'path': '.gitkeep', 'mode': '100644', 'type': 'blob', 'content': ''}]})
 
     def test_delete_all_requires_confirmation_and_admin(self):
         client = self.module.app.test_client()

@@ -4822,6 +4822,7 @@ def _github_cleanup_candidates(entries: list[dict], days: int, now: datetime) ->
 
 def _cleanup_github_backups(delete_all: bool = False) -> dict:
     import urllib.request
+    import urllib.error
     try:
         days = 0 if delete_all else int(get_setting("github_backup_retention_days", "7"))
         if days not in {0, 7, 14, 30, 90}:
@@ -4838,8 +4839,15 @@ def _cleanup_github_backups(delete_all: bool = False) -> dict:
         def api(path, method="GET", body=None):
             req = urllib.request.Request(base + path, headers=headers, method=method,
                                          data=json.dumps(body).encode() if body is not None else None)
-            with urllib.request.urlopen(req, timeout=60) as response:
-                return json.loads(response.read())
+            try:
+                with urllib.request.urlopen(req, timeout=60) as response:
+                    return json.loads(response.read())
+            except urllib.error.HTTPError as exc:
+                try:
+                    message = json.loads(exc.read()).get("message", exc.reason)
+                except (ValueError, AttributeError):
+                    message = exc.reason
+                raise ValueError(f"{method} {path or '/'}: HTTP {exc.code} — {message}") from exc
         from urllib.parse import quote
         branch = quote(api("")["default_branch"], safe="/")
         head = api(f"/git/ref/heads/{branch}")["object"]["sha"]
@@ -4854,10 +4862,16 @@ def _cleanup_github_backups(delete_all: bool = False) -> dict:
             old = _github_cleanup_candidates(tree["tree"], days, utc_now())
         if not old:
             return {"ok": True, "deleted": 0, "retention_days": days}
-        new_tree = api("/git/trees", "POST", {
-            "base_tree": commit["tree"]["sha"],
-            "tree": [{"path": entry["path"], "mode": entry["mode"], "type": "blob", "sha": None} for entry in old],
-        })
+        # GitHub rejects nested deletions that leave an empty directory. Build
+        # the resulting tree from surviving files instead of null-SHA deletes.
+        removed_paths = {entry["path"] for entry in old}
+        remaining = [{"path": entry["path"], "mode": entry["mode"], "type": entry["type"], "sha": entry["sha"]}
+                     for entry in tree["tree"] if entry["type"] != "tree" and entry["path"] not in removed_paths]
+        # GitHub's tree API also rejects an entirely empty tree. A non-backup
+        # marker lets us delete every backup without rewriting branch history.
+        if not remaining:
+            remaining = [{"path": ".gitkeep", "mode": "100644", "type": "blob", "content": ""}]
+        new_tree = api("/git/trees", "POST", {"tree": remaining})
         new_commit = api("/git/commits", "POST", {
             "message": "Delete all full backup files" if delete_all else f"Backup cleanup: keep latest {days} UTC calendar days",
             "tree": new_tree["sha"], "parents": [head],
