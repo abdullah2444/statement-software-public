@@ -515,6 +515,7 @@
               <span id="gh-backup-icon">☁️</span> Run Backup Now
             </button>
             <button type="button" id="gh-cleanup-btn" class="btn-secondary">Clean Up Now</button>
+            <button type="button" id="gh-delete-all-btn" class="btn-secondary" style="color:#b91c1c;border-color:#fca5a5;">Delete All Backups</button>
             {% endif %}
           </div>
         </form>
@@ -577,6 +578,31 @@
         }).finally(function() {
           ghCleanupBtn.disabled = false;
           ghCleanupBtn.textContent = 'Clean Up Now';
+        });
+      });
+    }
+    var ghDeleteAllBtn = document.getElementById('gh-delete-all-btn');
+    if (ghDeleteAllBtn) {
+      ghDeleteAllBtn.addEventListener('click', function() {
+        var confirmation = prompt('WARNING: This removes ALL full backup files from ' + {{ github_backup_repo|tojson }} + ', including the latest backup. Your live financial data and local backups are unaffected. Git history retains older copies. Automatic backups will continue on the saved schedule.\n\nType DELETE ALL to confirm:');
+        if (confirmation !== 'DELETE ALL') return;
+        ghDeleteAllBtn.disabled = true;
+        ghDeleteAllBtn.textContent = 'Deleting backups…';
+        var result = document.getElementById('gh-backup-result');
+        result.style.display = 'block';
+        result.textContent = 'Deleting GitHub backup files…';
+        fetch('/api/github-backup/delete-all', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json', 'X-CSRF-Token': document.querySelector('input[name="csrf_token"]').value},
+          body: JSON.stringify({confirmation: confirmation})
+        }).then(function(response) { return response.json(); }).then(function(data) {
+          result.textContent = data.ok ? 'Deleted ' + data.deleted + ' GitHub backup file(s). Automatic backups will continue on the saved schedule.' : data.error;
+          result.style.color = data.ok ? '#166534' : '#991b1b';
+        }).catch(function(error) {
+          result.textContent = 'Delete request failed: ' + error.message;
+        }).finally(function() {
+          ghDeleteAllBtn.disabled = false;
+          ghDeleteAllBtn.textContent = 'Delete All Backups';
         });
       });
     }

@@ -49,12 +49,13 @@ class RetentionTests(unittest.TestCase):
         self.assertEqual(self.module._github_cleanup_candidates(entries, 7,
                          datetime(2026, 10, 3, tzinfo=timezone.utc)), entries[:1])
 
-    def cleanup(self, days='7', truncated=False, changed=False):
+    def cleanup(self, days='7', truncated=False, changed=False, delete_all=False):
         calls = []
         settings = {'github_backup_retention_days': days, 'github_backup_repo': 'owner/repo',
                     'github_backup_token': 'test-token'}
         entries = [self.entry('statement-full-backup-20260901-120000.tar.gz'),
-                   self.entry('statement-full-backup-20261003-120000.tar.gz')]
+                   self.entry('statement-full-backup-20261003-120000.tar.gz'),
+                   self.entry('statement-full-backup-latest.tar.gz'), self.entry('unrelated.txt')]
         refs = 0
         def urlopen(request, timeout):
             nonlocal refs
@@ -76,7 +77,7 @@ class RetentionTests(unittest.TestCase):
         with patch.object(self.module, 'get_setting', side_effect=lambda key, default='': settings.get(key, default)), \
              patch.object(self.module, 'utc_now', return_value=datetime(2026, 10, 3, tzinfo=timezone.utc)), \
              patch('urllib.request.urlopen', side_effect=urlopen):
-            result = self.module._cleanup_github_backups()
+            result = self.module._cleanup_github_backups(delete_all=delete_all)
         return result, calls
 
     def test_cleanup_deletes_in_one_commit_without_force(self):
@@ -90,6 +91,41 @@ class RetentionTests(unittest.TestCase):
         result, calls = self.cleanup(days='0')
         self.assertTrue(result['disabled'])
         self.assertEqual(calls, [])
+
+    def test_delete_all_includes_latest_and_preserves_unrelated_files(self):
+        result, calls = self.cleanup(days='0', delete_all=True)
+        self.assertEqual(result['deleted'], 3)
+        tree = next(body for method, path, body in calls if path == '/git/trees' and method == 'POST')
+        paths = [entry['path'] for entry in tree['tree']]
+        self.assertIn('backups/statement-full-backup-latest.tar.gz', paths)
+        self.assertNotIn('backups/unrelated.txt', paths)
+
+    def test_delete_all_requires_confirmation_and_admin(self):
+        client = self.module.app.test_client()
+        self.assertEqual(client.post('/api/github-backup/delete-all', json={}).status_code, 401)
+        with client.session_transaction() as session:
+            session['user_id'] = 1
+            session['_csrf_token'] = 'test-csrf'
+        headers = {'X-CSRF-Token': 'test-csrf'}
+        with patch.object(self.module, '_cleanup_github_backups', return_value={'ok': True, 'deleted': 3}) as cleanup:
+            for payload in [{}, {'confirmation': 'delete all'}, []]:
+                self.assertEqual(client.post('/api/github-backup/delete-all', json=payload, headers=headers).status_code, 400)
+            cleanup.assert_not_called()
+            self.assertEqual(client.post('/api/github-backup/delete-all', json={'confirmation': 'DELETE ALL'}).status_code, 400)
+            response = client.post('/api/github-backup/delete-all', json={'confirmation': 'DELETE ALL'}, headers=headers)
+            self.assertEqual(response.get_json()['deleted'], 3)
+            cleanup.assert_called_once_with(delete_all=True)
+            with patch.object(self.module, '_github_backup_operation_lock') as lock:
+                lock.acquire.return_value = False
+                response = client.post('/api/github-backup/delete-all', json={'confirmation': 'DELETE ALL'}, headers=headers)
+                self.assertEqual(response.status_code, 409)
+            with client.session_transaction() as session:
+                session['user_id'] = 2
+            with self.module.app.app_context():
+                db = self.module.get_db()
+                db.execute("insert into users(id,username,password_hash,role,is_active,must_change_password,created_at) values(2,'viewer','test','user',1,0,'test')")
+                db.commit()
+            self.assertEqual(client.post('/api/github-backup/delete-all', json={'confirmation': 'DELETE ALL'}, headers=headers).status_code, 403)
 
     def test_incomplete_listing_and_branch_race_stop_cleanup(self):
         for args in [{'truncated': True}, {'changed': True}]:

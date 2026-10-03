@@ -4820,13 +4820,13 @@ def _github_cleanup_candidates(entries: list[dict], days: int, now: datetime) ->
     return [entry for stamp, entry in dated if stamp[:8] < cutoff and stamp != newest]
 
 
-def _cleanup_github_backups() -> dict:
+def _cleanup_github_backups(delete_all: bool = False) -> dict:
     import urllib.request
     try:
-        days = int(get_setting("github_backup_retention_days", "7"))
+        days = 0 if delete_all else int(get_setting("github_backup_retention_days", "7"))
         if days not in {0, 7, 14, 30, 90}:
             raise ValueError("Invalid retention setting. Save a valid period in Settings.")
-        if days == 0:
+        if days == 0 and not delete_all:
             return {"ok": True, "deleted": 0, "disabled": True}
         repo = get_setting("github_backup_repo", "").strip()
         token = get_setting("github_backup_token", "").strip()
@@ -4847,7 +4847,11 @@ def _cleanup_github_backups() -> dict:
         tree = api(f"/git/trees/{commit['tree']['sha']}?recursive=1")
         if tree.get("truncated"):
             raise ValueError("Repository listing is incomplete; cleanup stopped safely.")
-        old = _github_cleanup_candidates(tree["tree"], days, utc_now())
+        if delete_all:
+            old = [entry for entry in tree["tree"] if entry.get("type") == "blob" and re.fullmatch(
+                r"backups/statement-full-backup-(?:latest|\d{8}-\d{6})\.tar\.gz", entry.get("path", ""))]
+        else:
+            old = _github_cleanup_candidates(tree["tree"], days, utc_now())
         if not old:
             return {"ok": True, "deleted": 0, "retention_days": days}
         new_tree = api("/git/trees", "POST", {
@@ -4855,7 +4859,7 @@ def _cleanup_github_backups() -> dict:
             "tree": [{"path": entry["path"], "mode": entry["mode"], "type": "blob", "sha": None} for entry in old],
         })
         new_commit = api("/git/commits", "POST", {
-            "message": f"Backup cleanup: keep latest {days} UTC calendar days",
+            "message": "Delete all full backup files" if delete_all else f"Backup cleanup: keep latest {days} UTC calendar days",
             "tree": new_tree["sha"], "parents": [head],
         })
         if api(f"/git/ref/heads/{branch}")["object"]["sha"] != head:
@@ -4873,6 +4877,21 @@ def api_github_backup_cleanup():
         return jsonify({"ok": False, "error": "A backup or cleanup is already running. Try again shortly."}), 409
     try:
         result = _cleanup_github_backups()
+        return jsonify(result), 200 if result["ok"] else 400
+    finally:
+        _github_backup_operation_lock.release()
+
+
+@app.route("/api/github-backup/delete-all", methods=["POST"])
+@admin_required
+def api_github_backup_delete_all():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or payload.get("confirmation") != "DELETE ALL":
+        return jsonify({"ok": False, "error": "Type DELETE ALL to confirm removal of every GitHub backup, including the latest."}), 400
+    if not _github_backup_operation_lock.acquire(blocking=False):
+        return jsonify({"ok": False, "error": "A backup or cleanup is already running. Try again shortly."}), 409
+    try:
+        result = _cleanup_github_backups(delete_all=True)
         return jsonify(result), 200 if result["ok"] else 400
     finally:
         _github_backup_operation_lock.release()

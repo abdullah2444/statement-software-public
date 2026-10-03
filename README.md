@@ -289,3 +289,9 @@ repository storage can continue to grow. A failed cleanup appears as a backup
 warning; you can retry cleanup from Settings.
 
 Retention regression checks: `python -m unittest discover -s tests -v`.
+
+**Delete All Backups** in the same settings card removes all dated full-backup
+archives and the latest archive from the configured GitHub repository. Type
+`DELETE ALL` in the warning prompt to confirm. This leaves live financial data,
+local backups, unrelated repository files, and Git history intact. Scheduled
+backups remain enabled and will create new backups at the next scheduled run.
