@@ -274,3 +274,18 @@ git pull
 ./setup.sh doctor
 ./setup.sh restart
 ```
+
+
+### GitHub backup retention
+
+In **Settings → GitHub Backup**, choose **Keep GitHub Backups For** and save.
+The default is 7 UTC calendar days (today plus the previous six days). Options
+include 14, 30, 90 days, or keeping all backups. After both the dated backup and
+latest backup upload successfully, the app removes older dated full-backup files
+in one cleanup commit. The latest file and newest dated backup are always kept.
+Use **Clean Up Now** to apply the saved period immediately; it asks for confirmation.
+Cleanup does not rewrite Git history or remove unrelated files, so historical
+repository storage can continue to grow. A failed cleanup appears as a backup
+warning; you can retry cleanup from Settings.
+
+Retention regression checks: `python -m unittest discover -s tests -v`.
