@@ -132,19 +132,26 @@ class CloudBackupTests(unittest.TestCase):
 
     # ── Consistency gate ─────────────────────────────────────────────────
 
-    def test_snapshot_waits_for_in_flight_change(self):
+    def test_restore_waits_for_in_flight_change_and_holds_new_ones(self):
         gate = self.module.DataGate()
         self.assertTrue(gate.acquire_shared(timeout=1))
-        got = []
-        worker = threading.Thread(target=lambda: got.append(gate.acquire_exclusive(timeout=5)))
+        got, finish = [], threading.Event()
+
+        def restore():
+            got.append(gate.acquire_exclusive(timeout=5))
+            finish.wait(5)
+            gate.release_exclusive()
+
+        worker = threading.Thread(target=restore)
         worker.start()
         time.sleep(0.2)
-        self.assertEqual(got, [], "snapshot must wait while a change is being saved")
+        self.assertEqual(got, [], "restore must wait while a change is being saved")
         gate.release_shared()
-        worker.join(2)
+        time.sleep(0.3)
         self.assertEqual(got, [True])
-        self.assertFalse(gate.acquire_shared(timeout=0.2), "new changes wait while the snapshot runs")
-        gate.release_exclusive()
+        self.assertFalse(gate.acquire_shared(timeout=0.2), "new changes wait while the restore runs")
+        finish.set()
+        worker.join(2)
         self.assertTrue(gate.acquire_shared(timeout=1))
         gate.release_shared()
 
@@ -155,6 +162,14 @@ class CloudBackupTests(unittest.TestCase):
         gate.release_exclusive()
         gate.release_shared()
 
+    def test_hold_left_by_finished_thread_does_not_block(self):
+        gate = self.module.DataGate()
+        leaker = threading.Thread(target=lambda: gate.acquire_shared(timeout=1))
+        leaker.start()
+        leaker.join()
+        self.assertTrue(gate.acquire_exclusive(timeout=1))
+        gate.release_exclusive()
+
     def test_snapshot_keeps_receipt_deleted_afterwards(self):
         staging = Path(self.tmp.name) / "staging"
         with self.app.app_context():
@@ -163,6 +178,37 @@ class CloudBackupTests(unittest.TestCase):
         self.assertEqual((staging / "uploads" / "receipt-1.png").read_bytes(), b"receipt one")
         manifest = json.loads((staging / "manifest.json").read_text())
         self.assertEqual(manifest["upload_file_count"], 1)
+        shutil.rmtree(staging)
+
+    def test_backup_not_blocked_by_slow_request(self):
+        """A request that is still saving must never make a backup wait or fail."""
+        staging = Path(self.tmp.name) / "staging-busy"
+        self.assertTrue(self.module.DATA_GATE.acquire_shared(timeout=1))
+        try:
+            done = []
+            worker = threading.Thread(target=lambda: (self.app.app_context().push(),
+                                                      self.module.stage_consistent_snapshot(staging),
+                                                      done.append(True)))
+            worker.start()
+            worker.join(10)
+            self.assertEqual(done, [True])
+        finally:
+            self.module.DATA_GATE.release_shared()
+        shutil.rmtree(staging)
+
+    def test_snapshot_includes_receipt_saved_during_backup(self):
+        staging = Path(self.tmp.name) / "staging-new"
+        real_snapshot = self.module.snapshot_database
+
+        def snapshot_then_new_receipt(target):
+            # Simulates a receipt saved while the database is being copied.
+            result = real_snapshot(target)
+            (self.module.UPLOAD_DIR / "receipt-2.png").write_bytes(b"receipt two")
+            return result
+
+        with self.app.app_context(), patch.object(self.module, "snapshot_database", snapshot_then_new_receipt):
+            self.module.stage_consistent_snapshot(staging)
+        self.assertEqual((staging / "uploads" / "receipt-2.png").read_bytes(), b"receipt two")
         shutil.rmtree(staging)
 
     # ── Backup, verify, restore with real restic ─────────────────────────

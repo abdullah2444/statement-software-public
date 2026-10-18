@@ -415,14 +415,15 @@ def close_active_db() -> None:
 
 
 class DataGate:
-    """Lets many requests change data at once, but gives backups and restores the data to themselves.
+    """Lets many requests change data at once, but gives a restore the data to itself.
 
-    Requests that change data hold the gate "shared". Taking a backup snapshot or
-    restoring holds it "exclusive": it waits for in-flight changes to finish and
-    holds new ones back, so the database and the uploaded receipts are copied or
-    replaced as one consistent set. Exclusive holds are reentrant, and a thread
-    that already holds the gate shared may take it exclusively. This works within
-    one process; the app runs as a single process.
+    Requests that change data hold the gate "shared". A restore holds it
+    "exclusive": it waits for in-flight changes to finish and holds new ones
+    back, so the database and the uploaded receipts are replaced as one set.
+    Backups do not use the gate (see stage_consistent_snapshot), so a slow
+    request can never make a backup fail. Exclusive holds are reentrant, and a
+    thread that already holds the gate shared may take it exclusively. This
+    works within one process; the app runs as a single process.
     """
 
     def __init__(self):
@@ -432,6 +433,15 @@ class DataGate:
         self._depth = 0
         self._waiting_exclusive = 0
 
+    def _forget_finished_threads(self) -> None:
+        """Drop holds left by threads that have ended, so a missed release can never block forever."""
+        alive = {thread.ident for thread in threading.enumerate()}
+        for thread_id in [t for t in self._shared if t not in alive]:
+            del self._shared[thread_id]
+        if self._owner is not None and self._owner not in alive:
+            self._owner = None
+            self._depth = 0
+
     def _others_shared(self, me: int) -> bool:
         return any(count for thread_id, count in self._shared.items() if thread_id != me)
 
@@ -440,11 +450,14 @@ class DataGate:
         deadline = time.monotonic() + timeout
         with self._cond:
             if self._owner != me:
-                while self._owner is not None or self._waiting_exclusive:
+                while True:
+                    self._forget_finished_threads()
+                    if self._owner is None and not self._waiting_exclusive:
+                        break
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         return False
-                    self._cond.wait(remaining)
+                    self._cond.wait(min(remaining, 1))
             self._shared[me] = self._shared.get(me, 0) + 1
             return True
 
@@ -467,11 +480,14 @@ class DataGate:
                 return True
             self._waiting_exclusive += 1
             try:
-                while self._owner is not None or self._others_shared(me):
+                while True:
+                    self._forget_finished_threads()
+                    if self._owner is None and not self._others_shared(me):
+                        break
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         return False
-                    self._cond.wait(remaining)
+                    self._cond.wait(min(remaining, 1))
                 self._owner = me
                 self._depth = 1
                 return True
@@ -612,7 +628,7 @@ def _link_or_copy_tree(source: Path, target: Path) -> None:
         return
     for item in source.iterdir():
         destination = target / item.name
-        if item.is_symlink():
+        if item.is_symlink() or (destination.exists() and not item.is_dir()):
             continue
         if item.is_dir():
             _link_or_copy_tree(item, destination)
@@ -626,17 +642,19 @@ def _link_or_copy_tree(source: Path, target: Path) -> None:
 def stage_consistent_snapshot(target_dir: Path) -> dict:
     """Copy the database and uploads into target_dir as one consistent set, and write a manifest.
 
-    Changes are held back for the moment of copying (receipts are hard-linked,
-    so this is quick), which prevents a backup from pointing at a receipt that
-    was deleted or not yet saved.
+    Receipts are copied (hard-linked where possible) before and after the
+    database snapshot. A receipt deleted while the backup runs is still in the
+    first copy, and one saved while it runs is picked up by the second, so the
+    database never points at a receipt the backup is missing. This needs no
+    lock, so people can keep working while a backup runs.
     """
     ensure_runtime_dirs()
     target_dir.mkdir(parents=True, exist_ok=True)
     db_copy = target_dir / "firefly_statement.db"
     uploads_copy = target_dir / "uploads"
-    with DATA_GATE.exclusive():
-        snapshot_database(db_copy)
-        _link_or_copy_tree(UPLOAD_DIR, uploads_copy)
+    _link_or_copy_tree(UPLOAD_DIR, uploads_copy)
+    snapshot_database(db_copy)
+    _link_or_copy_tree(UPLOAD_DIR, uploads_copy)
     manifest = {
         "format_version": BACKUP_FORMAT_VERSION,
         "app_name": "Statement Software v5",
