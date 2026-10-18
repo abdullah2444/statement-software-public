@@ -14,9 +14,11 @@ import sqlite3
 import tarfile
 import tempfile
 import threading
+import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -29,6 +31,12 @@ try:
     import weasyprint
 except Exception:  # pragma: no cover - optional runtime dependency
     weasyprint = None
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows development machines
+    fcntl = None
+
+import cloud_backup
 
 from flask import Flask, abort, after_this_request, flash, g, jsonify, make_response, redirect, render_template, request, send_file, send_from_directory, session, url_for
 from markupsafe import Markup
@@ -421,6 +429,114 @@ def close_active_db() -> None:
         db.close()
 
 
+class DataGate:
+    """Lets many requests change data at once, but gives a restore the data to itself.
+
+    Requests that change data hold the gate "shared". A restore holds it
+    "exclusive": it waits for in-flight changes to finish and holds new ones
+    back, so the database and the uploaded receipts are replaced as one set.
+    Backups do not use the gate (see stage_consistent_snapshot), so a slow
+    request can never make a backup fail. Exclusive holds are reentrant, and a
+    thread that already holds the gate shared may take it exclusively. This
+    works within one process; the app runs as a single process.
+    """
+
+    def __init__(self):
+        self._cond = threading.Condition()
+        self._shared: dict[int, int] = {}
+        self._owner: int | None = None
+        self._depth = 0
+        self._waiting_exclusive = 0
+
+    def _forget_finished_threads(self) -> None:
+        """Drop holds left by threads that have ended, so a missed release can never block forever."""
+        alive = {thread.ident for thread in threading.enumerate()}
+        for thread_id in [t for t in self._shared if t not in alive]:
+            del self._shared[thread_id]
+        if self._owner is not None and self._owner not in alive:
+            self._owner = None
+            self._depth = 0
+
+    def _others_shared(self, me: int) -> bool:
+        return any(count for thread_id, count in self._shared.items() if thread_id != me)
+
+    def acquire_shared(self, timeout: float) -> bool:
+        me = threading.get_ident()
+        deadline = time.monotonic() + timeout
+        with self._cond:
+            if self._owner != me:
+                while True:
+                    self._forget_finished_threads()
+                    if self._owner is None and not self._waiting_exclusive:
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return False
+                    self._cond.wait(min(remaining, 1))
+            self._shared[me] = self._shared.get(me, 0) + 1
+            return True
+
+    def release_shared(self) -> None:
+        me = threading.get_ident()
+        with self._cond:
+            count = self._shared.get(me, 0) - 1
+            if count > 0:
+                self._shared[me] = count
+            else:
+                self._shared.pop(me, None)
+            self._cond.notify_all()
+
+    def acquire_exclusive(self, timeout: float) -> bool:
+        me = threading.get_ident()
+        deadline = time.monotonic() + timeout
+        with self._cond:
+            if self._owner == me:
+                self._depth += 1
+                return True
+            self._waiting_exclusive += 1
+            try:
+                while True:
+                    self._forget_finished_threads()
+                    if self._owner is None and not self._others_shared(me):
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return False
+                    self._cond.wait(min(remaining, 1))
+                self._owner = me
+                self._depth = 1
+                return True
+            finally:
+                self._waiting_exclusive -= 1
+                self._cond.notify_all()
+
+    def release_exclusive(self) -> None:
+        with self._cond:
+            self._depth -= 1
+            if self._depth == 0:
+                self._owner = None
+            self._cond.notify_all()
+
+    @contextmanager
+    def exclusive(self, timeout: float = 60):
+        if not self.acquire_exclusive(timeout):
+            raise RuntimeError("The app is busy saving changes. Try again in a minute.")
+        try:
+            yield
+        finally:
+            self.release_exclusive()
+
+
+DATA_GATE = DataGate()
+# Restore endpoints take the gate exclusively themselves.
+DATA_GATE_EXEMPT_ENDPOINTS = {
+    "settings_upload_database",
+    "settings_restore_database_backup",
+    "settings_cloud_backup_restore",
+    "static",
+}
+
+
 def _slugify_filename(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-_.")
 
@@ -520,32 +636,68 @@ def count_upload_files(path: Path) -> int:
     return sum(1 for item in path.rglob("*") if item.is_file())
 
 
+def _link_or_copy_tree(source: Path, target: Path) -> None:
+    """Copy a directory tree, using hard links where possible so it is fast and uses no extra space."""
+    target.mkdir(parents=True, exist_ok=True)
+    if not source.exists():
+        return
+    for item in source.iterdir():
+        destination = target / item.name
+        if item.is_symlink() or (destination.exists() and not item.is_dir()):
+            continue
+        if item.is_dir():
+            _link_or_copy_tree(item, destination)
+            continue
+        try:
+            os.link(item, destination)
+        except OSError:
+            shutil.copy2(item, destination)
+
+
+def stage_consistent_snapshot(target_dir: Path) -> dict:
+    """Copy the database and uploads into target_dir as one consistent set, and write a manifest.
+
+    Receipts are copied (hard-linked where possible) before and after the
+    database snapshot. A receipt deleted while the backup runs is still in the
+    first copy, and one saved while it runs is picked up by the second, so the
+    database never points at a receipt the backup is missing. This needs no
+    lock, so people can keep working while a backup runs.
+    """
+    ensure_runtime_dirs()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    db_copy = target_dir / "firefly_statement.db"
+    uploads_copy = target_dir / "uploads"
+    _link_or_copy_tree(UPLOAD_DIR, uploads_copy)
+    snapshot_database(db_copy)
+    _link_or_copy_tree(UPLOAD_DIR, uploads_copy)
+    manifest = {
+        "format_version": BACKUP_FORMAT_VERSION,
+        "app_name": "Statement Software v5",
+        "created_at_utc": utc_timestamp(),
+        "database_file": "firefly_statement.db",
+        "uploads_dir": "uploads",
+        "upload_file_count": count_upload_files(uploads_copy),
+        "notes": FULL_BACKUP_NOTES,
+    }
+    (target_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return manifest
+
+
+def write_backup_archive(source_dir: Path, target_path: Path) -> Path:
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(target_path, "w:gz") as tar:
+        tar.add(source_dir / "manifest.json", arcname="manifest.json")
+        tar.add(source_dir / "firefly_statement.db", arcname="firefly_statement.db")
+        tar.add(source_dir / "uploads", arcname="uploads")
+    return target_path
+
+
 def create_full_backup(target_path: Path) -> Path:
     ensure_runtime_dirs()
-    target_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=DATA_DIR) as tmp:
         tmp_path = Path(tmp)
-        db_copy = tmp_path / "firefly_statement.db"
-        manifest_path = tmp_path / "manifest.json"
-        uploads_source = UPLOAD_DIR
-        if not uploads_source.exists():
-            uploads_source = tmp_path / "uploads"
-            uploads_source.mkdir()
-        snapshot_database(db_copy)
-        manifest = {
-            "format_version": BACKUP_FORMAT_VERSION,
-            "app_name": "Statement Software v5",
-            "created_at_utc": utc_timestamp(),
-            "database_file": "firefly_statement.db",
-            "uploads_dir": "uploads",
-            "upload_file_count": count_upload_files(uploads_source),
-            "notes": FULL_BACKUP_NOTES,
-        }
-        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        with tarfile.open(target_path, "w:gz") as tar:
-            tar.add(manifest_path, arcname="manifest.json")
-            tar.add(db_copy, arcname="firefly_statement.db")
-            tar.add(uploads_source, arcname="uploads")
+        stage_consistent_snapshot(tmp_path)
+        write_backup_archive(tmp_path, target_path)
     return target_path
 
 
@@ -700,6 +852,12 @@ def replace_uploads_contents(source_dir: Path | None) -> None:
 
 def activate_restore_candidate(candidate_path: Path, label: str, staged_uploads: Path | None = None) -> Path:
     validate_database_file(candidate_path)
+    # Hold every change back for the whole restore so nothing is written halfway through.
+    with DATA_GATE.exclusive(timeout=120):
+        return _activate_restore_candidate_locked(candidate_path, label, staged_uploads)
+
+
+def _activate_restore_candidate_locked(candidate_path: Path, label: str, staged_uploads: Path | None) -> Path:
     backup_path = create_full_backup_file(f"before-{label}")
     close_active_db()
     with tempfile.TemporaryDirectory(dir=DATA_DIR) as tmp:
@@ -797,6 +955,8 @@ def _api_actor_payload(actor: dict | None) -> dict | None:
 AUDIT_SENSITIVE_FIELDS = {
     "api_key",
     "csrf_token",
+    "cloud_backup_app_key",
+    "cloud_backup_recovery_key",
     "current_password",
     "new_password",
     "confirm_password",
@@ -1200,6 +1360,24 @@ def verify_csrf_token():
     provided = request.form.get("csrf_token") or request.headers.get("X-CSRF-Token")
     if not expected or not provided or not secrets.compare_digest(expected, provided):
         return _csrf_error_response()
+
+
+@app.before_request
+def hold_data_gate():
+    if request.method in SAFE_HTTP_METHODS or request.endpoint in DATA_GATE_EXEMPT_ENDPOINTS:
+        return
+    if not DATA_GATE.acquire_shared(timeout=60):
+        message = "A backup or restore is in progress. Try again in a minute."
+        if _is_ajax_request() or request.endpoint in API_ENDPOINTS:
+            return jsonify({"error": message}), 503
+        return message, 503
+    g.holds_data_gate = True
+
+
+@app.teardown_request
+def release_data_gate(_exc):
+    if g.pop("holds_data_gate", False):
+        DATA_GATE.release_shared()
 
 
 @app.after_request
@@ -4644,12 +4822,16 @@ def api_fx_refresh():
 @app.route("/settings", methods=["GET"])
 @admin_required
 def settings_page():
+    return render_settings_page()
+
+
+def render_settings_page(revealed_recovery_key: str = ""):
     # Mask the API key for display
     raw_key = get_openrouter_api_key()
     masked_key = raw_key[:6] + "..." + raw_key[-4:] if len(raw_key) > 10 else raw_key
     current_model = get_openrouter_model()
     models = _fetch_openrouter_models(api_key=raw_key, current_model=current_model)
-    return render_template(
+    response = make_response(render_template(
         "settings.html",
         api_key_masked=masked_key,
         api_key_set=bool(raw_key),
@@ -4670,7 +4852,22 @@ def settings_page():
         github_last_backup=get_setting("github_last_backup", ""),
         github_backup_interval_hours=get_setting("github_backup_interval_hours", "0"),
         github_backup_retention_days=get_setting("github_backup_retention_days", "7"),
-    )
+        cloud=cloud_backup_status(),
+        cloud_region=get_setting("cloud_backup_region", ""),
+        cloud_bucket=get_setting("cloud_backup_bucket", ""),
+        cloud_prefix=get_setting("cloud_backup_prefix", "") or CLOUD_BACKUP_DEFAULT_PREFIX,
+        cloud_key_id=get_setting("cloud_backup_key_id", ""),
+        cloud_app_key_set=bool(get_setting("cloud_backup_app_key", "")),
+        # The recovery key is shown until the admin confirms they saved it, or after re-entering their password.
+        cloud_recovery_key=(
+            revealed_recovery_key
+            or (get_setting("cloud_backup_recovery_key", "") if cloud_backup_configured()
+                and get_setting("cloud_backup_recovery_key_confirmed", "") != "1" else "")
+        ),
+        cloud_recovery_key_revealed=bool(revealed_recovery_key),
+    ))
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/settings", methods=["POST"])
@@ -5202,6 +5399,592 @@ def api_github_backup_run():
     if not result["ok"]:
         return jsonify({"error": result["error"]}), 500
     return jsonify(result)
+
+
+# ── Cloud Backup (Backblaze B2) ──────────────────────────────────────────────
+
+CLOUD_BACKUP_INTERVALS = {"0", "0.5", "1", "6", "12", "24"}
+CLOUD_BACKUP_RETENTION_DAYS = {"0", "7", "14", "30", "90"}
+CLOUD_BACKUP_DEFAULT_PREFIX = "statement-software"
+CLOUD_BACKUP_RETRY_MINUTES = 10
+CLOUD_BACKUP_PRUNE_HOURS = 24
+CLOUD_BACKUP_SECRET_KEYS = ("cloud_backup_app_key", "cloud_backup_recovery_key")
+CLOUD_BACKUP_CONFIG_KEYS = (
+    "cloud_backup_region",
+    "cloud_backup_bucket",
+    "cloud_backup_prefix",
+    "cloud_backup_key_id",
+    *CLOUD_BACKUP_SECRET_KEYS,
+)
+CLOUD_BACKUP_STATE_KEYS = (
+    "cloud_backup_recovery_key_confirmed",
+    "cloud_backup_last_attempt",
+    "cloud_backup_last_success",
+    "cloud_backup_last_snapshot_id",
+    "cloud_backup_last_error",
+    "cloud_backup_last_error_at",
+    "cloud_backup_last_prune",
+    "cloud_backup_last_warning",
+    "cloud_backup_storage_bytes",
+    "cloud_backup_job",
+)
+# Test hook: a local restic repository path used instead of the B2 bucket.
+CLOUD_BACKUP_REPOSITORY_OVERRIDE = os.environ.get("CLOUD_BACKUP_REPOSITORY_OVERRIDE", "")
+
+_cloud_job_lock = threading.Lock()
+_cloud_scheduler_started = False
+_cloud_scheduler_lock_file = None
+
+
+def _parse_utc(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def generate_recovery_key() -> str:
+    raw = secrets.token_hex(16).upper()
+    return "-".join(raw[i:i + 4] for i in range(0, len(raw), 4))
+
+
+def cloud_backup_configured() -> bool:
+    return all(get_setting(key, "") for key in CLOUD_BACKUP_CONFIG_KEYS)
+
+
+def load_cloud_backup_config() -> cloud_backup.B2Config:
+    if not cloud_backup_configured():
+        raise cloud_backup.CloudBackupError("Cloud backup is not set up. Fill in Settings → Cloud Backup.")
+    return cloud_backup.B2Config(
+        region=get_setting("cloud_backup_region"),
+        bucket=get_setting("cloud_backup_bucket"),
+        prefix=get_setting("cloud_backup_prefix"),
+        key_id=get_setting("cloud_backup_key_id"),
+        app_key=get_setting("cloud_backup_app_key"),
+        recovery_key=get_setting("cloud_backup_recovery_key"),
+    )
+
+
+def make_restic(config: cloud_backup.B2Config) -> cloud_backup.Restic:
+    return cloud_backup.Restic(
+        config,
+        cache_dir=DATA_DIR / ".restic-cache",
+        repository=CLOUD_BACKUP_REPOSITORY_OVERRIDE or None,
+    )
+
+
+def _set_cloud_job(kind: str, state: str, message: str = "") -> None:
+    current = _get_cloud_job()
+    job = {"kind": kind, "state": state, "message": message, "updated_at": utc_timestamp()}
+    job["started_at"] = utc_timestamp() if state == "running" else current.get("started_at", "")
+    set_setting("cloud_backup_job", json.dumps(job))
+
+
+def _get_cloud_job() -> dict:
+    try:
+        return json.loads(get_setting("cloud_backup_job", "") or "{}")
+    except json.JSONDecodeError:
+        return {}
+
+
+def _record_cloud_failure(message: str) -> None:
+    set_setting("cloud_backup_last_error", message)
+    set_setting("cloud_backup_last_error_at", utc_timestamp())
+
+
+def run_cloud_backup() -> dict:
+    """Take a consistent snapshot, upload it encrypted, then apply retention.
+
+    The backup only counts as successful once restic confirms the snapshot and
+    it shows up when listing the bucket. Old backups are only removed after that.
+    """
+    set_setting("cloud_backup_last_attempt", utc_timestamp())
+    staging = DATA_DIR / ".cloud-backup-staging"
+    try:
+        config = load_cloud_backup_config()
+        restic = make_restic(config)
+        db_size = DB_PATH.stat().st_size if DB_PATH.exists() else 0
+        uploads_size = sum(item.stat().st_size for item in UPLOAD_DIR.rglob("*") if item.is_file()) if UPLOAD_DIR.exists() else 0
+        free = shutil.disk_usage(DATA_DIR).free
+        # Receipts are usually hard-linked, but count them in case they have to be copied.
+        if free < db_size * 2 + uploads_size + 100 * 1024 * 1024:
+            raise cloud_backup.CloudBackupError(
+                f"Not enough free disk space for a backup ({format_file_size(free)} free)."
+            )
+        shutil.rmtree(staging, ignore_errors=True)
+        stage_consistent_snapshot(staging)
+        restic.unlock()
+        summary = restic.backup(staging)
+        # Older restic versions report a short ID here; the listing has the full one.
+        saved = next((snap for snap in restic.snapshots() if snap.get("id", "").startswith(summary["snapshot_id"])), None)
+        if saved is None:
+            raise cloud_backup.CloudBackupError("The new backup could not be found in the bucket after uploading.")
+        snapshot_id = saved["id"]
+    except (cloud_backup.CloudBackupError, RuntimeError, OSError, sqlite3.Error) as exc:
+        _record_cloud_failure(str(exc))
+        return {"ok": False, "error": str(exc)}
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+    set_setting("cloud_backup_last_success", utc_timestamp())
+    set_setting("cloud_backup_last_snapshot_id", snapshot_id)
+    set_setting("cloud_backup_last_error", "")
+    set_setting("cloud_backup_last_warning", "")
+    warning = _apply_cloud_retention(restic)
+    try:
+        size = restic.stats_bytes()
+        if size is not None:
+            set_setting("cloud_backup_storage_bytes", str(size))
+    except cloud_backup.CloudBackupError:
+        pass
+    return {
+        "ok": True,
+        "snapshot_id": snapshot_id[:8],
+        "uploaded_bytes": summary.get("data_added", 0),
+        "warning": warning,
+    }
+
+
+def _apply_cloud_retention(restic: cloud_backup.Restic) -> str:
+    """Forget backups older than the retention window. Only called after a verified backup."""
+    days = int(get_setting("cloud_backup_retention_days", "7") or 0)
+    if days <= 0:
+        return ""
+    last_prune = _parse_utc(get_setting("cloud_backup_last_prune", ""))
+    prune = last_prune is None or utc_now() - last_prune >= timedelta(hours=CLOUD_BACKUP_PRUNE_HOURS)
+    try:
+        restic.forget(days, prune=prune)
+    except cloud_backup.CloudBackupError as exc:
+        warning = f"Backup saved, but removing old backups failed: {exc}"
+        set_setting("cloud_backup_last_warning", warning)
+        return warning
+    if prune:
+        set_setting("cloud_backup_last_prune", utc_timestamp())
+    return ""
+
+
+def run_cloud_verify() -> dict:
+    """Check the backups can be read: verify part of the data, then restore the newest one to a scratch folder."""
+    try:
+        restic = make_restic(load_cloud_backup_config())
+        restic.check(read_data_percent=5)
+        snapshots = restic.snapshots()
+        if not snapshots:
+            raise cloud_backup.CloudBackupError("There are no backups to check yet.")
+        with tempfile.TemporaryDirectory(dir=DATA_DIR, prefix="cloud-verify-") as tmp:
+            restored = restic.restore(snapshots[0], Path(tmp))
+            validate_backup_manifest(restored / "manifest.json")
+            validate_database_file(restored / "firefly_statement.db")
+            receipts = count_upload_files(restored / "uploads")
+    except (cloud_backup.CloudBackupError, ValueError, OSError) as exc:
+        return {"ok": False, "error": str(exc)}
+    return {
+        "ok": True,
+        "message": f"Test restore worked: the newest backup opened with your recovery key and has {receipts} receipt files.",
+    }
+
+
+def _run_cloud_job(kind: str) -> dict:
+    runner = run_cloud_backup if kind == "backup" else run_cloud_verify
+    _set_cloud_job(kind, "running", "Backing up…" if kind == "backup" else "Checking backups…")
+    try:
+        result = runner()
+    except Exception as exc:  # keep the job state honest on unexpected errors
+        app.logger.exception("Cloud backup %s failed", kind)
+        result = {"ok": False, "error": f"Unexpected error: {exc}"}
+        if kind == "backup":
+            _record_cloud_failure(result["error"])
+    if result["ok"]:
+        _set_cloud_job(kind, "done", result.get("message") or "Backup finished.")
+    else:
+        _set_cloud_job(kind, "failed", result["error"])
+    return result
+
+
+def start_cloud_job(kind: str) -> bool:
+    """Run a backup or check in the background. Returns False if one is already running."""
+    if not _cloud_job_lock.acquire(blocking=False):
+        return False
+
+    def worker():
+        try:
+            with app.app_context():
+                _run_cloud_job(kind)
+        finally:
+            _cloud_job_lock.release()
+
+    threading.Thread(target=worker, name=f"cloud-backup-{kind}", daemon=True).start()
+    return True
+
+
+def cloud_backup_due(now: datetime | None = None) -> bool:
+    if not cloud_backup_configured():
+        return False
+    interval_h = float(get_setting("cloud_backup_interval_hours", "0.5") or 0)
+    if interval_h <= 0:
+        return False
+    now = now or utc_now()
+    last_attempt = _parse_utc(get_setting("cloud_backup_last_attempt", ""))
+    if last_attempt is None:
+        return True
+    last_success = _parse_utc(get_setting("cloud_backup_last_success", ""))
+    failed_last_time = last_success is None or last_success < last_attempt
+    wait = timedelta(hours=interval_h)
+    if failed_last_time:
+        wait = min(wait, timedelta(minutes=CLOUD_BACKUP_RETRY_MINUTES))
+    return now - last_attempt >= wait
+
+
+def _cloud_backup_scheduler() -> None:
+    while True:
+        time.sleep(60)
+        try:
+            with app.app_context():
+                if cloud_backup_due() and _cloud_job_lock.acquire(blocking=False):
+                    try:
+                        result = _run_cloud_job("backup")
+                    finally:
+                        _cloud_job_lock.release()
+                    print("[cloud-backup] " + ("Done" if result["ok"] else "Failed: " + result["error"]))
+        except Exception as exc:
+            print(f"[cloud-backup] Unexpected scheduler error: {exc}")
+
+
+def start_cloud_backup_scheduler() -> bool:
+    """Start the cloud backup scheduler once per installation.
+
+    A lock file in the data folder makes sure only one process runs it, even if
+    the app is later run with several worker processes.
+    """
+    global _cloud_scheduler_started, _cloud_scheduler_lock_file
+    with _scheduler_lock:
+        if _cloud_scheduler_started:
+            return False
+        ensure_runtime_dirs()
+        if fcntl is not None:
+            handle = open(DATA_DIR / ".cloud-backup-scheduler.lock", "w")
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                handle.close()
+                return False
+            _cloud_scheduler_lock_file = handle
+        _cloud_scheduler_started = True
+    with app.app_context():
+        if _get_cloud_job().get("state") == "running":
+            _set_cloud_job(_get_cloud_job().get("kind", "backup"), "failed", "Interrupted because the app restarted.")
+    threading.Thread(target=_cloud_backup_scheduler, name="cloud-backup-scheduler", daemon=True).start()
+    print("[cloud-backup] Scheduler started.")
+    return True
+
+
+def cloud_backup_alert() -> str:
+    """A short warning for admins when backups need attention, or "" when all is well."""
+    if not cloud_backup_configured():
+        return ""
+    if get_setting("cloud_backup_recovery_key_confirmed", "") != "1":
+        return "Save your backup recovery key. Without it nobody can open your backups."
+    interval_h = float(get_setting("cloud_backup_interval_hours", "0.5") or 0)
+    if interval_h <= 0:
+        return ""
+    last_success = _parse_utc(get_setting("cloud_backup_last_success", ""))
+    allowed = timedelta(hours=max(interval_h * 3, 2))
+    if last_success is None:
+        configured_at = _parse_utc(get_setting("cloud_backup_configured_at", ""))
+        if configured_at and utc_now() - configured_at > allowed:
+            return "No cloud backup has worked yet. Check Settings → Cloud Backup."
+        return ""
+    if utc_now() - last_success > allowed:
+        hours = int((utc_now() - last_success).total_seconds() // 3600)
+        return f"Cloud backups have not worked for {hours} hours. Check Settings → Cloud Backup."
+    return ""
+
+
+@app.context_processor
+def inject_cloud_backup_alert() -> dict:
+    def alert() -> str:
+        user = getattr(g, "user", None)
+        if not user or user["role"] != "admin":
+            return ""
+        try:
+            return cloud_backup_alert()
+        except sqlite3.Error:
+            return ""
+    return {"cloud_backup_alert": alert}
+
+
+def cloud_backup_status() -> dict:
+    """Everything the Settings page shows about cloud backups. Contains no secrets."""
+    configured = cloud_backup_configured()
+    interval = get_setting("cloud_backup_interval_hours", "0.5")
+    last_success = get_setting("cloud_backup_last_success", "")
+    last_attempt = _parse_utc(get_setting("cloud_backup_last_attempt", ""))
+    next_run = ""
+    if configured and float(interval or 0) > 0:
+        if last_attempt is None:
+            next_run = "within a minute"
+        else:
+            last_ok = _parse_utc(last_success)
+            wait = timedelta(hours=float(interval))
+            if last_ok is None or last_ok < last_attempt:
+                wait = min(wait, timedelta(minutes=CLOUD_BACKUP_RETRY_MINUTES))
+            next_run = (last_attempt + wait).strftime("%Y-%m-%d %H:%M UTC")
+    storage = get_setting("cloud_backup_storage_bytes", "")
+    last_error = get_setting("cloud_backup_last_error", "")
+    error_at = _parse_utc(get_setting("cloud_backup_last_error_at", ""))
+    if last_error and error_at and _parse_utc(last_success) and _parse_utc(last_success) > error_at:
+        last_error = ""
+    return {
+        "restic_installed": cloud_backup.restic_available(),
+        "configured": configured,
+        "location": f"{get_setting('cloud_backup_bucket')}/{get_setting('cloud_backup_prefix')}" if configured else "",
+        "interval_hours": interval,
+        "retention_days": get_setting("cloud_backup_retention_days", "7"),
+        "last_success": last_success,
+        "next_run": next_run,
+        "last_error": last_error,
+        "last_warning": get_setting("cloud_backup_last_warning", ""),
+        "storage_bytes": int(storage) if storage.isdigit() else None,
+        "storage_label": format_file_size(int(storage)) if storage.isdigit() else "",
+        "recovery_key_confirmed": get_setting("cloud_backup_recovery_key_confirmed", "") == "1",
+        "job": _get_cloud_job(),
+        "job_running": _cloud_job_lock.locked(),
+        "alert": cloud_backup_alert(),
+    }
+
+
+def _cloud_settings_redirect():
+    return redirect(url_for("settings_page") + "#cloud-backup")
+
+
+@app.route("/settings/cloud-backup/save", methods=["POST"])
+@admin_required
+def settings_cloud_backup_save():
+    """Connect to the B2 bucket (creating the encrypted backup store if it is new) and save the settings."""
+    form = request.form
+    interval = form.get("cloud_backup_interval_hours", "0.5").strip()
+    retention = form.get("cloud_backup_retention_days", "7").strip()
+    if interval not in CLOUD_BACKUP_INTERVALS or retention not in CLOUD_BACKUP_RETENTION_DAYS:
+        flash("Choose a valid schedule and retention period.", "error")
+        return _cloud_settings_redirect()
+    app_key = form.get("cloud_backup_app_key", "").strip() or get_setting("cloud_backup_app_key", "")
+    entered_recovery_key = form.get("cloud_backup_recovery_key", "").strip()
+    recovery_key = entered_recovery_key or get_setting("cloud_backup_recovery_key", "")
+    new_key = not recovery_key
+    if new_key:
+        recovery_key = generate_recovery_key()
+    key_id = form.get("cloud_backup_key_id", "").strip()
+    endpoint = form.get("cloud_backup_endpoint", "").strip()
+    bucket = form.get("cloud_backup_bucket", "").strip()
+    try:
+        if not endpoint or not bucket:
+            # Backblaze knows the region and, for a single-bucket key, the bucket.
+            found_region, found_bucket = cloud_backup.discover_b2(key_id, app_key)
+            endpoint = endpoint or found_region
+            bucket = bucket or found_bucket or ""
+            if not bucket:
+                raise cloud_backup.CloudBackupError(
+                    "This key can reach every bucket in your account. Create a key for one bucket only "
+                    "(safer), or type the bucket name under Advanced."
+                )
+        config = cloud_backup.validate_config(
+            region=endpoint,
+            bucket=bucket,
+            prefix=form.get("cloud_backup_prefix", "").strip() or CLOUD_BACKUP_DEFAULT_PREFIX,
+            key_id=key_id,
+            app_key=app_key,
+            recovery_key=recovery_key,
+        )
+        restic = make_restic(config)
+        if restic.exists():
+            if new_key:
+                raise cloud_backup.CloudBackupError(
+                    "This bucket folder already has backups. Enter their recovery key to connect to them, or choose a different folder name."
+                )
+            restic.snapshots()  # proves the recovery key opens these backups
+            message = f"Connected to the existing backups in {config.location_label}."
+        else:
+            restic.init()
+            message = f"Connected to Backblaze. Backups will be stored in {config.location_label}."
+    except cloud_backup.CloudBackupError as exc:
+        flash(str(exc), "error")
+        return _cloud_settings_redirect()
+
+    previous_key = get_setting("cloud_backup_recovery_key", "")
+    db = get_db()
+    values = {
+        "cloud_backup_region": config.region,
+        "cloud_backup_bucket": config.bucket,
+        "cloud_backup_prefix": config.prefix,
+        "cloud_backup_key_id": config.key_id,
+        "cloud_backup_app_key": config.app_key,
+        "cloud_backup_recovery_key": config.recovery_key,
+        "cloud_backup_interval_hours": interval,
+        "cloud_backup_retention_days": retention,
+    }
+    if not get_setting("cloud_backup_configured_at", ""):
+        values["cloud_backup_configured_at"] = utc_timestamp()
+    if config.recovery_key != previous_key:
+        # A key the admin typed in is one they already have; a generated one must be saved first.
+        values["cloud_backup_recovery_key_confirmed"] = "1" if entered_recovery_key else ""
+    for key, value in values.items():
+        db.execute("insert or replace into app_settings(key, value) values (?, ?)", (key, value))
+    db.commit()
+    flash(message, "success")
+    return _cloud_settings_redirect()
+
+
+@app.route("/settings/cloud-backup/confirm-key", methods=["POST"])
+@admin_required
+def settings_cloud_backup_confirm_key():
+    key = get_setting("cloud_backup_recovery_key", "")
+    typed = request.form.get("confirm_last4", "").strip().upper()
+    if not key or typed != key.replace("-", "")[-4:].upper():
+        flash("That doesn't match the last 4 characters of the recovery key. Check where you saved it.", "error")
+        return _cloud_settings_redirect()
+    set_setting("cloud_backup_recovery_key_confirmed", "1")
+    flash("Recovery key confirmed.", "success")
+    return _cloud_settings_redirect()
+
+
+@app.route("/settings/cloud-backup/reveal-key", methods=["POST"])
+@admin_required
+def settings_cloud_backup_reveal_key():
+    if not check_password_hash(g.user["password_hash"], request.form.get("current_password", "")):
+        flash("Password is incorrect.", "error")
+        return _cloud_settings_redirect()
+    return render_settings_page(revealed_recovery_key=get_setting("cloud_backup_recovery_key", ""))
+
+
+@app.route("/settings/cloud-backup/disconnect", methods=["POST"])
+@admin_required
+def settings_cloud_backup_disconnect():
+    """Stop cloud backups and forget the saved keys. Backups already in the bucket are not touched."""
+    if _cloud_job_lock.locked():
+        flash("Wait for the current backup to finish first.", "error")
+        return _cloud_settings_redirect()
+    db = get_db()
+    for key in (*CLOUD_BACKUP_CONFIG_KEYS, *CLOUD_BACKUP_STATE_KEYS, "cloud_backup_configured_at"):
+        db.execute("delete from app_settings where key = ?", (key,))
+    db.commit()
+    flash("Cloud backup turned off. Backups already in your bucket were not deleted.", "success")
+    return _cloud_settings_redirect()
+
+
+@app.route("/api/cloud-backup/run", methods=["POST"])
+@admin_required
+def api_cloud_backup_run():
+    if not cloud_backup_configured():
+        return jsonify({"error": "Cloud backup is not set up yet."}), 400
+    if not start_cloud_job("backup"):
+        return jsonify({"error": "A backup or check is already running."}), 409
+    return jsonify({"ok": True}), 202
+
+
+@app.route("/api/cloud-backup/verify", methods=["POST"])
+@admin_required
+def api_cloud_backup_verify():
+    if not cloud_backup_configured():
+        return jsonify({"error": "Cloud backup is not set up yet."}), 400
+    if not start_cloud_job("verify"):
+        return jsonify({"error": "A backup or check is already running."}), 409
+    return jsonify({"ok": True}), 202
+
+
+@app.route("/api/cloud-backup/status")
+@admin_required
+def api_cloud_backup_status():
+    return jsonify(cloud_backup_status())
+
+
+@app.route("/api/cloud-backup/snapshots")
+@admin_required
+def api_cloud_backup_snapshots():
+    try:
+        snapshots = make_restic(load_cloud_backup_config()).snapshots()
+    except cloud_backup.CloudBackupError as exc:
+        return jsonify({"error": str(exc)}), 502
+    return jsonify({
+        "snapshots": [
+            {"id": snap["id"], "short_id": snap["id"][:8], "time": snap.get("time", "")[:19].replace("T", " ") + " UTC"}
+            for snap in snapshots
+        ]
+    })
+
+
+def _find_cloud_snapshot(restic: cloud_backup.Restic, snapshot_id: str) -> dict:
+    for snap in restic.snapshots():
+        if snap.get("id") == snapshot_id:
+            return snap
+    raise cloud_backup.CloudBackupError("That backup no longer exists.")
+
+
+@app.route("/settings/cloud-backup/download/<snapshot_id>")
+@admin_required
+def settings_cloud_backup_download(snapshot_id: str):
+    """Download a cloud backup as an ordinary full-backup file (it can be restored with Upload And Restore)."""
+    work_dir = Path(tempfile.mkdtemp(dir=DATA_DIR, prefix="cloud-download-"))
+    try:
+        restic = make_restic(load_cloud_backup_config())
+        snapshot = _find_cloud_snapshot(restic, snapshot_id)
+        restored = restic.restore(snapshot, work_dir / "restore")
+        validate_backup_manifest(restored / "manifest.json")
+        (restored / "uploads").mkdir(exist_ok=True)
+        archive = write_backup_archive(restored, work_dir / "backup.tar.gz")
+    except (cloud_backup.CloudBackupError, ValueError, OSError) as exc:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        flash(f"Download failed: {exc}", "error")
+        return _cloud_settings_redirect()
+
+    @after_this_request
+    def cleanup(response):
+        shutil.rmtree(work_dir, ignore_errors=True)
+        return response
+
+    stamp = snapshot.get("time", "")[:19].replace("-", "").replace(":", "").replace("T", "-")
+    return send_file(archive, as_attachment=True, download_name=f"statement-cloud-backup-{stamp}.tar.gz",
+                     mimetype="application/gzip")
+
+
+@app.route("/settings/cloud-backup/restore", methods=["POST"])
+@admin_required
+def settings_cloud_backup_restore():
+    """Replace all current data with a cloud backup. A safety backup of the current data is made first."""
+    if request.form.get("confirm_text", "").strip() != "RESTORE":
+        flash("Type RESTORE to confirm. Nothing was changed.", "error")
+        return _cloud_settings_redirect()
+    snapshot_id = request.form.get("snapshot_id", "").strip()
+    work_dir = Path(tempfile.mkdtemp(dir=DATA_DIR, prefix="cloud-restore-"))
+    try:
+        restic = make_restic(load_cloud_backup_config())
+        snapshot = _find_cloud_snapshot(restic, snapshot_id)
+        restored = restic.restore(snapshot, work_dir / "restore")
+        validate_backup_manifest(restored / "manifest.json")
+        restored_db = restored / "firefly_statement.db"
+        if not restored_db.exists():
+            raise ValueError("The backup does not contain a database.")
+        validate_database_file(restored_db)
+        uploads = restored / "uploads"
+        uploads.mkdir(exist_ok=True)
+        previous_backup = activate_restore_candidate(restored_db, f"cloud-{snapshot_id[:8]}", uploads)
+    except (cloud_backup.CloudBackupError, ValueError) as exc:
+        flash(f"Restore failed, your current data was not changed: {exc}", "error")
+        return _cloud_settings_redirect()
+    except Exception as exc:
+        flash(f"Restore failed: {exc}", "error")
+        return _cloud_settings_redirect()
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+    session.clear()
+    flash(
+        f"Cloud backup from {snapshot.get('time', '')[:16].replace('T', ' ')} UTC restored. "
+        f"Your previous data was saved as '{previous_backup.name}'. Sign in again.",
+        "success",
+    )
+    return redirect(url_for("login_page"))
 
 
 @app.route("/reload", methods=["POST"])
@@ -7986,6 +8769,7 @@ if __name__ == "__main__":
     ensure_seeded()
     resequence_all_clients()
     start_backup_scheduler()
+    start_cloud_backup_scheduler()
     app.run(
         host=os.environ.get("HOST", "0.0.0.0"),
         port=int(os.environ.get("PORT", "5050")),
