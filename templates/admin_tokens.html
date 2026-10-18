@@ -231,7 +231,7 @@
                 data-action="{{ entry.action }}"
                 data-source="{{ entry.get('source') or 'api' }}"
                 data-actor="{{ (entry.get('actor_name') or entry.get('api_token_name') or 'legacy')|lower }}"
-                data-detail="{{ entry.detail|tojson }}">
+                data-detail="{{ entry.detail|tojson|forceescape }}">
               <td>{{ entry.id }}</td>
               <td class="actor-cell">
                 {% if entry.get('actor_type') == 'api_token' %}
