@@ -486,8 +486,17 @@ class Updater:
         return target
 
     # ── Install and roll back ──────────────────────────────────────────────
+    def compose_image_name(self, container: Container) -> str:
+        """The image name Docker Compose starts the app from (the updater's compose file may rename it)."""
+        try:
+            proc = self.compose(container, "config", "--format", "json", timeout=60)
+            name = json.loads(proc.stdout)["services"][container.service].get("image")
+        except (UpdateError, ValueError, KeyError, TypeError):
+            name = None
+        return name or container.image_name
+
     def start_image(self, container: Container, image_id: str) -> None:
-        self.host.run(["docker", "tag", image_id, container.image_name], timeout=60)
+        self.host.run(["docker", "tag", image_id, self.compose_image_name(container)], timeout=60)
         args = ["up", "-d", "--no-build", "--force-recreate", "--no-deps"]
         if self.compose_cmd() == ["docker", "compose"]:
             args += ["--pull", "never"]

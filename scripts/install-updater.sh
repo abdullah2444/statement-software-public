@@ -97,9 +97,11 @@ else
   EXTRA_COMPOSE="$WORKDIR/docker-compose.updater.yml"
   say "Adding the updater folder to the app's Docker Compose setup ($EXTRA_COMPOSE)"
   cat > "$EXTRA_COMPOSE" <<YAML
-# Added by install-updater.sh. Shares the updater's folder with the app.
+# Added by install-updater.sh. Shares the updater's folder with the app, and
+# names the installed version's image "current" (the updater sets which one).
 services:
   $SERVICE:
+    image: statement-software:current
     volumes:
       - $CHANNEL:/data/updater
 YAML

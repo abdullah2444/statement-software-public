@@ -45,6 +45,7 @@ class FakeHost(su.Host):
         self.state = "running"
         self.restarts = 0
         self.compose_env = {"SECRET_KEY": "s3cret", "PORT": "18451"}
+        self.compose_image = "statement-software:v5.0"
         self.container_env = dict(self.compose_env)
         self.releases = {}
         self.download_error = None
@@ -138,12 +139,13 @@ class FakeHost(su.Host):
 
     def _compose(self, args):
         if "config" in args:
-            return completed(args, out=json.dumps({"services": {"statement-software-v5": {"environment": self.compose_env}}}))
+            service = {"environment": self.compose_env, "image": self.compose_image}
+            return completed(args, out=json.dumps({"services": {"statement-software-v5": service}}))
         if "up" in args:
             self.compose_up_calls += 1
             if self.fail_compose_up_after is not None and self.compose_up_calls > self.fail_compose_up_after:
                 return completed(args, 1, err="port is already allocated")
-            self.running_image = self.tags["statement-software:v5.0"]
+            self.running_image = self.tags[self.compose_image]
             self.state = "running"
             self.restarts = 5 if self.images[self.running_image]["broken"] else 0
             image = self.images[self.running_image]
@@ -283,6 +285,20 @@ class UpdaterTests(unittest.TestCase):
         self.assertFalse((self.channel / "pause.json").exists(), "saving must be back on")
 
     # ── The four rehearsal cases ────────────────────────────────────────
+
+    def test_update_uses_image_name_from_compose(self):
+        # install-updater.sh renames the image to "current", so it no longer says v5.0 after an update.
+        self.host.compose_image = "statement-software:current"
+        self.assertEqual(self.update(), "installed")
+        self.assertEqual(self.host.version, "5.2.0")
+        self.assertEqual(self.host.tags["statement-software:current"], "img-5.2.0")
+
+    def test_rollback_uses_image_name_from_compose(self):
+        self.host.compose_image = "statement-software:current"
+        self.add_release("v5.2.0", broken=True)
+        self.assertEqual(self.update(), "rolled_back")
+        self.assertEqual(self.host.running_image, "img-old")
+        self.assertEqual(self.host.tags["statement-software:current"], "img-old")
 
     def test_successful_update(self):
         self.assertEqual(self.update(), "installed")
