@@ -285,7 +285,7 @@ curl -X POST http://localhost:18451/api/v1/quick-submits \
 - `POST /parse-image`
 - `POST /extract-text`
 
-These require OpenRouter to be configured in Settings.
+These require OpenRouter to be configured in Settings. An admin can turn each one off under Settings → AI Features; a turned-off helper returns `403`. `GET /settings` reports the current state in `ai_features`.
 
 ### Admin
 

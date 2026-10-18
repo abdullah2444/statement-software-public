@@ -571,7 +571,7 @@
             addImagePreview.style.display = 'block';
             addDropPlaceholder.style.display = 'none';
             addImageRemove.style.display = 'inline-flex';
-            addParseAI.style.display = 'inline-flex';
+            if (addParseAI) addParseAI.style.display = 'inline-flex';
           };
           reader.readAsDataURL(file);
         }
@@ -606,7 +606,7 @@
             addImagePreview.src = '';
             addDropPlaceholder.style.display = '';
             addImageRemove.style.display = 'none';
-            addParseAI.style.display = 'none';
+            if (addParseAI) addParseAI.style.display = 'none';
             addParseStatus.textContent = '';
           });
         }
@@ -1435,10 +1435,12 @@
                 <input type="file" name="image" accept="image/*" id="add-image-input" class="file-input-hidden">
                 <button type="button" class="button ghost image-remove-btn" id="add-image-remove" style="display:none;">Remove</button>
               </div>
+              {% if ai_parse_image_enabled %}
               <button type="button" class="button ghost parse-ai-btn" id="add-parse-ai" style="display:none;">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
                 Parse with AI
               </button>
+              {% endif %}
               <div class="parse-status" id="add-parse-status"></div>
             </div>
 
