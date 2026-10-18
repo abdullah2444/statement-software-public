@@ -7,6 +7,7 @@ import csv
 import io
 import json
 import os
+import math
 import re
 import secrets
 import shutil
@@ -259,6 +260,164 @@ def get_csrf_token() -> str:
     return token
 
 
+# -- Sessions ----------------------------------------------------------------
+
+def start_user_session(user) -> None:
+    """Log this browser in as user, tied to the user's current session version."""
+    session.clear()
+    session.permanent = True
+    session["user_id"] = user["id"]
+    session["username"] = user["username"]
+    session["role"] = user["role"]
+    session["sv"] = int(user["session_version"] or 0)
+    get_csrf_token()
+
+
+def session_matches_user(user) -> bool:
+    """False once the user's password was reset or changed after this session started."""
+    return int(session.get("sv", 0)) == int(user["session_version"] or 0)
+
+
+def end_other_sessions(db: sqlite3.Connection, user_id: int, keep_current: bool = False) -> None:
+    """Log the user out everywhere; optionally keep this browser logged in."""
+    db.execute("update users set session_version = session_version + 1 where id = ?", (user_id,))
+    if keep_current and session.get("user_id") == user_id:
+        row = db.execute("select session_version from users where id = ?", (user_id,)).fetchone()
+        session["sv"] = int(row["session_version"] if row else 0)
+
+
+# -- Login attempt limits ------------------------------------------------------
+
+LOGIN_FAILURE_LIMIT = 5          # wrong passwords per username from one address
+LOGIN_ADDRESS_LIMIT = 30         # wrong passwords from one address, any username
+LOGIN_LOCK_SECONDS = 15 * 60
+_login_failures: dict[tuple, list[float]] = {}
+_login_failures_lock = threading.Lock()
+
+
+def _client_ip_for_limits() -> str:
+    """The visitor's address. Behind the Cloudflare tunnel every request comes from this
+    machine, so only then is Cloudflare's header trusted; anyone can fake X-Forwarded-For."""
+    remote = request.remote_addr or ""
+    if remote in ("127.0.0.1", "::1") or remote.startswith(("172.", "10.", "192.168.")):
+        forwarded = request.headers.get("CF-Connecting-IP", "").strip()
+        if forwarded:
+            return forwarded[:64]
+    return remote[:64]
+
+
+def _recent_failures(key: tuple, now: float) -> list[float]:
+    times = [t for t in _login_failures.get(key, []) if now - t < LOGIN_LOCK_SECONDS]
+    if times:
+        _login_failures[key] = times
+    else:
+        _login_failures.pop(key, None)
+    return times
+
+
+def login_blocked(username: str) -> bool:
+    ip = _client_ip_for_limits()
+    now = time.time()
+    with _login_failures_lock:
+        return (
+            len(_recent_failures(("user", username.lower(), ip), now)) >= LOGIN_FAILURE_LIMIT
+            or len(_recent_failures(("ip", ip), now)) >= LOGIN_ADDRESS_LIMIT
+        )
+
+
+def record_login_failure(username: str) -> None:
+    ip = _client_ip_for_limits()
+    now = time.time()
+    with _login_failures_lock:
+        if len(_login_failures) > 10000:
+            for old_key in list(_login_failures):
+                _recent_failures(old_key, now)
+        for key in (("user", username.lower(), ip), ("ip", ip)):
+            _login_failures.setdefault(key, []).append(now)
+
+
+def clear_login_failures(username: str) -> None:
+    with _login_failures_lock:
+        _login_failures.pop(("user", username.lower(), _client_ip_for_limits()), None)
+
+
+LOGIN_BLOCKED_MESSAGE = "Too many wrong passwords. Wait 15 minutes and try again."
+
+
+# -- Money ---------------------------------------------------------------------
+
+MAX_AMOUNT = 1_000_000_000_000  # far above any real entry; stops typos and "Infinity"
+
+
+class InvalidAmount(ValueError):
+    """A typed or sent amount that can't be stored. Shown to the user, never a 500."""
+
+
+def money(value, *, allow_negative: bool = False, label: str = "Amount") -> float:
+    """A finite, sane amount from a form/API value. Rejects Infinity, NaN and absurd sizes."""
+    if isinstance(value, bool):
+        raise InvalidAmount(f"{label} must be a number.")
+    try:
+        number = float(str(value).strip().replace(",", "")) if not isinstance(value, (int, float)) else float(value)
+    except (TypeError, ValueError):
+        raise InvalidAmount(f"{label} must be a number.") from None
+    if not math.isfinite(number) or abs(number) > MAX_AMOUNT:
+        raise InvalidAmount(f"{label} is not a valid amount.")
+    if number < 0 and not allow_negative:
+        raise InvalidAmount(f"{label} can't be negative. Use the direction (IN/OUT) instead.")
+    return number
+
+
+@app.errorhandler(InvalidAmount)
+def handle_invalid_amount(exc):
+    if request.path.startswith("/api/") or _is_ajax_request():
+        return jsonify({"error": str(exc)}), 400
+    flash(str(exc), "error")
+    target = request.referrer if request.referrer and request.referrer.startswith(request.host_url) else url_for("index")
+    return redirect(target)
+
+
+# -- Spreadsheet exports -------------------------------------------------------
+
+# Text starting with these runs as a formula in Excel/Sheets ("=HYPERLINK(...)").
+_SHEET_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def csv_safe(value):
+    """User text for a CSV cell: a leading apostrophe stops spreadsheets running it as a formula."""
+    if isinstance(value, str) and value.startswith(_SHEET_FORMULA_START):
+        return "'" + value
+    return value
+
+
+def csv_unsafe(value: str) -> str:
+    """Undo csv_safe when a CSV this app exported is imported again."""
+    if value.startswith("'") and value[1:].startswith(_SHEET_FORMULA_START):
+        return value[1:]
+    return value
+
+
+def xlsx_text(cell):
+    """Keep a text cell as text; openpyxl would otherwise store "=..." as a formula."""
+    if isinstance(cell.value, str):
+        cell.data_type = "s"
+    return cell
+
+
+# -- Passwords -----------------------------------------------------------------
+
+PASSWORD_MIN_LENGTH = 8
+
+
+def password_problem(password: str, username: str = "") -> str | None:
+    """Why a new password is not acceptable, or None. Existing passwords keep working."""
+    if len(password or "") < PASSWORD_MIN_LENGTH:
+        return f"Password must be at least {PASSWORD_MIN_LENGTH} characters"
+    if username and password.lower() == username.lower():
+        return "Password can't be the same as the username"
+    return None
+
+
 def csrf_input() -> Markup:
     token = get_csrf_token()
     return Markup(f'<input type="hidden" name="csrf_token" value="{token}">')
@@ -342,9 +501,29 @@ def _remove_login_logo(db: sqlite3.Connection) -> None:
     db.execute("delete from app_settings where key = 'login_logo_file'")
 
 
+def safe_upload_name(name: str | None) -> str | None:
+    """The name if it is a plain image file directly inside UPLOAD_DIR, else None.
+
+    Stored and submitted names are never trusted as paths: no folders, no
+    "..", no absolute paths, no links, only image extensions.
+    """
+    if not isinstance(name, str):
+        return None
+    name = name.strip()
+    if not name or name != os.path.basename(name) or "\\" in name or name.startswith("."):
+        return None
+    if Path(name).suffix.lower() not in ALLOWED_IMAGE_EXT:
+        return None
+    path = UPLOAD_DIR / name
+    if path.is_symlink() or path.resolve().parent != UPLOAD_DIR.resolve():
+        return None
+    return name
+
+
 def _delete_image_file(image_path: str | None) -> None:
-    if image_path:
-        (UPLOAD_DIR / image_path).unlink(missing_ok=True)
+    name = safe_upload_name(image_path)
+    if name:
+        (UPLOAD_DIR / name).unlink(missing_ok=True)
 
 
 def _call_vision(image_data: str, mime: str, system_prompt: str, user_prompt: str = "Extract the transaction details from this image.") -> str:
@@ -1129,9 +1308,35 @@ def _audit_actor_from_web_session() -> dict:
     }
 
 
+# Any field named like a secret is hidden, not only the ones listed above
+# (github_backup_token was missing from the list and leaked into the log).
+_AUDIT_SECRET_SUFFIXES = ("_token", "_secret", "_password", "_key")
+_AUDIT_SECRET_WORDS = ("secret", "password", "passwd")
+# Values that look like credentials are hidden wherever they appear.
+_AUDIT_SECRET_VALUE_RE = re.compile(
+    r"(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-or-[A-Za-z0-9-]{20,}|sk-[A-Za-z0-9]{32,}|K0\d\d[A-Za-z0-9+/]{27})"
+)
+
+
+_AUDIT_NOT_SECRET = {"must_change_password", "password_change_required"}
+
+
+def _is_sensitive_audit_key(key: str) -> bool:
+    key = key.lower()
+    if key in _AUDIT_NOT_SECRET:
+        return False
+    return (
+        key in AUDIT_SENSITIVE_FIELDS
+        or key.endswith(_AUDIT_SECRET_SUFFIXES)
+        or any(word in key for word in _AUDIT_SECRET_WORDS)
+    )
+
+
 def _sanitize_audit_value(key: str, value):
-    if key.lower() in AUDIT_SENSITIVE_FIELDS:
+    if _is_sensitive_audit_key(key):
         return "[redacted]"
+    if isinstance(value, str):
+        return _AUDIT_SECRET_VALUE_RE.sub("[redacted]", value)
     if isinstance(value, dict):
         return {str(k): _sanitize_audit_value(str(k), v) for k, v in value.items()}
     if isinstance(value, list):
@@ -1232,7 +1437,7 @@ def _session_api_actor() -> dict | None:
         return None
     db = get_db()
     user = db.execute("select * from users where id = ?", (user_id,)).fetchone()
-    if not user or not user["is_active"]:
+    if not user or not user["is_active"] or not session_matches_user(user):
         session.clear()
         return None
     return {
@@ -1351,6 +1556,13 @@ def api_route(rule, access: str | None = None, auth_required: bool = True, **opt
             actor = _api_actor_from_request(route_requires_auth)
             if route_requires_auth and actor is None:
                 return _api_error("Invalid, missing, or expired API authentication.", 401)
+            if actor and actor["auth_type"] == "session" and request.method not in SAFE_HTTP_METHODS:
+                # A logged-in browser must prove the request came from this app's own pages.
+                # API tokens (Authorization / X-API-Key) don't use cookies, so they are not affected.
+                expected = session.get("_csrf_token")
+                provided = request.headers.get("X-CSRF-Token") or request.form.get("csrf_token")
+                if not expected or not provided or not secrets.compare_digest(expected, provided):
+                    return _api_error("CSRF token missing or invalid.", 403, code="csrf_failed")
             if actor and actor.get("must_change_password") and required_access not in {"self", "public"}:
                 return _api_error("Password change required before using this API.", 403, code="password_change_required")
             if not _api_actor_allows(actor, required_access):
@@ -1388,8 +1600,10 @@ def require_login():
         return redirect(url_for("login_page"))
     db = get_db()
     user = db.execute("select * from users where id = ?", (session["user_id"],)).fetchone()
-    if not user or not user["is_active"]:
+    if not user or not user["is_active"] or not session_matches_user(user):
         session.clear()
+        if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({"error": "Unauthorized"}), 401
         return redirect(url_for("login_page"))
     g.user = user
     # Force password change if needed (except on change-password and logout pages)
@@ -1429,6 +1643,33 @@ def hold_data_gate():
 def release_data_gate(_exc):
     if g.pop("holds_data_gate", False):
         DATA_GATE.release_shared()
+
+
+CONTENT_SECURITY_POLICY = "; ".join([
+    "default-src 'self'",
+    # Pages still use inline scripts and onclick handlers.
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'self'",
+])
+
+
+@app.after_request
+def add_security_headers(response):
+    headers = response.headers
+    headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+    headers.setdefault("X-Content-Type-Options", "nosniff")
+    headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    headers.setdefault("Referrer-Policy", "same-origin")
+    if request.endpoint not in ("static", "login_logo"):
+        # Financial pages must not be kept by shared caches or the back button after logout.
+        headers.setdefault("Cache-Control", "no-store")
+    return response
 
 
 @app.after_request
@@ -1731,6 +1972,10 @@ def init_db() -> None:
     if "last_used_user_agent" not in token_columns:
         db.execute("alter table api_tokens add column last_used_user_agent text")
     db.execute("update api_tokens set access_level = 'full_control' where access_level is null or access_level = ''")
+    user_columns = {row[1] for row in db.execute("pragma table_info(users)").fetchall()}
+    if "session_version" not in user_columns:
+        # Raised on password reset/change; sessions from before no longer count.
+        db.execute("alter table users add column session_version integer not null default 0")
     audit_columns = {row[1] for row in db.execute("pragma table_info(api_audit_log)").fetchall()}
     audit_migrations = {
         "actor_type": "alter table api_audit_log add column actor_type text not null default ''",
@@ -1749,10 +1994,44 @@ def init_db() -> None:
         if column not in audit_columns:
             db.execute(ddl)
     db.execute("update api_audit_log set source = 'api' where source is null or source = ''")
+    redact_existing_audit_log(db)
     backfill_exchange_links(db)
     db.commit()
     db.close()
     ensure_runtime_dirs()
+
+
+AUDIT_REDACTION_MARKER = "audit_log_redacted_v1"
+
+
+def redact_existing_audit_log(db: sqlite3.Connection) -> int:
+    """Once: hide secrets in activity rows written before the redaction rules covered them."""
+    if db.execute("select 1 from app_settings where key = ?", (AUDIT_REDACTION_MARKER,)).fetchone():
+        return 0
+    changed = 0
+    for row_id, detail, undo in db.execute("select id, detail, undo_data from api_audit_log").fetchall():
+        updates = {}
+        for column, raw in (("detail", detail), ("undo_data", undo)):
+            if not raw:
+                continue
+            try:
+                original = json.loads(raw)
+            except (TypeError, ValueError):
+                cleaned = _AUDIT_SECRET_VALUE_RE.sub("[redacted]", raw)
+                if cleaned != raw:
+                    updates[column] = cleaned
+                continue
+            sanitized = _sanitize_audit_value(column, original)
+            if sanitized != original:
+                updates[column] = json.dumps(sanitized)
+        if updates:
+            sets = ", ".join(f"{column} = ?" for column in updates)
+            db.execute(f"update api_audit_log set {sets} where id = ?", (*updates.values(), row_id))
+            changed += 1
+    db.execute("insert or replace into app_settings(key, value) values (?, ?)", (AUDIT_REDACTION_MARKER, utc_timestamp()))
+    if changed:
+        print(f"[audit] Hid secrets in {changed} existing activity records.")
+    return changed
 
 
 def seed_from_csv() -> bool:
@@ -1973,22 +2252,29 @@ def sync_exchange_group(db: sqlite3.Connection, transfer_group: str | None) -> N
     if not group_entries:
         return
 
-    usd_out = [row for row in group_entries if row["currency"] == "USD" and row["direction"] == "OUT"]
-    cny_in = [row for row in group_entries if row["currency"] == "CNY" and row["direction"] == "IN"]
-    usd_amount = sum(float(row["amount"]) for row in usd_out)
-    cny_amount = sum(float(row["amount"]) for row in cny_in)
-    exchange_rate = (cny_amount / usd_amount) if usd_amount > 0 and cny_amount > 0 else None
-
+    # An exchange belongs to one client. Group names can repeat across clients (older
+    # names were only second-precise, and people can type their own), so each client's
+    # rows are worked out on their own and never mix rates.
+    by_client: dict[int, list] = {}
     for row in group_entries:
-        db.execute(
-            "update statement_entries set exchange_rate = ?, linked_entry_id = null where id = ?",
-            (exchange_rate, row["id"]),
-        )
+        by_client.setdefault(row["client_id"], []).append(row)
+    for client_rows in by_client.values():
+        usd_out = [row for row in client_rows if row["currency"] == "USD" and row["direction"] == "OUT"]
+        cny_in = [row for row in client_rows if row["currency"] == "CNY" and row["direction"] == "IN"]
+        usd_amount = sum(float(row["amount"]) for row in usd_out)
+        cny_amount = sum(float(row["amount"]) for row in cny_in)
+        exchange_rate = (cny_amount / usd_amount) if usd_amount > 0 and cny_amount > 0 else None
 
-    if len(usd_out) == len(cny_in):
-        for usd_row, cny_row in zip(usd_out, cny_in):
-            db.execute("update statement_entries set linked_entry_id = ? where id = ?", (cny_row["id"], usd_row["id"]))
-            db.execute("update statement_entries set linked_entry_id = ? where id = ?", (usd_row["id"], cny_row["id"]))
+        for row in client_rows:
+            db.execute(
+                "update statement_entries set exchange_rate = ?, linked_entry_id = null where id = ?",
+                (exchange_rate, row["id"]),
+            )
+
+        if len(usd_out) == len(cny_in):
+            for usd_row, cny_row in zip(usd_out, cny_in):
+                db.execute("update statement_entries set linked_entry_id = ? where id = ?", (cny_row["id"], usd_row["id"]))
+                db.execute("update statement_entries set linked_entry_id = ? where id = ?", (usd_row["id"], cny_row["id"]))
 
 
 def backfill_exchange_links(db: sqlite3.Connection) -> None:
@@ -2591,7 +2877,7 @@ def import_client_csv_rows(client_id: int, rows: list[dict[str, str]]) -> None:
 
         if not entry_date or not description or currency not in {"USD", "CNY"} or direction not in {"IN", "OUT"}:
             raise ValueError("CSV rows must include valid date, description, currency, and direction values.")
-        amount = float(amount_raw)
+        amount = money(amount_raw)
         source_no = int(float(source_no_raw)) if source_no_raw else 0
         exchange_rate = float(exchange_rate_raw) if exchange_rate_raw else None
         if kind not in {"movement", "transfer"}:
@@ -2720,7 +3006,8 @@ def row_to_dict(row: sqlite3.Row) -> dict:
 
 
 def make_transfer_group() -> str:
-    return f"FX-{utc_now().strftime('%Y%m%d%H%M%S')}"
+    # The random part keeps two exchanges made in the same second apart.
+    return f"FX-{utc_now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
 
 
 def save_upload_image(file_storage) -> str | None:
@@ -3042,21 +3329,21 @@ def login_page():
 def login_action():
     username = request.form.get("username", "").strip()
     password = request.form.get("password", "")
+    if login_blocked(username):
+        flash(LOGIN_BLOCKED_MESSAGE, "error")
+        return render_template("login.html", branding=login_branding()), 429
     db = get_db()
     user = db.execute("select * from users where username = ?", (username,)).fetchone()
     if user and user["is_active"] and check_password_hash(user["password_hash"], password):
-        session.clear()
-        session.permanent = True
-        session["user_id"] = user["id"]
-        session["username"] = user["username"]
-        session["role"] = user["role"]
-        get_csrf_token()
+        clear_login_failures(username)
+        start_user_session(user)
         db.execute("update users set last_login = ? where id = ?",
                    (datetime.now(timezone.utc).isoformat(), user["id"]))
         db.commit()
         if user["must_change_password"]:
             return redirect(url_for("change_password"))
         return redirect(url_for("index"))
+    record_login_failure(username)
     flash("Invalid username or password", "error")
     return render_template("login.html", branding=login_branding())
 
@@ -3081,16 +3368,18 @@ def change_password():
         current = request.form.get("current_password", "")
         new_pw = request.form.get("new_password", "")
         confirm = request.form.get("confirm_password", "")
+        problem = password_problem(new_pw, g.user["username"])
         if not g.user["must_change_password"] and not check_password_hash(g.user["password_hash"], current):
             flash("Current password is incorrect", "error")
-        elif len(new_pw) < 6:
-            flash("Password must be at least 6 characters", "error")
+        elif problem:
+            flash(problem, "error")
         elif new_pw != confirm:
             flash("Passwords do not match", "error")
         else:
             db = get_db()
             db.execute("update users set password_hash = ?, must_change_password = 0 where id = ?",
                        (generate_password_hash(new_pw), g.user["id"]))
+            end_other_sessions(db, g.user["id"], keep_current=True)
             db.commit()
             flash("Password changed successfully", "success")
             return redirect(url_for("index"))
@@ -3135,8 +3424,9 @@ def admin_add_user():
     if not username or not password:
         flash("Username and password are required", "error")
         return redirect(url_for("admin_users"))
-    if len(password) < 6:
-        flash("Password must be at least 6 characters", "error")
+    problem = password_problem(password, username)
+    if problem:
+        flash(problem, "error")
         return redirect(url_for("admin_users"))
     if role not in ("admin", "user"):
         role = "user"
@@ -3191,15 +3481,18 @@ def admin_change_role(user_id):
 @admin_required
 def admin_reset_password(user_id):
     new_pw = request.form.get("new_password", "").strip()
-    if not new_pw or len(new_pw) < 6:
-        flash("Password must be at least 6 characters", "error")
-        return redirect(url_for("admin_users"))
     db = get_db()
     user = db.execute("select * from users where id = ?", (user_id,)).fetchone()
     if not user:
         abort(404)
+    problem = password_problem(new_pw, user["username"])
+    if problem:
+        flash(problem, "error")
+        return redirect(url_for("admin_users"))
     db.execute("update users set password_hash = ?, must_change_password = 1 where id = ?",
                (generate_password_hash(new_pw), user_id))
+    # Anyone still logged in as this user (for example on a lost phone) is logged out.
+    end_other_sessions(db, user_id, keep_current=user_id == g.user["id"])
     db.commit()
     flash(f"Password reset for '{user['username']}'. They must change it on next login.", "success")
     return redirect(url_for("admin_users"))
@@ -3450,7 +3743,7 @@ def add_entry(client_id: int):
     description = request.form["description"].strip()
     currency = request.form["currency"]
     direction = request.form["direction"]
-    amount = float(request.form["amount"])
+    amount = money(request.form["amount"])
     kind = request.form["kind"]
     category_hint = request.form["category_hint"]
     transfer_group = request.form.get("transfer_group", "").strip() or None
@@ -3468,9 +3761,10 @@ def add_entry(client_id: int):
         flash(str(exc), "error")
         return redirect(_return_url(client_id, "entry-new"))
     image_filename = save_upload_image(request.files.get("image"))
-    # If no new file but an existing image from quick submit
+    # No new file: reuse the Quick Submit's own image, looked up by its id (never a path from the form).
     if not image_filename:
-        image_filename = request.form.get("existing_image_path") or None
+        quick_submit = _get_quick_submit(request.form.get("quick_submit_id", type=int))
+        image_filename = safe_upload_name(quick_submit["image_path"]) if quick_submit else None
     db.execute(
         """
         insert into statement_entries (
@@ -3535,9 +3829,9 @@ def exchange_balance(client_id: int):
 
     exchange_date = request.form["exchange_date"]
     usd_amount_raw = request.form.get("usd_amount", "").strip()
-    usd_amount = float(usd_amount_raw) if usd_amount_raw else 0.0
+    usd_amount = money(usd_amount_raw, label="USD amount") if usd_amount_raw else 0.0
     cny_amount_raw = request.form.get("cny_amount", "").strip()
-    cny_amount = float(cny_amount_raw) if cny_amount_raw else 0.0
+    cny_amount = money(cny_amount_raw, label="CNY amount") if cny_amount_raw else 0.0
     submitted_rate_raw = request.form.get("exchange_rate", "").strip()
     submitted_rate = float(submitted_rate_raw) if submitted_rate_raw else None
     fee_enabled = request.form.get("apply_fee") == "1"
@@ -3690,7 +3984,7 @@ def save_entry(entry_id: int):
     before = row_to_dict(entry)
     new_entry_date = request.form["entry_date"]
     new_description = request.form["description"].strip()
-    new_amount = float(request.form["amount"])
+    new_amount = money(request.form["amount"])
     new_currency = request.form["currency"]
     new_direction = request.form["direction"]
     new_kind = request.form["kind"]
@@ -4030,7 +4324,7 @@ def _statement_xlsx_response(client: sqlite3.Row, rows: list[dict]):
 
     ws.merge_cells("A1:K1")
     ws["A1"] = f"{client['name']} Statement"
-    ws["A1"].font = header_font
+    xlsx_text(ws["A1"]).font = header_font
 
     headers = [
         "No.",
@@ -4061,7 +4355,7 @@ def _statement_xlsx_response(client: sqlite3.Row, rows: list[dict]):
         exchange_rate = row.get("exchange_rate")
 
         ws.cell(row=r, column=1, value=row["source_no"]).border = thin_border
-        ws.cell(row=r, column=2, value=row["description"]).border = thin_border
+        xlsx_text(ws.cell(row=r, column=2, value=row["description"])).border = thin_border
 
         date_cell = ws.cell(row=r, column=3)
         date_cell.border = thin_border
@@ -4179,7 +4473,7 @@ def _expense_xlsx_response(account: sqlite3.Row, currencies: list[str], rows: li
 
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4 + len(currencies) * 3)
     ws["A1"] = f"{account['name']} - Expense Report"
-    ws["A1"].font = header_font
+    xlsx_text(ws["A1"]).font = header_font
 
     headers = ["No.", "Date", "Description", "Category"]
     for currency in currencies:
@@ -4205,14 +4499,14 @@ def _expense_xlsx_response(account: sqlite3.Row, currencies: list[str], rows: li
             date_cell.number_format = date_fmt
         else:
             date_cell.value = row["entry_date"]
-        ws.cell(row=r, column=3, value=row["description"]).border = thin_border
+        xlsx_text(ws.cell(row=r, column=3, value=row["description"])).border = thin_border
 
         category_label = row["category"]
         for code, label in EXPENSE_CATEGORIES:
             if code == row["category"]:
                 category_label = label
                 break
-        ws.cell(row=r, column=4, value=category_label).border = thin_border
+        xlsx_text(ws.cell(row=r, column=4, value=category_label)).border = thin_border
 
         col_offset = 5
         for currency in currencies:
@@ -4334,13 +4628,13 @@ def export_statement(client_id: int):
             [
                 entry["entry_date"],
                 entry["source_no"],
-                entry["description"],
+                csv_safe(entry["description"]),
                 entry["currency"],
                 entry["direction"],
                 entry["amount"],
                 entry["kind"],
                 entry["category_hint"],
-                entry["transfer_group"],
+                csv_safe(entry["transfer_group"]),
                 entry["commission_source_entry_id"],
                 entry["profit_expense_entry_id"],
                 entry["profit_expense_account_id"],
@@ -4446,8 +4740,8 @@ def add_bank_balance():
     account_name = request.form.get("account_name", "").strip()
     if not account_name:
         return render_index("Account name is required."), 400
-    usd = float(request.form.get("usd_balance", 0) or 0)
-    cny = float(request.form.get("cny_balance", 0) or 0)
+    usd = money(request.form.get("usd_balance", 0) or 0, allow_negative=True, label="USD balance")
+    cny = money(request.form.get("cny_balance", 0) or 0, allow_negative=True, label="CNY balance")
     db = get_db()
     db.execute(
         "insert into bank_balances (account_name, usd_balance, cny_balance, updated_at) values (?, ?, ?, ?)",
@@ -4464,8 +4758,8 @@ def edit_bank_balance(balance_id: int):
     if row is None:
         abort(404)
     account_name = request.form.get("account_name", "").strip() or row["account_name"]
-    usd = float(request.form.get("usd_balance", 0) or 0)
-    cny = float(request.form.get("cny_balance", 0) or 0)
+    usd = money(request.form.get("usd_balance", 0) or 0, allow_negative=True, label="USD balance")
+    cny = money(request.form.get("cny_balance", 0) or 0, allow_negative=True, label="CNY balance")
     db.execute(
         "update bank_balances set account_name = ?, usd_balance = ?, cny_balance = ?, updated_at = ? where id = ?",
         (account_name, usd, cny, utc_timestamp(), balance_id),
@@ -4490,7 +4784,7 @@ def add_supplier():
     currency = request.form.get("currency", "CNY").strip().upper()
     if currency not in ("USD", "CNY"):
         currency = "CNY"
-    amount = float(request.form.get("amount_owed", 0) or 0)
+    amount = money(request.form.get("amount_owed", 0) or 0, allow_negative=True, label="Amount owed")
     notes = request.form.get("notes", "").strip()
     db = get_db()
     db.execute(
@@ -4511,7 +4805,7 @@ def edit_supplier(supplier_id: int):
     currency = request.form.get("currency", "CNY").strip().upper()
     if currency not in ("USD", "CNY"):
         currency = row["currency"]
-    amount = float(request.form.get("amount_owed", 0) or 0)
+    amount = money(request.form.get("amount_owed", 0) or 0, allow_negative=True, label="Amount owed")
     notes = request.form.get("notes", "").strip()
     db.execute(
         "update supplier_balances set supplier_name = ?, currency = ?, amount_owed = ?, notes = ?, updated_at = ? where id = ?",
@@ -4559,7 +4853,7 @@ def quick_submit_save():
         flash("Invalid image type", "error")
         return redirect(url_for("quick_submit_page"))
     amount_raw = request.form.get("amount", "").strip()
-    amount = float(amount_raw) if amount_raw else None
+    amount = money(amount_raw) if amount_raw else None
     db = get_db()
     db.execute(
         "insert into quick_submits (client_id, description, amount, image_path, status, created_at, created_by) values (?, ?, ?, ?, 'pending', ?, ?)",
@@ -4688,11 +4982,13 @@ def api_link_transfer():
 
     db = get_db()
     selected_entries = db.execute(
-        "select id, commission_source_entry_id from statement_entries where id in (?, ?)",
+        "select id, client_id, commission_source_entry_id from statement_entries where id in (?, ?)",
         (entry_id_1, entry_id_2),
     ).fetchall()
     if len(selected_entries) != 2:
         return jsonify({"error": "One or more entries no longer exist"}), 404
+    if len({row["client_id"] for row in selected_entries}) != 1:
+        return jsonify({"error": "Entries must belong to the same client"}), 409
     if any(row["commission_source_entry_id"] for row in selected_entries):
         return jsonify({"error": "Generated commission rows cannot be linked into an FX transfer."}), 409
     group = make_transfer_group()
@@ -6567,7 +6863,7 @@ def expense_add_entry(account_id):
     description = request.form["description"].strip()
     currency = request.form["currency"]
     direction = request.form.get("direction", "OUT")
-    amount = float(request.form["amount"])
+    amount = money(request.form["amount"])
     category = request.form.get("category", "general")
 
     db.execute(
@@ -6636,7 +6932,7 @@ def expense_save_entry(entry_id):
             request.form["description"].strip(),
             request.form["currency"],
             request.form.get("direction", "OUT"),
-            float(request.form["amount"]),
+            money(request.form["amount"]),
             request.form.get("category", "general"),
             image_path,
             entry_id,
@@ -6800,7 +7096,7 @@ def expense_template_new(account_id):
             request.form["description"].strip(),
             request.form.get("currency", "CNY"),
             request.form.get("direction", "OUT"),
-            float(request.form["amount"]),
+            money(request.form["amount"]),
             int(request.form.get("day_of_month", 1)),
             request.form.get("category", "general"),
             int(request.form.get("every_n_months", 1)),
@@ -6826,7 +7122,7 @@ def expense_template_edit(template_id):
             request.form["description"].strip(),
             request.form.get("currency", "CNY"),
             request.form.get("direction", "OUT"),
-            float(request.form["amount"]),
+            money(request.form["amount"]),
             int(request.form.get("day_of_month", 1)),
             request.form.get("category", "general"),
             int(request.form.get("every_n_months", 1)),
@@ -6879,11 +7175,11 @@ def expense_export_csv(account_id):
     for entry in entries:
         writer.writerow([
             entry["entry_date"],
-            entry["description"],
+            csv_safe(entry["description"]),
             entry["currency"],
             entry["direction"],
             entry["amount"],
-            entry["category"],
+            csv_safe(entry["category"]),
         ])
     response = make_response(output.getvalue())
     response.headers["Content-Type"] = "text/csv; charset=utf-8"
@@ -6957,7 +7253,7 @@ def expense_import_csv(account_id):
             category = "general"
 
         try:
-            amount = float(amount_raw)
+            amount = money(amount_raw)
         except ValueError:
             continue
 
@@ -7203,13 +7499,15 @@ def api_auth_login():
     password = data.get("password") or ""
     if not username or not password:
         return _api_error("username and password are required", 400)
+    if login_blocked(username):
+        return _api_error(LOGIN_BLOCKED_MESSAGE, 429)
     db = get_db()
     user = db.execute("select * from users where username = ?", (username,)).fetchone()
     if not user or not user["is_active"] or not check_password_hash(user["password_hash"], password):
+        record_login_failure(username)
         return _api_error("Invalid username or password", 401)
-    session.clear()
-    session.permanent = True
-    session["user_id"] = user["id"]
+    clear_login_failures(username)
+    start_user_session(user)
     db.execute("update users set last_login = ? where id = ?", (utc_timestamp(), user["id"]))
     db.commit()
     user = db.execute("select * from users where id = ?", (user["id"],)).fetchone()
@@ -7217,6 +7515,8 @@ def api_auth_login():
         "ok": True,
         "user": _api_user_payload(user),
         "must_change_password": bool(user["must_change_password"]),
+        # Send this back as the X-CSRF-Token header when changing data with the login cookie.
+        "csrf_token": get_csrf_token(),
     })
 
 
@@ -7243,8 +7543,9 @@ def api_auth_change_password():
     confirm = data.get("confirm_password") or new_pw
     if not user["must_change_password"] and not check_password_hash(user["password_hash"], current):
         return _api_error("Current password is incorrect", 400)
-    if len(new_pw) < 6:
-        return _api_error("Password must be at least 6 characters", 400)
+    problem = password_problem(new_pw, user["username"])
+    if problem:
+        return _api_error(problem, 400)
     if new_pw != confirm:
         return _api_error("Passwords do not match", 400)
     db = get_db()
@@ -7252,6 +7553,7 @@ def api_auth_change_password():
         "update users set password_hash = ?, must_change_password = 0 where id = ?",
         (generate_password_hash(new_pw), user["id"]),
     )
+    end_other_sessions(db, user["id"], keep_current=True)
     db.commit()
     _api_log("change_password", "user", user["id"], {"username": user["username"]})
     return jsonify({"ok": True})
@@ -7849,7 +8151,7 @@ def api_create_expense_template(account_id):
         (account_id, description, currency, direction, amount, day_of_month, category, every_n_months, is_active, last_generated, created_at)
         values (?, ?, ?, ?, ?, ?, ?, ?, 1, '', ?)""",
         (
-            account_id, description, currency, direction, float(data.get("amount", 0)),
+            account_id, description, currency, direction, money(data.get("amount", 0)),
             int(data.get("day_of_month", 1)), category, int(data.get("every_n_months", 1)),
             utc_timestamp(),
         ),
@@ -7886,7 +8188,7 @@ def api_update_expense_template(template_id):
             (data.get("description") or tpl["description"]).strip(),
             currency,
             direction,
-            float(data.get("amount", tpl["amount"])),
+            money(data.get("amount", tpl["amount"])),
             int(data.get("day_of_month", tpl["day_of_month"])),
             category,
             int(data.get("every_n_months", tpl["every_n_months"] if "every_n_months" in tpl.keys() else 1)),
@@ -7983,12 +8285,12 @@ def api_expense_import(account_id):
     valid_cats = [c[0] for c in EXPENSE_CATEGORIES]
     for row in rows:
         entry_date = (row.get("date") or row.get("entry_date") or "").strip()
-        description = (row.get("description") or "").strip()
+        description = csv_unsafe((row.get("description") or "").strip())
         amount_raw = row.get("amount")
         if not entry_date or not description or amount_raw in (None, ""):
             continue
         try:
-            amount = float(amount_raw)
+            amount = money(amount_raw)
         except (TypeError, ValueError):
             continue
         currency = (row.get("currency") or "CNY").strip().upper()
@@ -8028,8 +8330,11 @@ def api_create_user():
     password = data.get("password") or ""
     role = data.get("role") if data.get("role") in {"admin", "user"} else "user"
     must_change = 1 if parse_bool_flag(data.get("must_change_password", True)) else 0
-    if not username or len(password) < 6:
-        return _api_error("username and password with at least 6 characters are required", 400)
+    if not username:
+        return _api_error("username is required", 400)
+    problem = password_problem(password, username)
+    if problem:
+        return _api_error(problem, 400)
     db = get_db()
     existing = db.execute("select id from users where username = ?", (username,)).fetchone()
     if existing:
@@ -8071,16 +8376,18 @@ def api_update_user(user_id):
 def api_reset_user_password(user_id):
     data = _api_request_data()
     password = data.get("password") or ""
-    if len(password) < 6:
-        return _api_error("password must be at least 6 characters", 400)
     db = get_db()
     user = db.execute("select id, username from users where id = ?", (user_id,)).fetchone()
     if user is None:
         return _api_error("User not found", 404)
+    problem = password_problem(password, user["username"])
+    if problem:
+        return _api_error(problem, 400)
     db.execute(
         "update users set password_hash = ?, must_change_password = 1 where id = ?",
         (generate_password_hash(password), user_id),
     )
+    end_other_sessions(db, user_id, keep_current=user_id == session.get("user_id"))
     db.commit()
     _api_log("reset_user_password", "user", user_id, {"username": user["username"]})
     return jsonify({"ok": True, "user_id": user_id, "must_change_password": True})
@@ -8222,7 +8529,7 @@ def api_create_quick_submit():
     if not image_filename:
         return _api_error(f"Invalid image type. Allowed: {', '.join(ALLOWED_IMAGE_EXT)}", 400)
     amount_raw = (data.get("amount") or "").strip()
-    amount = float(amount_raw) if amount_raw else None
+    amount = money(amount_raw) if amount_raw else None
     actor = getattr(g, "api_actor", None)
     created_by = ""
     if actor:
@@ -8360,7 +8667,7 @@ def api_add_entry(client_id):
          amount, kind, category_hint, transfer_group, image_path)
         values (?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (client_id, data["entry_date"], data["description"].strip(),
-         currency, direction, float(data["amount"]), kind,
+         currency, direction, money(data["amount"]), kind,
          category_hint,
          data.get("transfer_group") or None, image_filename),
     )
@@ -8402,7 +8709,7 @@ def api_update_entry(entry_id):
     description = data.get("description", entry["description"]).strip()
     currency = data.get("currency", entry["currency"]).upper()
     direction = data.get("direction", entry["direction"]).upper()
-    amount = float(data.get("amount", entry["amount"]))
+    amount = money(data.get("amount", entry["amount"]))
     kind = data.get("kind", entry["kind"])
     category_hint = data.get("category_hint", entry["category_hint"])
     transfer_group = data.get("transfer_group", entry["transfer_group"]) or None
@@ -8594,7 +8901,7 @@ def api_add_bank_balance():
     db = get_db()
     db.execute(
         "insert into bank_balances (account_name, usd_balance, cny_balance, updated_at) values (?, ?, ?, ?)",
-        (account_name, float(data.get("usd_balance", 0)), float(data.get("cny_balance", 0)), utc_timestamp()),
+        (account_name, money(data.get("usd_balance", 0), allow_negative=True, label="USD balance"), money(data.get("cny_balance", 0), allow_negative=True, label="CNY balance"), utc_timestamp()),
     )
     db.commit()
     row = db.execute("select * from bank_balances order by id desc limit 1").fetchone()
@@ -8612,8 +8919,8 @@ def api_update_bank_balance(balance_id):
     before = dict(row)
     data = request.get_json(silent=True) or {}
     account_name = (data.get("account_name") or "").strip() or row["account_name"]
-    usd = float(data.get("usd_balance", row["usd_balance"]))
-    cny = float(data.get("cny_balance", row["cny_balance"]))
+    usd = money(data.get("usd_balance", row["usd_balance"]), allow_negative=True, label="USD balance")
+    cny = money(data.get("cny_balance", row["cny_balance"]), allow_negative=True, label="CNY balance")
     db.execute(
         "update bank_balances set account_name=?, usd_balance=?, cny_balance=?, updated_at=? where id=?",
         (account_name, usd, cny, utc_timestamp(), balance_id),
@@ -8651,7 +8958,7 @@ def api_add_supplier():
     db = get_db()
     db.execute(
         "insert into supplier_balances (supplier_name, currency, amount_owed, notes, updated_at) values (?, ?, ?, ?, ?)",
-        (supplier_name, currency, float(data.get("amount_owed", 0)),
+        (supplier_name, currency, money(data.get("amount_owed", 0), allow_negative=True, label="Amount owed"),
          (data.get("notes") or "").strip(), utc_timestamp()),
     )
     db.commit()
@@ -8673,7 +8980,7 @@ def api_update_supplier(supplier_id):
     currency = (data.get("currency") or row["currency"]).upper()
     if currency not in ("USD", "CNY"):
         currency = row["currency"]
-    amount = float(data.get("amount_owed", row["amount_owed"]))
+    amount = money(data.get("amount_owed", row["amount_owed"]), allow_negative=True, label="Amount owed")
     notes = data.get("notes", row["notes"]).strip() if data.get("notes") is not None else row["notes"]
     db.execute(
         "update supplier_balances set supplier_name=?, currency=?, amount_owed=?, notes=?, updated_at=? where id=?",
@@ -8728,7 +9035,7 @@ def api_add_expense_entry(account_id):
          amount, category, is_recurring, template_id, image_path, created_at)
         values (?, 0, ?, ?, ?, ?, ?, ?, 0, null, ?, ?)""",
         (account_id, data["entry_date"], data["description"].strip(),
-         currency, direction, float(data["amount"]), category, image_filename, utc_timestamp()),
+         currency, direction, money(data["amount"]), category, image_filename, utc_timestamp()),
     )
     db.commit()
     entry = db.execute("select * from expense_entries where account_id = ? order by id desc limit 1", (account_id,)).fetchone()
@@ -8776,7 +9083,7 @@ def api_update_expense_entry(entry_id):
             (data.get("description") or entry["description"]).strip(),
             currency,
             direction,
-            float(data.get("amount", entry["amount"])),
+            money(data.get("amount", entry["amount"])),
             category,
             image_path,
             entry_id,
@@ -8883,9 +9190,9 @@ def api_exchange(client_id):
         return jsonify({"error": "Client not found"}), 404
     data = request.get_json(silent=True) or {}
     exchange_date = data.get("exchange_date", china_today().isoformat())
-    usd_amount = float(data.get("usd_amount", 0))
-    cny_amount = float(data.get("cny_amount", 0))
-    exchange_rate = float(data["exchange_rate"]) if data.get("exchange_rate") else None
+    usd_amount = money(data.get("usd_amount", 0), label="USD amount")
+    cny_amount = money(data.get("cny_amount", 0), label="CNY amount")
+    exchange_rate = money(data["exchange_rate"], label="Exchange rate") if data.get("exchange_rate") else None
     note = (data.get("note") or "USD to RMB exchange").strip()
     if usd_amount <= 0:
         return jsonify({"error": "usd_amount must be positive"}), 400

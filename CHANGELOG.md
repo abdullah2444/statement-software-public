@@ -4,6 +4,32 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.0
+
+Security update. Nothing changes in how you use the app, except where noted.
+
+**Safer**
+- Passwords, keys and tokens are never shown in the activity log any more,
+  and ones already in the log are hidden when this version starts.
+- Resetting someone's password logs them out on every device. Changing your
+  own password logs you out everywhere except where you are.
+- After 5 wrong passwords in a row, logging in as that user from the same
+  place is paused for 15 minutes.
+- New passwords need at least 8 characters and can't be the username.
+  Existing passwords keep working.
+- Amounts like "Infinity" or absurdly large numbers are refused with a clear
+  message.
+- Exchanges made at the same moment for different clients always keep their
+  own rate.
+- Text that starts with = + - or @ is exported to Excel and CSV as plain text,
+  so a spreadsheet can't run it as a formula.
+- Fixed a way to delete files outside the receipts folder, and a way to run
+  script on the admin activity page.
+- Pages tell the browser not to cache financial data and not to be embedded
+  in other sites.
+
+API tokens work exactly as before.
+
 ## 5.1.2
 
 **Fixed (phones)**
