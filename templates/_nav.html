@@ -168,6 +168,7 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
         <button id="mobile-drawer-close" aria-label="Close menu">&times;</button>
       </div>
       <a href="{{ url_for('index') }}">Dashboard</a>
+      <a href="{{ url_for('quick_submit_page') }}">Quick Submit</a>
       <a href="{{ url_for('expense_list') }}">Expenses</a>
       {% set is_admin = (g.user.role == 'admin') if g.user else (session.get('role') == 'admin') %}
       {% if is_admin %}

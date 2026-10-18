@@ -851,6 +851,8 @@
       {%- if fx_summary.display_rate is not none -%}
         {%- set approx_value = (usd_value|float) * fx_summary.display_rate + (cny_value|float) -%}
         &#8776; {{ "+" if approx_value >= 0 else "-" }}&#165;{{ "{:,.2f}".format(approx_value|abs) }}
+      {%- else -%}
+        <span class="approx-missing" style="color:var(--muted);">&mdash;</span>
       {%- endif -%}
     {%- endmacro %}
     <main class="shell">
@@ -1011,7 +1013,7 @@
         </div>
         <div class="bank-body" id="bank-body">
           <div class="bank-table-wrap">
-            <table class="bank-table">
+            <table class="bank-table stack-table">
               <thead>
                 <tr>
                   <th>Account Name</th>
@@ -1024,11 +1026,11 @@
               <tbody>
                 {% for b in bank_balances %}
                 <tr id="bank-row-{{ b.id }}">
-                  <td class="bank-display-{{ b.id }}">{{ b.account_name }}</td>
-                  <td class="bank-display-{{ b.id }} bal-cell {% if b.usd_balance < 0 %}balance-negative{% elif b.usd_balance > 0 %}money-in{% endif %}">${{ "{:,.2f}".format(b.usd_balance) }}{{ usd_ref(b.usd_balance|abs) }}</td>
-                  <td class="bank-display-{{ b.id }} bal-cell {% if b.cny_balance < 0 %}balance-negative{% elif b.cny_balance > 0 %}money-in{% endif %}">¥{{ "{:,.2f}".format(b.cny_balance) }}</td>
-                  <td class="bank-display-{{ b.id }}" style="font-size:0.8rem;color:var(--muted);">{{ b.updated_at[:10] if b.updated_at else '' }}</td>
-                  <td class="bank-display-{{ b.id }}">
+                  <td class="bank-display-{{ b.id }} stack-title">{{ b.account_name }}</td>
+                  <td data-label="USD" class="bank-display-{{ b.id }} bal-cell {% if b.usd_balance < 0 %}balance-negative{% elif b.usd_balance > 0 %}money-in{% endif %}">${{ "{:,.2f}".format(b.usd_balance) }}{{ usd_ref(b.usd_balance|abs) }}</td>
+                  <td data-label="CNY" class="bank-display-{{ b.id }} bal-cell {% if b.cny_balance < 0 %}balance-negative{% elif b.cny_balance > 0 %}money-in{% endif %}">¥{{ "{:,.2f}".format(b.cny_balance) }}</td>
+                  <td data-label="Updated" class="bank-display-{{ b.id }}" style="font-size:0.8rem;color:var(--muted);">{{ b.updated_at[:10] if b.updated_at else '' }}</td>
+                  <td class="bank-display-{{ b.id }} stack-actions">
                     <div class="bank-actions">
                       <button type="button" class="btn-sm" onclick="toggleBankEdit({{ b.id }})">Edit</button>
                       <form method="post" action="{{ url_for('delete_bank_balance', balance_id=b.id) }}" style="margin:0" onsubmit="return confirm('Delete account {{ b.account_name }}?')">
@@ -1039,10 +1041,10 @@
                 </tr>
                 <tr class="bank-edit-row" id="bank-edit-{{ b.id }}" style="display:none;">
                   <form method="post" action="{{ url_for('edit_bank_balance', balance_id=b.id) }}">
-                    <td><input type="text" name="account_name" value="{{ b.account_name }}" required></td>
-                    <td><input type="number" name="usd_balance" value="{{ b.usd_balance }}" step="0.01"></td>
-                    <td><input type="number" name="cny_balance" value="{{ b.cny_balance }}" step="0.01"></td>
-                    <td colspan="2">
+                    <td class="stack-full" data-label="Account name"><input type="text" name="account_name" value="{{ b.account_name }}" required></td>
+                    <td data-label="USD balance"><input type="number" name="usd_balance" value="{{ b.usd_balance }}" step="0.01"></td>
+                    <td data-label="CNY balance"><input type="number" name="cny_balance" value="{{ b.cny_balance }}" step="0.01"></td>
+                    <td colspan="2" class="stack-actions">
                       <div class="bank-actions">
                         <button type="submit" class="btn-sm" style="background:var(--accent);color:white;border-color:var(--accent);">Save</button>
                         <button type="button" class="btn-sm" onclick="toggleBankEdit({{ b.id }})">Cancel</button>
@@ -1053,10 +1055,10 @@
                 {% endfor %}
                 <tr class="bank-add-row">
                   <form method="post" action="{{ url_for('add_bank_balance') }}">
-                    <td><input type="text" name="account_name" placeholder="Account name" required></td>
-                    <td><input type="number" name="usd_balance" value="0" step="0.01"></td>
-                    <td><input type="number" name="cny_balance" value="0" step="0.01"></td>
-                    <td colspan="2">
+                    <td class="stack-full" data-label="New account"><input type="text" name="account_name" placeholder="Account name" required></td>
+                    <td data-label="USD balance"><input type="number" name="usd_balance" value="0" step="0.01"></td>
+                    <td data-label="CNY balance"><input type="number" name="cny_balance" value="0" step="0.01"></td>
+                    <td colspan="2" class="stack-actions">
                       <button type="submit" class="button secondary" style="padding:6px 14px;font-size:0.82rem;">Add Account</button>
                     </td>
                   </form>
@@ -1100,7 +1102,7 @@
           <span class="toggle-icon">&#9654;</span>
         </div>
         <div class="supplier-body" id="supplier-body">
-          <table class="supplier-table">
+          <table class="supplier-table stack-table">
             <thead>
               <tr>
                 <th>Supplier Name</th>
@@ -1114,12 +1116,12 @@
             <tbody>
               {% for s in suppliers %}
               <tr id="supplier-row-{{ s.id }}">
-                <td class="sup-display-{{ s.id }}">{{ s.supplier_name }}</td>
-                <td class="sup-display-{{ s.id }}"><span class="client-badge">{{ s.currency }}</span></td>
-                <td class="sup-display-{{ s.id }} bal-cell {% if s.amount_owed > 0 %}balance-negative{% endif %}">{{ ("-$" if s.currency == "USD" and s.amount_owed > 0 else "$" if s.currency == "USD" else "-¥" if s.currency != "USD" and s.amount_owed > 0 else "¥") }}{{ "{:,.2f}".format(s.amount_owed) }}{% if s.currency == "USD" %}{% if s.amount_owed > 0 %}{{ usd_ref_negative(s.amount_owed|abs) }}{% else %}{{ usd_ref(0) }}{% endif %}{% endif %}</td>
-                <td class="sup-display-{{ s.id }}" style="font-size:0.82rem;color:var(--muted);">{{ s.notes }}</td>
-                <td class="sup-display-{{ s.id }}" style="font-size:0.8rem;color:var(--muted);">{{ s.updated_at[:10] if s.updated_at else '' }}</td>
-                <td class="sup-display-{{ s.id }}">
+                <td class="sup-display-{{ s.id }} stack-title">{{ s.supplier_name }}</td>
+                <td data-label="Currency" class="sup-display-{{ s.id }}"><span class="client-badge">{{ s.currency }}</span></td>
+                <td data-label="Amount owed" class="sup-display-{{ s.id }} bal-cell {% if s.amount_owed > 0 %}balance-negative{% endif %}">{{ ("-$" if s.currency == "USD" and s.amount_owed > 0 else "$" if s.currency == "USD" else "-¥" if s.currency != "USD" and s.amount_owed > 0 else "¥") }}{{ "{:,.2f}".format(s.amount_owed) }}{% if s.currency == "USD" %}{% if s.amount_owed > 0 %}{{ usd_ref_negative(s.amount_owed|abs) }}{% else %}{{ usd_ref(0) }}{% endif %}{% endif %}</td>
+                <td data-label="Notes" class="sup-display-{{ s.id }} stack-full" style="font-size:0.82rem;color:var(--muted);">{{ s.notes }}</td>
+                <td data-label="Updated" class="sup-display-{{ s.id }}" style="font-size:0.8rem;color:var(--muted);">{{ s.updated_at[:10] if s.updated_at else '' }}</td>
+                <td class="sup-display-{{ s.id }} stack-actions">
                   <div class="bank-actions">
                     <button type="button" class="btn-sm" onclick="toggleSupplierEdit({{ s.id }})">Edit</button>
                     <form method="post" action="{{ url_for('delete_supplier', supplier_id=s.id) }}" style="margin:0" onsubmit="return confirm('Delete supplier {{ s.supplier_name }}?')">
@@ -1130,16 +1132,16 @@
               </tr>
               <tr class="sup-edit-row" id="sup-edit-{{ s.id }}" style="display:none;">
                 <form method="post" action="{{ url_for('edit_supplier', supplier_id=s.id) }}">
-                  <td><input type="text" name="supplier_name" value="{{ s.supplier_name }}" required></td>
-                  <td>
+                  <td class="stack-full" data-label="Supplier name"><input type="text" name="supplier_name" value="{{ s.supplier_name }}" required></td>
+                  <td data-label="Currency">
                     <select name="currency">
                       <option value="CNY" {% if s.currency == 'CNY' %}selected{% endif %}>CNY</option>
                       <option value="USD" {% if s.currency == 'USD' %}selected{% endif %}>USD</option>
                     </select>
                   </td>
-                  <td><input type="number" name="amount_owed" value="{{ s.amount_owed }}" step="0.01"></td>
-                  <td><input type="text" name="notes" value="{{ s.notes }}" placeholder="Optional notes"></td>
-                  <td colspan="2">
+                  <td data-label="Amount owed"><input type="number" name="amount_owed" value="{{ s.amount_owed }}" step="0.01"></td>
+                  <td class="stack-full" data-label="Notes"><input type="text" name="notes" value="{{ s.notes }}" placeholder="Optional notes"></td>
+                  <td colspan="2" class="stack-actions">
                     <div class="bank-actions">
                       <button type="submit" class="btn-sm" style="background:var(--accent);color:white;border-color:var(--accent);">Save</button>
                       <button type="button" class="btn-sm" onclick="toggleSupplierEdit({{ s.id }})">Cancel</button>
@@ -1150,16 +1152,16 @@
               {% endfor %}
               <tr class="supplier-add-row">
                 <form method="post" action="{{ url_for('add_supplier') }}">
-                  <td><input type="text" name="supplier_name" placeholder="Supplier name" required></td>
-                  <td>
+                  <td class="stack-full" data-label="New supplier"><input type="text" name="supplier_name" placeholder="Supplier name" required></td>
+                  <td data-label="Currency">
                     <select name="currency">
                       <option value="CNY">CNY</option>
                       <option value="USD">USD</option>
                     </select>
                   </td>
-                  <td><input type="number" name="amount_owed" value="0" step="0.01"></td>
-                  <td><input type="text" name="notes" placeholder="Optional notes"></td>
-                  <td colspan="2">
+                  <td data-label="Amount owed"><input type="number" name="amount_owed" value="0" step="0.01"></td>
+                  <td class="stack-full" data-label="Notes"><input type="text" name="notes" placeholder="Optional notes"></td>
+                  <td colspan="2" class="stack-actions">
                     <button type="submit" class="button secondary" style="padding:6px 14px;font-size:0.82rem;">Add Supplier</button>
                   </td>
                 </form>
@@ -1182,7 +1184,7 @@
           <span class="toggle-icon">&#9654;</span>
         </div>
         <div class="supplier-body" id="expense-body">
-          <table class="supplier-table">
+          <table class="supplier-table stack-table">
             <thead>
               <tr>
                 <th>Account Name</th>
@@ -1195,14 +1197,14 @@
             <tbody>
               {% for acc in expense_accounts %}
               <tr>
-                <td style="font-weight:600;">{{ acc.name }}</td>
-                <td>{{ acc.entry_count }}</td>
-                <td>
+                <td class="stack-title" style="font-weight:600;">{{ acc.name }}</td>
+                <td data-label="Entries">{{ acc.entry_count }}</td>
+                <td data-label="Currencies">
                   {% for cur in acc.currencies %}
                   <span class="client-badge">{{ cur }}</span>
                   {% endfor %}
                 </td>
-                <td>
+                <td class="stack-full" data-label="Balance">
                   {% for cur, vals in acc.totals.items() %}
                   <span style="font-weight:600; font-variant-numeric:tabular-nums; {% if vals.balance < 0 %}color:var(--red);{% endif %}">
                     {{ '¥' if cur == 'CNY' else '$' if cur == 'USD' else 'E£' }}{{ "{:,.2f}".format(vals.balance) }}
@@ -1210,7 +1212,7 @@
                   {% if not loop.last %} &middot; {% endif %}
                   {% endfor %}
                 </td>
-                <td>
+                <td class="stack-actions">
                   <a href="{{ url_for('expense_account_view', account_id=acc.id) }}" class="btn-sm" style="text-decoration:none;">View</a>
                 </td>
               </tr>
