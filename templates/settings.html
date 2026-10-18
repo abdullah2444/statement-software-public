@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Settings - Firefly Statements</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=asset_version) }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css', v=asset_version) }}">
@@ -19,6 +19,13 @@
         justify-content: space-between;
         margin-bottom: 24px;
       }
+      .settings-sections { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
+      .settings-sections a {
+        padding: 8px 14px; border: 1px solid var(--line, #dce5e8); border-radius: 8px;
+        background: #fff; color: #103a46; font-size: 14px; font-weight: 600; text-decoration: none;
+      }
+      .settings-sections a:hover { background: #eef4f4; }
+      .settings-card[id] { scroll-margin-top: 16px; }
       .settings-header h1 {
         font-size: 24px;
         font-weight: 700;
@@ -288,6 +295,16 @@
         <a href="{{ url_for('index') }}" class="btn-back desktop-only">Back to Dashboard</a>
       </div>
 
+      <nav class="settings-sections" aria-label="Settings sections">
+        <a href="#software-updates">Updates</a>
+        <a href="#exchange-rate">Exchange rate</a>
+        <a href="#ai-settings">AI</a>
+        <a href="#login-screen">Login screen</a>
+        <a href="#backup-restore">Backup &amp; restore</a>
+        <a href="#cloud-backup">Cloud backup</a>
+        <a href="#github-backup">GitHub backup</a>
+      </nav>
+
       {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
       {% for cat, msg in messages %}
@@ -387,7 +404,7 @@
       </div>
 
       <form method="POST" action="{{ url_for('settings_save') }}" enctype="multipart/form-data">
-        <div class="settings-card">
+        <div class="settings-card" id="exchange-rate">
           <h2>Exchange Rate</h2>
           <p>Choose which rate to use for Approx Total (RMB) calculations on the dashboard.</p>
 
@@ -422,7 +439,7 @@
           </div>
         </div>
 
-        <div class="settings-card">
+        <div class="settings-card" id="ai-settings">
           <h2>
             OpenRouter AI
             {% if api_key_set %}
@@ -465,7 +482,7 @@
           </div>
         </div>
 
-        <div class="settings-card">
+        <div class="settings-card" id="ai-features">
           <h2>AI Features</h2>
           <p>Turn each AI feature on or off. When a feature is off, its button is hidden and the app refuses to run it, including through API tokens.</p>
           <input type="hidden" name="ai_features_form" value="1">
@@ -523,7 +540,7 @@
         </div>
       </form>
 
-      <div class="settings-card">
+      <div class="settings-card" id="backup-restore">
         <h2>Backup And Restore</h2>
         <p>Download a full backup with the database and uploaded images, upload a replacement, or restore an older backup. Every restore creates a full safety backup first.</p>
 

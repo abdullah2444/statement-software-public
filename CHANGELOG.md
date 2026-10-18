@@ -4,6 +4,17 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.2
+
+**Improved**
+- The top bar now shows your company name (from Settings > Login Screen) on
+  the left and highlights the page you're on. Quick Submit uses the same menu.
+- Shorter dashboard headline: "Client Statements" on one line.
+- Settings has buttons at the top to jump to each section.
+- You can pinch to zoom on phones again.
+- Keyboard users get a "Skip to content" link, a clear outline on whatever is
+  selected, and the phone menu closes with Escape.
+
 ## 5.2.1
 
 Runs the app the way it should run on a server. Nothing changes in how you use it.
