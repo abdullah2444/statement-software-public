@@ -359,6 +359,27 @@
           </div>
         </div>
 
+        <div class="settings-card">
+          <h2>AI Features</h2>
+          <p>Turn each AI feature on or off. When a feature is off, its button is hidden and the app refuses to run it, including through API tokens.</p>
+          <input type="hidden" name="ai_features_form" value="1">
+          {% for key, label, enabled in ai_features %}
+          <div class="settings-field">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+              <input type="checkbox" name="{{ key }}" value="1" {% if enabled %}checked{% endif %} style="width:auto;">
+              {{ label }}
+            </label>
+            <div class="field-hint">
+              {% if key == "ai_parse_image_enabled" %}
+                The "Parse with AI" button on a client page that fills in an entry from a receipt image.
+              {% elif key == "ai_extract_text_enabled" %}
+                Copies all the text out of an image. Only used by API tokens and outside tools; there is no button for it in the app.
+              {% endif %}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+
         <div class="settings-actions">
           <button type="submit" class="btn-save">Save Settings</button>
         </div>

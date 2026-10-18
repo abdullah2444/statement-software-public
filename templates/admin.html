@@ -99,7 +99,7 @@
       <div class="admin-card">
         <h2>Users ({{ users|length }})</h2>
         <div class="table-scroll-wrap">
-        <table class="users-table">
+        <table class="users-table stack-table">
           <thead>
             <tr>
               <th>Username</th>
@@ -112,20 +112,20 @@
           <tbody>
             {% for u in users %}
             <tr>
-              <td>
+              <td class="stack-title">
                 {{ u.username }}
                 {% if u.id == g.user.id %}<span class="you-badge">(you)</span>{% endif %}
               </td>
-              <td><span class="badge badge-{{ u.role }}">{{ u.role }}</span></td>
-              <td>
+              <td data-label="Role"><span class="badge badge-{{ u.role }}">{{ u.role }}</span></td>
+              <td data-label="Status">
                 {% if u.is_active %}
                 <span class="badge badge-active">Active</span>
                 {% else %}
                 <span class="badge badge-inactive">Inactive</span>
                 {% endif %}
               </td>
-              <td>{{ u.last_login[:16] if u.last_login else 'Never' }}</td>
-              <td>
+              <td data-label="Last login">{{ u.last_login[:16] if u.last_login else 'Never' }}</td>
+              <td class="stack-actions">
                 {% if u.id != g.user.id %}
                 <div class="action-group">
                   <form method="POST" action="{{ url_for('admin_toggle_user', user_id=u.id) }}">

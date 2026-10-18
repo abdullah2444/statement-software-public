@@ -129,7 +129,7 @@
         <h2>Tokens ({{ tokens|length }})</h2>
         {% if tokens %}
         <div class="table-scroll-wrap">
-        <table class="tokens-table">
+        <table class="tokens-table stack-table">
           <thead>
             <tr>
               <th>Name</th>
@@ -145,20 +145,20 @@
           <tbody>
             {% for t in tokens %}
             <tr>
-              <td>{{ t.name }}</td>
-              <td><span class="mono">{{ t.token_prefix }}</span></td>
-              <td>{{ (t.access_level or 'full_control').replace('_', ' ').title() }}</td>
-              <td>{{ t.client_name or 'All' }}</td>
-              <td>
+              <td class="stack-title">{{ t.name }}</td>
+              <td data-label="Prefix"><span class="mono">{{ t.token_prefix }}</span></td>
+              <td data-label="Access">{{ (t.access_level or 'full_control').replace('_', ' ').title() }}</td>
+              <td data-label="Client">{{ t.client_name or 'All' }}</td>
+              <td data-label="Status">
                 {% if t.is_active %}
                 <span class="badge badge-active">Active</span>
                 {% else %}
                 <span class="badge badge-revoked">Revoked</span>
                 {% endif %}
               </td>
-              <td>{{ t.created_at[:16] if t.created_at else '' }}</td>
-              <td>{{ t.last_used_at[:16] if t.last_used_at else 'Never' }}</td>
-              <td>
+              <td data-label="Created">{{ t.created_at[:16] if t.created_at else '' }}</td>
+              <td data-label="Last used">{{ t.last_used_at[:16] if t.last_used_at else 'Never' }}</td>
+              <td class="stack-actions">
                 <div class="action-group">
                   {% if t.is_active %}
                   <form method="POST" action="{{ url_for('admin_revoke_token', token_id=t.id) }}">

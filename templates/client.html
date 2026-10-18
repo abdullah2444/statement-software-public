@@ -138,6 +138,43 @@
           document.querySelectorAll('.edit-row.is-open').forEach((row) => row.classList.remove('is-open'));
           document.querySelectorAll('.display-row.is-editing').forEach((row) => row.classList.remove('is-editing'));
         };
+        // On phones the ledger table is hidden and entries show as cards, so the inline
+        // editor rows would open out of sight. Their form is shown in a pop-up sheet instead.
+        const mobileQuery = window.matchMedia('(max-width: 768px)');
+        const mobileSheet = document.querySelector('[data-mobile-edit-sheet]');
+        const mobileSheetBody = mobileSheet?.querySelector('[data-mobile-edit-body]');
+        const mobileSheetTitle = mobileSheet?.querySelector('[data-mobile-edit-title]');
+        let mobileSheetSource = null;
+        const closeMobileSheet = () => {
+          if (!mobileSheet || !mobileSheetSource) return;
+          mobileSheetSource.cell.appendChild(mobileSheetSource.form);
+          mobileSheetSource = null;
+          mobileSheet.hidden = true;
+          document.body.classList.remove('modal-open');
+        };
+        const openMobileSheet = (editRow, title) => {
+          if (!mobileSheet || !mobileQuery.matches) return;
+          closeMobileSheet();
+          const cell = editRow.querySelector('td');
+          const form = cell?.querySelector('form');
+          if (!form) return;
+          mobileSheetSource = { cell, form };
+          mobileSheetTitle.textContent = title;
+          mobileSheetBody.appendChild(form);
+          mobileSheet.hidden = false;
+          document.body.classList.add('modal-open');
+        };
+        const dismissMobileSheet = () => {
+          closeMobileSheet();
+          resetInlineRows();
+        };
+        mobileSheet?.querySelector('[data-mobile-edit-close]')?.addEventListener('click', dismissMobileSheet);
+        mobileSheet?.addEventListener('click', (event) => {
+          if (event.target === mobileSheet) dismissMobileSheet();
+        });
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape' && mobileSheetSource) dismissMobileSheet();
+        });
         const openEditor = (entryId) => {
           resetInlineRows();
           const displayRow = document.querySelector(`#entry-${entryId}`);
@@ -166,7 +203,11 @@
           displayRow.insertAdjacentElement('afterend', sharedEditor);
           sharedEditor.classList.add('is-open');
           displayRow.classList.add('is-editing');
-          sharedEditor.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          if (mobileQuery.matches) {
+            openMobileSheet(sharedEditor, `Edit entry #${displayRow.dataset.sourceNo ?? ''}`);
+          } else {
+            sharedEditor.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          }
         };
         const openCommission = (entryId) => {
           const displayRow = document.querySelector(`#entry-${entryId}`);
@@ -183,7 +224,11 @@
           displayRow.insertAdjacentElement('afterend', sharedCommissionRow);
           sharedCommissionRow.classList.add('is-open');
           displayRow.classList.add('is-editing');
-          sharedCommissionRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          if (mobileQuery.matches) {
+            openMobileSheet(sharedCommissionRow, `Commission for #${displayRow.dataset.sourceNo ?? ''}`);
+          } else {
+            sharedCommissionRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          }
         };
         document.querySelectorAll('[data-edit-open]').forEach((button) => {
           button.addEventListener('click', (event) => {
@@ -201,6 +246,7 @@
         document.querySelectorAll('[data-edit-cancel]').forEach((button) => {
           button.addEventListener('click', (event) => {
             event.preventDefault();
+            if (mobileSheetSource) { dismissMobileSheet(); return; }
             const editRow = button.closest('.edit-row');
             const displayRow = editRow ? editRow.previousElementSibling : null;
             if (editRow) editRow.classList.remove('is-open');
@@ -213,6 +259,7 @@
         document.querySelectorAll('[data-commission-cancel]').forEach((button) => {
           button.addEventListener('click', (event) => {
             event.preventDefault();
+            if (mobileSheetSource) { dismissMobileSheet(); return; }
             const editRow = button.closest('.edit-row');
             const displayRow = editRow ? editRow.previousElementSibling : null;
             if (editRow) editRow.classList.remove('is-open');
@@ -229,7 +276,8 @@
             const formData = new FormData(sharedForm);
             const entryId = formData.get('entry_id');
             const displayRow = document.querySelector('#entry-' + entryId);
-            if (!displayRow) { sharedForm.submit(); return; }
+            // The quick in-place update only refreshes the desktop table, so phones reload the page
+            if (!displayRow || mobileSheetSource) { sharedForm.submit(); return; }
             const isCommissionMutation =
               displayRow.dataset.categoryHint === 'commission' ||
               formData.get('category_hint') === 'commission' ||
@@ -423,6 +471,14 @@
           exchangeDropdown?.classList.remove('is-open');
           exchangeToggle?.setAttribute('aria-expanded', 'false');
         });
+        // On phones an open dropdown draws a dimmed backdrop (its ::before), so a tap there lands on the dropdown itself
+        document.querySelectorAll('.history-dropdown').forEach((dropdown) => {
+          dropdown.addEventListener('click', (event) => {
+            if (event.target !== dropdown) return;
+            dropdown.classList.remove('is-open');
+            dropdown.querySelector('[aria-expanded="true"]')?.setAttribute('aria-expanded', 'false');
+          });
+        });
 
         const openAddEntryModal = () => {
           if (!addEntryModal) return;
@@ -571,7 +627,7 @@
             addImagePreview.style.display = 'block';
             addDropPlaceholder.style.display = 'none';
             addImageRemove.style.display = 'inline-flex';
-            addParseAI.style.display = 'inline-flex';
+            if (addParseAI) addParseAI.style.display = 'inline-flex';
           };
           reader.readAsDataURL(file);
         }
@@ -606,7 +662,7 @@
             addImagePreview.src = '';
             addDropPlaceholder.style.display = '';
             addImageRemove.style.display = 'none';
-            addParseAI.style.display = 'none';
+            if (addParseAI) addParseAI.style.display = 'none';
             addParseStatus.textContent = '';
           });
         }
@@ -1407,6 +1463,16 @@
         </div>
       </section>
 
+      <div class="entry-modal mobile-edit-sheet" data-mobile-edit-sheet hidden>
+        <div class="entry-modal-panel" role="dialog" aria-modal="true" aria-labelledby="mobile-edit-title">
+          <div class="entry-modal-head">
+            <h2 id="mobile-edit-title" data-mobile-edit-title>Edit entry</h2>
+            <button class="entry-modal-close" type="button" data-mobile-edit-close aria-label="Close">&times;</button>
+          </div>
+          <div data-mobile-edit-body></div>
+        </div>
+      </div>
+
       <div class="entry-modal" data-add-entry-modal hidden>
         <div class="entry-modal-panel" role="dialog" aria-modal="true" aria-labelledby="add-entry-title">
           <div class="entry-modal-head">
@@ -1435,10 +1501,12 @@
                 <input type="file" name="image" accept="image/*" id="add-image-input" class="file-input-hidden">
                 <button type="button" class="button ghost image-remove-btn" id="add-image-remove" style="display:none;">Remove</button>
               </div>
+              {% if ai_parse_image_enabled %}
               <button type="button" class="button ghost parse-ai-btn" id="add-parse-ai" style="display:none;">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
                 Parse with AI
               </button>
+              {% endif %}
               <div class="parse-status" id="add-parse-status"></div>
             </div>
 

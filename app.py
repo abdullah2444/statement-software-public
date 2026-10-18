@@ -289,6 +289,21 @@ def get_openrouter_model() -> str:
     return get_setting("openrouter_model", DEFAULT_OPENROUTER_MODEL)
 
 
+AI_FEATURES = {
+    "ai_parse_image_enabled": "Read receipts with AI",
+    "ai_extract_text_enabled": "Copy text from images with AI",
+}
+AI_FEATURE_OFF_MESSAGE = "{label} is turned off. An admin can turn it back on in Settings."
+
+
+def ai_feature_enabled(key: str) -> bool:
+    return get_setting(key, "1") != "0"
+
+
+def ai_feature_off_message(key: str) -> str:
+    return AI_FEATURE_OFF_MESSAGE.format(label=AI_FEATURES[key])
+
+
 def _delete_image_file(image_path: str | None) -> None:
     if image_path:
         (UPLOAD_DIR / image_path).unlink(missing_ok=True)
@@ -3308,6 +3323,7 @@ def client_statement(client_id: int):
     return render_template(
         "client.html",
         client=client,
+        ai_parse_image_enabled=ai_feature_enabled("ai_parse_image_enabled"),
         rows=rows,
         current_usd_balance=current_usd_balance,
         current_cny_balance=current_cny_balance,
@@ -4568,6 +4584,8 @@ EXTRACT_TEXT_PROMPT = (
 @app.route("/api/parse-image", methods=["POST"])
 def parse_image_api():
     """Parse an uploaded image using OpenRouter to extract transaction details."""
+    if not ai_feature_enabled("ai_parse_image_enabled"):
+        return jsonify({"error": ai_feature_off_message("ai_parse_image_enabled")}), 403
     try:
         image_data, mime = _resolve_image_upload(file=request.files.get("image"), image_url=request.form.get("image_url"))
         content = _call_vision(image_data, mime, PARSE_IMAGE_PROMPT)
@@ -4584,6 +4602,8 @@ def parse_image_api():
 
 @app.route("/api/extract-text", methods=["POST"])
 def api_extract_text():
+    if not ai_feature_enabled("ai_extract_text_enabled"):
+        return jsonify({"error": ai_feature_off_message("ai_extract_text_enabled")}), 403
     try:
         image_data, mime = _resolve_image_upload(
             file=request.files.get("image"),
@@ -4818,6 +4838,7 @@ def render_settings_page(revealed_recovery_key: str = ""):
         current_model=current_model,
         models=models,
         model_fetch_status=_openrouter_models_status(),
+        ai_features=[(key, label, ai_feature_enabled(key)) for key, label in AI_FEATURES.items()],
         current_db_info=database_file_info(DB_PATH),
         db_backups=list_database_backups(),
         db_path_display=str(DB_PATH),
@@ -4863,6 +4884,11 @@ def settings_save():
         db.execute("insert or replace into app_settings(key, value) values (?, ?)", ("openrouter_model", model))
     if fx_source in ("live", "average"):
         db.execute("insert or replace into app_settings(key, value) values (?, ?)", ("fx_rate_source", fx_source))
+    # Unticked checkboxes are not sent, so only touch the switches when the form shows them.
+    if request.form.get("ai_features_form") == "1":
+        for key in AI_FEATURES:
+            value = "1" if request.form.get(key) == "1" else "0"
+            db.execute("insert or replace into app_settings(key, value) values (?, ?)", (key, value))
     db.commit()
     flash("Settings saved", "success")
     return redirect(url_for("settings_page"))
@@ -7106,6 +7132,7 @@ def api_v1_settings():
         "fx_live_rate_updated_at": get_setting("fx_live_rate_updated_at", ""),
         "openrouter_configured": bool(raw_key),
         "openrouter_model": get_openrouter_model(),
+        "ai_features": {key: ai_feature_enabled(key) for key in AI_FEATURES},
         "upload_limits": {"max_upload_mb": MAX_UPLOAD_MB, "allowed_image_ext": sorted(ALLOWED_IMAGE_EXT)},
     })
 
@@ -7126,6 +7153,8 @@ def api_v1_fx_refresh():
 
 @api_route("/api/v1/parse-image", methods=["POST"], endpoint="api_v1_parse_image", access="read")
 def api_v1_parse_image():
+    if not ai_feature_enabled("ai_parse_image_enabled"):
+        return _api_error(ai_feature_off_message("ai_parse_image_enabled"), 403)
     try:
         image_data, mime = _resolve_image_upload(file=request.files.get("image"), image_url=request.form.get("image_url"))
         content = _call_vision(image_data, mime, PARSE_IMAGE_PROMPT)
@@ -7141,6 +7170,8 @@ def api_v1_parse_image():
 
 @api_route("/api/v1/extract-text", methods=["POST"], endpoint="api_v1_extract_text", access="read")
 def api_v1_extract_text():
+    if not ai_feature_enabled("ai_extract_text_enabled"):
+        return _api_error(ai_feature_off_message("ai_extract_text_enabled"), 403)
     try:
         image_data, mime = _resolve_image_upload(
             file=request.files.get("image"),

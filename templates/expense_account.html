@@ -349,7 +349,7 @@
         <!-- Entry table -->
         <div class="card" id="table-top">
           <div class="table-wrap">
-            <table class="expense-table">
+            <table class="expense-table stack-table">
               <thead>
                 <tr>
                   <th class="col-seq">#</th>
@@ -381,8 +381,8 @@
                   data-linked-statement-source-no="{{ row.linked_statement_source_no or '' }}"
                   data-edit-open="{{ row.id }}">
                   <td class="no">{{ row.seq_no }}</td>
-                  <td>{{ row.entry_date }}</td>
-                  <td>
+                  <td class="exp-date">{{ row.entry_date }}</td>
+                  <td class="exp-desc">
                     {{ row.description }}
                     {% if row.is_recurring %}<span class="recurring-badge">Recurring</span>{% endif %}
                     {% if row.linked_statement_entry_id %}
@@ -396,7 +396,7 @@
                     </small>
                     {% endif %}
                   </td>
-                  <td>
+                  <td class="exp-cat">
                     {% set ns = namespace(cat_label=row.category) %}
                     {% for code, label in expense_categories %}
                       {% if code == row.category %}{% set ns.cat_label = label %}{% endif %}
@@ -404,16 +404,17 @@
                     <span class="cat-badge">{{ ns.cat_label }}</span>
                   </td>
                   {% for cur in currencies %}
-                    <td class="amt money-in">{% if row.currency == cur and row.direction == 'IN' %}{{ currency_symbol(cur) }}{{ "{:,.2f}".format(row.amount) }}{% endif %}</td>
-                    <td class="amt money-out">{% if row.currency == cur and row.direction == 'OUT' %}{{ currency_symbol(cur) }}{{ "{:,.2f}".format(row.amount) }}{% endif %}</td>
-                    <td class="bal {% if row.running_balances.get(cur, 0) < -0.005 %}negative{% elif row.running_balances.get(cur, 0) > 0.005 %}positive{% else %}zero{% endif %}">
+                    <td class="amt money-in" data-label="{{ cur }} In">{% if row.currency == cur and row.direction == 'IN' %}{{ currency_symbol(cur) }}{{ "{:,.2f}".format(row.amount) }}{% endif %}</td>
+                    <td class="amt money-out" data-label="{{ cur }} Out">{% if row.currency == cur and row.direction == 'OUT' %}{{ currency_symbol(cur) }}{{ "{:,.2f}".format(row.amount) }}{% endif %}</td>
+                    <td data-label="{{ cur }} Balance" class="bal {% if row.running_balances.get(cur, 0) < -0.005 %}negative{% elif row.running_balances.get(cur, 0) > 0.005 %}positive{% else %}zero{% endif %}">
                       {{ currency_symbol(cur) }}{{ "{:,.2f}".format(row.running_balances.get(cur, 0)) }}
                     </td>
                   {% endfor %}
-                  <td>
+                  <td class="stack-actions">
                     {% if row.linked_statement_entry_id %}
                     <span class="readonly-entry">Edit in statement</span>
                     {% else %}
+                    <button type="button" class="btn mobile-edit-btn" data-mobile-edit="{{ row.id }}">Edit</button>
                     <form method="post" action="{{ url_for('expense_delete_entry', entry_id=row.id) }}" style="display:inline;"
                       onsubmit="event.stopPropagation(); return confirm('Delete this entry?')">
                       <button type="submit" style="background:none; border:none; color:#dc2626; cursor:pointer; font-size:0.8rem;" onclick="event.stopPropagation();">Del</button>
@@ -748,6 +749,14 @@
             if (e.target.closest('form') || e.target.closest('button') || e.target.closest('a')) return;
             e.preventDefault();
             openEditor(el.dataset.editOpen);
+          });
+        });
+
+        // Phones have no hover hint that rows are tappable, so they get an explicit Edit button
+        document.querySelectorAll('[data-mobile-edit]').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            openEditor(btn.dataset.mobileEdit);
           });
         });
 
