@@ -115,7 +115,7 @@ API token access levels are simple: `full_control`, `read_only`, and `client_por
 
 ## Encrypted Cloud Backups (Backblaze B2)
 
-Open **Settings → Cloud Backup (Backblaze B2)**. The card walks you through creating a private bucket and an application key, then you paste them in and click **Save & Connect**. Backups run every 30 minutes by default and are kept for 7 days.
+Open **Settings → Cloud Backup (Backblaze B2)**. The card walks you through creating a private bucket and an application key for that bucket. Paste the Key ID and Application Key and click **Save & Connect**; the app finds the bucket and region by itself. Backups run every 30 minutes by default and are kept for 7 days.
 
 - Backups are made with [restic](https://restic.net). They are encrypted on this server before upload and only upload what changed, so 7 days of backups take about as much space as one or two copies.
 - The app shows a **recovery key** once. Save it somewhere that is not this server. You need it to open your backups if the server is lost, and nobody can recover it for you.

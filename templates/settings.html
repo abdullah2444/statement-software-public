@@ -166,6 +166,8 @@
       .cloud-box-help li { margin-bottom: 6px; }
       .cloud-box-key { background: #fffbeb; border-color: #f59e0b; color: #78350f; }
       .cloud-key { font-size: 18px; font-weight: 700; letter-spacing: 0.04em; margin: 8px 0; word-break: break-all; user-select: all; }
+      .cloud-advanced { margin: 0 0 16px; }
+      .cloud-advanced summary { cursor: pointer; font-size: 13px; font-weight: 600; color: #1d4ed8; }
       .cloud-inline-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
       .cloud-inline-form input { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; }
       .cloud-inline-form input[name="confirm_last4"] { width: 80px; text-transform: uppercase; }
@@ -520,30 +522,14 @@
             <li>Create a free account at <a href="https://www.backblaze.com/sign-up/cloud-storage" target="_blank" rel="noopener">backblaze.com</a>.</li>
             <li>Go to <strong>Buckets → Create a Bucket</strong>. Pick a unique name, set it to <strong>Private</strong>, and create it.</li>
             <li>On the new bucket, click <strong>Lifecycle Settings</strong> and choose <strong>Keep prior versions for this number of days: 7</strong>. This keeps deleted backup pieces for a week as a safety net, then removes them so you don't pay for them forever.</li>
-            <li>Copy the bucket's <strong>Endpoint</strong> (it looks like <code>s3.us-west-004.backblazeb2.com</code>).</li>
             <li>Go to <strong>Application Keys → Add a New Application Key</strong>. Allow access to <strong>this bucket only</strong> with <strong>Read and Write</strong>. Copy the <strong>keyID</strong> and <strong>applicationKey</strong> (Backblaze shows the second one only once).</li>
-            <li>Paste everything below and click <strong>Save &amp; Connect</strong>. The app will then show your recovery key.</li>
+            <li>Paste the two keys below and click <strong>Save &amp; Connect</strong>. The app finds your bucket by itself, then shows your recovery key.</li>
           </ol>
         </div>
         {% endif %}
 
         <form method="POST" action="{{ url_for('settings_cloud_backup_save') }}" style="margin-top:16px;">
           {{ csrf_input() }}
-          <div class="settings-field">
-            <label for="cloud_backup_endpoint">Bucket Endpoint</label>
-            <input type="text" id="cloud_backup_endpoint" name="cloud_backup_endpoint" required
-                   value="{{ ('s3.' ~ cloud_region ~ '.backblazeb2.com') if cloud_region else '' }}"
-                   placeholder="s3.us-west-004.backblazeb2.com">
-          </div>
-          <div class="settings-field">
-            <label for="cloud_backup_bucket">Bucket Name</label>
-            <input type="text" id="cloud_backup_bucket" name="cloud_backup_bucket" required value="{{ cloud_bucket }}" placeholder="my-company-backups">
-          </div>
-          <div class="settings-field">
-            <label for="cloud_backup_prefix">Folder In Bucket</label>
-            <input type="text" id="cloud_backup_prefix" name="cloud_backup_prefix" value="{{ cloud_prefix }}">
-            <div class="field-hint">Leave as it is unless you share one bucket between several installations.</div>
-          </div>
           <div class="settings-field">
             <label for="cloud_backup_key_id">Key ID</label>
             <input type="text" id="cloud_backup_key_id" name="cloud_backup_key_id" required value="{{ cloud_key_id }}" autocomplete="off">
@@ -554,6 +540,25 @@
                    {% if not cloud_app_key_set %}required{% endif %}
                    placeholder="{% if cloud_app_key_set %}Saved (leave blank to keep it){% else %}K005…{% endif %}">
           </div>
+          <details class="cloud-advanced">
+            <summary>Advanced (usually not needed)</summary>
+            <div class="field-hint" style="margin:8px 0 12px;">Leave these empty and the app fills them in from your key. Only type a bucket name if your key can reach more than one bucket.</div>
+          <div class="settings-field">
+              <label for="cloud_backup_endpoint">Bucket Endpoint</label>
+              <input type="text" id="cloud_backup_endpoint" name="cloud_backup_endpoint"
+                     value="{{ ('s3.' ~ cloud_region ~ '.backblazeb2.com') if cloud_region else '' }}"
+                     placeholder="Found automatically">
+            </div>
+            <div class="settings-field">
+              <label for="cloud_backup_bucket">Bucket Name</label>
+              <input type="text" id="cloud_backup_bucket" name="cloud_backup_bucket" value="{{ cloud_bucket }}" placeholder="Found automatically">
+            </div>
+            <div class="settings-field">
+              <label for="cloud_backup_prefix">Folder In Bucket</label>
+              <input type="text" id="cloud_backup_prefix" name="cloud_backup_prefix" value="{{ cloud_prefix }}">
+              <div class="field-hint">Leave as it is unless you share one bucket between several installations.</div>
+            </div>
+          </details>
           {% if not cloud.configured %}
           <div class="settings-field">
             <label for="cloud_backup_recovery_key">Recovery Key (only if you already have backups)</label>

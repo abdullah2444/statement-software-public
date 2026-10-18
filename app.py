@@ -5750,12 +5750,25 @@ def settings_cloud_backup_save():
     new_key = not recovery_key
     if new_key:
         recovery_key = generate_recovery_key()
+    key_id = form.get("cloud_backup_key_id", "").strip()
+    endpoint = form.get("cloud_backup_endpoint", "").strip()
+    bucket = form.get("cloud_backup_bucket", "").strip()
     try:
+        if not endpoint or not bucket:
+            # Backblaze knows the region and, for a single-bucket key, the bucket.
+            found_region, found_bucket = cloud_backup.discover_b2(key_id, app_key)
+            endpoint = endpoint or found_region
+            bucket = bucket or found_bucket or ""
+            if not bucket:
+                raise cloud_backup.CloudBackupError(
+                    "This key can reach every bucket in your account. Create a key for one bucket only "
+                    "(safer), or type the bucket name under Advanced."
+                )
         config = cloud_backup.validate_config(
-            region=form.get("cloud_backup_endpoint", ""),
-            bucket=form.get("cloud_backup_bucket", "").strip(),
+            region=endpoint,
+            bucket=bucket,
             prefix=form.get("cloud_backup_prefix", "").strip() or CLOUD_BACKUP_DEFAULT_PREFIX,
-            key_id=form.get("cloud_backup_key_id", "").strip(),
+            key_id=key_id,
             app_key=app_key,
             recovery_key=recovery_key,
         )

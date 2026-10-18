@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -129,6 +130,49 @@ class CloudBackupTests(unittest.TestCase):
         config = cloud_backup.B2Config("us-west-004", "b" * 8, "p", "KEYID12345", "SECRETAPPKEY123", "RECOVERY-KEY-VALUE")
         restic = cloud_backup.Restic(config)
         self.assertEqual(restic._scrub("bad key SECRETAPPKEY123 / RECOVERY-KEY-VALUE"), "bad key [hidden] / [hidden]")
+
+    def b2_answer(self, buckets, capabilities=("listFiles", "readFiles", "writeFiles", "deleteFiles"), status=200):
+        response = unittest.mock.Mock(status_code=status)
+        response.json.return_value = {"apiInfo": {"storageApi": {
+            "s3ApiUrl": "https://s3.us-east-005.backblazeb2.com",
+            "allowed": {"buckets": [{"id": "b1", "name": name} for name in buckets], "capabilities": list(capabilities)},
+        }}}
+        return response
+
+    def test_discover_finds_bucket_and_region_for_single_bucket_key(self):
+        with patch("cloud_backup.requests.get", return_value=self.b2_answer(["acme-backups"])) as get:
+            self.assertEqual(cloud_backup.discover_b2(CONFIG["cloud_backup_key_id"], CONFIG["cloud_backup_app_key"]),
+                             ("us-east-005", "acme-backups"))
+        self.assertEqual(get.call_args.kwargs["auth"], (CONFIG["cloud_backup_key_id"], CONFIG["cloud_backup_app_key"]))
+        with patch("cloud_backup.requests.get", return_value=self.b2_answer([])):
+            self.assertEqual(cloud_backup.discover_b2(CONFIG["cloud_backup_key_id"], CONFIG["cloud_backup_app_key"])[1], None)
+
+    def test_discover_rejects_bad_or_read_only_keys(self):
+        with patch("cloud_backup.requests.get", return_value=self.b2_answer([], status=401)):
+            with self.assertRaisesRegex(cloud_backup.CloudBackupError, "didn't accept"):
+                cloud_backup.discover_b2(CONFIG["cloud_backup_key_id"], CONFIG["cloud_backup_app_key"])
+        with patch("cloud_backup.requests.get", return_value=self.b2_answer(["acme-backups"], capabilities=("listFiles", "readFiles"))):
+            with self.assertRaisesRegex(cloud_backup.CloudBackupError, "Read and Write"):
+                cloud_backup.discover_b2(CONFIG["cloud_backup_key_id"], CONFIG["cloud_backup_app_key"])
+
+    @unittest.skipUnless(HAVE_RESTIC, "restic not installed")
+    def test_setup_with_only_the_two_keys(self):
+        client = self.app.test_client()
+        csrf = self.login(client)
+        form = {"csrf_token": csrf, "cloud_backup_key_id": CONFIG["cloud_backup_key_id"],
+                "cloud_backup_app_key": CONFIG["cloud_backup_app_key"],
+                "cloud_backup_interval_hours": "0.5", "cloud_backup_retention_days": "7"}
+        with patch("cloud_backup.requests.get", return_value=self.b2_answer([])):
+            client.post("/settings/cloud-backup/save", data=form)
+        with self.app.app_context():
+            self.assertFalse(self.module.cloud_backup_configured(), "a key for every bucket needs a bucket name")
+        with patch("cloud_backup.requests.get", return_value=self.b2_answer(["acme-backups"])):
+            client.post("/settings/cloud-backup/save", data=form)
+        with self.app.app_context():
+            self.assertTrue(self.module.cloud_backup_configured())
+            self.assertEqual(self.module.get_setting("cloud_backup_bucket"), "acme-backups")
+            self.assertEqual(self.module.get_setting("cloud_backup_region"), "us-east-005")
+            self.assertEqual(self.module.get_setting("cloud_backup_prefix"), "statement-software")
 
     # ── Consistency gate ─────────────────────────────────────────────────
 

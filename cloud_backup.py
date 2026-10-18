@@ -20,6 +20,10 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+import requests
+
+B2_AUTHORIZE_URL = "https://api.backblazeb2.com/b2api/v4/b2_authorize_account"
+B2_REQUIRED_CAPABILITIES = {"listFiles", "readFiles", "writeFiles", "deleteFiles"}
 RESTIC_HOST = "statement-software"
 RESTIC_TAG = "statement-software"
 BACKUP_TIMEOUT_SECONDS = 30 * 60
@@ -81,6 +85,35 @@ def parse_region(value: str) -> str:
     raise CloudBackupError(
         "Endpoint must look like s3.us-west-004.backblazeb2.com (copy it from your bucket's page in Backblaze)."
     )
+
+
+def discover_b2(key_id: str, app_key: str) -> tuple[str, str | None]:
+    """Ask Backblaze which region and bucket an application key belongs to.
+
+    Returns (region, bucket). bucket is None when the key can reach every
+    bucket in the account, so the user has to name one.
+    """
+    if not _KEY_ID_RE.match(key_id or "") or not _APP_KEY_RE.match(app_key or ""):
+        raise CloudBackupError("Key ID or Application Key doesn't look right. Copy both from Backblaze again.")
+    try:
+        response = requests.get(B2_AUTHORIZE_URL, auth=(key_id, app_key), timeout=20)
+    except requests.RequestException as exc:
+        raise CloudBackupError("Could not reach Backblaze. Check this server's internet connection.") from exc
+    if response.status_code == 401:
+        raise CloudBackupError("Backblaze didn't accept this Key ID and Application Key. Copy both again.")
+    if response.status_code != 200:
+        raise CloudBackupError(f"Backblaze answered with an error ({response.status_code}). Try again in a minute.")
+    try:
+        storage = response.json()["apiInfo"]["storageApi"]
+        region = parse_region(storage["s3ApiUrl"].replace("https://", ""))
+    except (ValueError, KeyError, TypeError) as exc:
+        raise CloudBackupError("Backblaze sent an answer this app doesn't understand.") from exc
+    allowed = storage.get("allowed") or {}
+    missing = B2_REQUIRED_CAPABILITIES - set(allowed.get("capabilities") or [])
+    if missing:
+        raise CloudBackupError("This key can't write backups. Create it again with Read and Write access.")
+    buckets = [b.get("name") for b in allowed.get("buckets") or [] if b.get("name")]
+    return region, (buckets[0] if len(buckets) == 1 else None)
 
 
 def validate_config(region: str, bucket: str, prefix: str, key_id: str, app_key: str, recovery_key: str) -> B2Config:
