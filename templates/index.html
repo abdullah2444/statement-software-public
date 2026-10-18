@@ -167,11 +167,14 @@
         color: rgba(255,255,255,0.6);
       }
       .hero-status .fx-strip {
+        /* Same columns as the balance boxes above, so the two rows line up. */
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         padding: 10px 0 0;
         gap: 10px;
       }
       .hero-status .fx-chip {
-        min-width: 132px;
+        min-width: 0;
         padding: 10px 11px 9px;
         background: rgba(255,255,255,0.09);
         border-color: rgba(255,255,255,0.14);
@@ -391,7 +394,8 @@
       .section-summary {
         display: flex;
         justify-content: flex-end;
-        flex: 1;
+        /* Never narrower than the three total boxes, or they spill over the title. */
+        flex: 1 0 auto;
         min-width: 0;
         padding-right: 10px;
       }
@@ -502,6 +506,10 @@
         border: 1px solid #e1e8ef;
         background: #f3f7fb;
         width: fit-content;
+      }
+      /* No exchange rate yet: keep the space so the boxes stay the same height, but draw nothing. */
+      .money-block-ref:empty {
+        visibility: hidden;
       }
       .money-block-ref .usd-approx {
         margin-left: 0;
@@ -646,7 +654,16 @@
       .sr-empty { padding: 14px 16px; text-align: center; color: var(--muted); font-size: 0.85rem; }
 
       /* -- Group wrapper -- */
-      .group-list { display: grid; gap: 18px; margin-bottom: 22px; }
+      /* Single clients sit side by side; a client group takes a whole row. */
+      .group-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: 18px 14px;
+        margin-bottom: 22px;
+      }
+      .group-list > .group-wrapper:not(.standalone) { grid-column: 1 / -1; }
+      .group-wrapper.standalone .standalone-grid { grid-template-columns: minmax(0, 1fr); height: 100%; }
+      .group-wrapper.standalone .client-card { height: 100%; }
 
       .group-wrapper {
         border: 1px solid #dce5e7;
@@ -820,6 +837,7 @@
         .hero { padding: 18px 16px; border-radius: 16px; }
         .hero-status .company-net { grid-template-columns: 1fr; }
         .section-total { grid-template-columns: 1fr; }
+        .group-list { grid-template-columns: minmax(0, 1fr); }
         .dash-stats { grid-template-columns: 1fr; }
         .standalone-grid { grid-template-columns: 1fr; }
         .company-net { grid-template-columns: 1fr; }
@@ -902,7 +920,7 @@
             </div>
             <div class="fx-strip">
               <div class="fx-chip">
-                <p class="fx-chip-label">Live FX {% if fx_summary.fx_source == 'live' %}<span style="color:#059669;font-weight:700;font-size:0.65rem;letter-spacing:0;">ACTIVE</span>{% endif %}</p>
+                <p class="fx-chip-label">Live FX {% if fx_summary.fx_source == 'live' %}<span style="color:#6ee7b7;font-weight:700;font-size:0.65rem;letter-spacing:0;">ACTIVE</span>{% endif %}</p>
                 <p class="fx-chip-value" id="live-fx-value">
                   {% if fx_summary.live_rate is not none %}
                   {{ "{:,.4f}".format(fx_summary.live_rate) }}
@@ -916,7 +934,7 @@
                 </p>
               </div>
               <div class="fx-chip">
-                <p class="fx-chip-label">Avg FX {% if fx_summary.fx_source == 'average' %}<span style="color:#059669;font-weight:700;font-size:0.65rem;letter-spacing:0;">ACTIVE</span>{% endif %}</p>
+                <p class="fx-chip-label">Avg FX {% if fx_summary.fx_source == 'average' %}<span style="color:#6ee7b7;font-weight:700;font-size:0.65rem;letter-spacing:0;">ACTIVE</span>{% endif %}</p>
                 <p class="fx-chip-value">
                   {% if fx_summary.average_rate is not none %}
                   {{ "{:,.4f}".format(fx_summary.average_rate) }}

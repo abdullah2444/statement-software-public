@@ -404,6 +404,18 @@ thead th {
   padding: 10px 14px;
   border-bottom: 2px solid var(--line);
   white-space: nowrap;
+  text-align: left;
+}
+
+/* Amounts line up on the right, under their heading. */
+th.num,
+td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+th.actions-head {
+  text-align: right;
 }
 
 td {

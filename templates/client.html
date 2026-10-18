@@ -341,14 +341,14 @@
                     cells[3].textContent = e.currency;
                     if (e.direction === 'IN') {
                         cells[4].textContent = formatted;
-                        cells[4].className = 'money-in';
+                        cells[4].className = 'num money-in';
                         cells[5].textContent = '';
-                        cells[5].className = 'money-out';
+                        cells[5].className = 'num money-out';
                     } else {
                         cells[4].textContent = '';
-                        cells[4].className = 'money-in';
+                        cells[4].className = 'num money-in';
                         cells[5].textContent = formatted;
-                        cells[5].className = 'money-out';
+                        cells[5].className = 'num money-out';
                     }
                 }
 
@@ -1119,19 +1119,19 @@
               <th>#</th>
               <th>Description</th>
               {% if view_mode == 'split' %}
-              <th>USD In</th>
-              <th>USD Out</th>
-              <th>RMB In</th>
-              <th>RMB Out</th>
+              <th class="num">USD In</th>
+              <th class="num">USD Out</th>
+              <th class="num">RMB In</th>
+              <th class="num">RMB Out</th>
               {% else %}
               <th>Currency</th>
-              <th>In</th>
-              <th>Out</th>
+              <th class="num">In</th>
+              <th class="num">Out</th>
               {% endif %}
-              <th>USD Bal</th>
-              <th>CNY Bal</th>
+              <th class="num">USD Bal</th>
+              <th class="num">CNY Bal</th>
               <th>Type</th>
-              <th>Actions</th>
+              <th class="actions-head">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -1183,17 +1183,17 @@
                   </div>
                 </td>
                 {% if view_mode == 'split' %}
-                <td class="money-in">{% if row.currency == 'USD' and row.direction == 'IN' %}{{ (row.amount, 'USD')|money_with_symbol }}{% endif %}</td>
-                <td class="money-out">{% if row.currency == 'USD' and row.direction == 'OUT' %}{{ (row.amount, 'USD')|money_with_symbol }}{% endif %}</td>
-                <td class="money-in">{% if row.currency == 'CNY' and row.direction == 'IN' %}{{ (row.amount, 'CNY')|money_with_symbol }}{% endif %}</td>
-                <td class="money-out">{% if row.currency == 'CNY' and row.direction == 'OUT' %}{{ (row.amount, 'CNY')|money_with_symbol }}{% endif %}</td>
+                <td class="num money-in">{% if row.currency == 'USD' and row.direction == 'IN' %}{{ (row.amount, 'USD')|money_with_symbol }}{% endif %}</td>
+                <td class="num money-out">{% if row.currency == 'USD' and row.direction == 'OUT' %}{{ (row.amount, 'USD')|money_with_symbol }}{% endif %}</td>
+                <td class="num money-in">{% if row.currency == 'CNY' and row.direction == 'IN' %}{{ (row.amount, 'CNY')|money_with_symbol }}{% endif %}</td>
+                <td class="num money-out">{% if row.currency == 'CNY' and row.direction == 'OUT' %}{{ (row.amount, 'CNY')|money_with_symbol }}{% endif %}</td>
                 {% else %}
                 <td>{{ row.currency }}</td>
-                <td class="money-in">{% if row.direction == 'IN' %}{{ (row.amount, row.currency)|money_with_symbol }}{% endif %}</td>
-                <td class="money-out">{% if row.direction == 'OUT' %}{{ (row.amount, row.currency)|money_with_symbol }}{% endif %}</td>
+                <td class="num money-in">{% if row.direction == 'IN' %}{{ (row.amount, row.currency)|money_with_symbol }}{% endif %}</td>
+                <td class="num money-out">{% if row.direction == 'OUT' %}{{ (row.amount, row.currency)|money_with_symbol }}{% endif %}</td>
                 {% endif %}
-                <td class="{% if row.running_usd < 0 %}balance-negative{% elif row.running_usd == 0 %}balance-zero{% endif %}">{{ (row.running_usd, 'USD')|money_with_symbol }}</td>
-                <td class="{% if row.running_cny < 0 %}balance-negative{% elif row.running_cny == 0 %}balance-zero{% endif %}">{{ (row.running_cny, 'CNY')|money_with_symbol }}</td>
+                <td class="num {% if row.running_usd < 0 %}balance-negative{% elif row.running_usd == 0 %}balance-zero{% endif %}">{{ (row.running_usd, 'USD')|money_with_symbol }}</td>
+                <td class="num {% if row.running_cny < 0 %}balance-negative{% elif row.running_cny == 0 %}balance-zero{% endif %}">{{ (row.running_cny, 'CNY')|money_with_symbol }}</td>
                 <td>
                   <div class="type-stack">
                     {% if row.exchange_rate %}
