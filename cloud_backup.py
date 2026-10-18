@@ -147,6 +147,32 @@ class Restic:
         self.cache_dir = cache_dir
         # `repository` overrides the B2 location; tests use a local directory.
         self.repository = repository or config.repository
+        self._key_checked = self.repository != config.repository
+
+    def check_key(self) -> None:
+        """Ask Backblaze whether the key works and reaches the bucket.
+
+        restic keeps retrying a refused key for many minutes, so without this a
+        wrong key looks like Backblaze not answering (and an update stays paused).
+        """
+        if self._key_checked:
+            return
+        try:
+            response = requests.get(B2_AUTHORIZE_URL, auth=(self.config.key_id, self.config.app_key), timeout=20)
+        except requests.RequestException as exc:
+            raise CloudBackupError("Could not reach Backblaze. Check this server's internet connection.") from exc
+        if response.status_code in (401, 403):
+            raise CloudBackupError("Backblaze refused the key. Check the key ID and application key.")
+        if response.status_code != 200:
+            raise CloudBackupError(f"Backblaze answered with an error ({response.status_code}). Try again in a minute.")
+        try:
+            allowed = response.json()["apiInfo"]["storageApi"].get("allowed") or {}
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise CloudBackupError("Backblaze sent an answer this app doesn't understand.") from exc
+        buckets = [b.get("name") for b in allowed.get("buckets") or [] if b.get("name")]
+        if buckets and self.config.bucket not in buckets:
+            raise CloudBackupError(f"This key can't reach the bucket {self.config.bucket}. Check the bucket name.")
+        self._key_checked = True
 
     def _env(self) -> dict:
         env = {
@@ -170,6 +196,7 @@ class Restic:
     def run(self, args: list[str], timeout: int = DEFAULT_TIMEOUT_SECONDS, cwd: Path | None = None) -> str:
         if not restic_available():
             raise CloudBackupError("The restic backup tool is not installed on this server.")
+        self.check_key()
         try:
             proc = subprocess.run(
                 [restic_binary(), *args],

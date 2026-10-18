@@ -566,11 +566,15 @@ class DataGate:
 
 
 DATA_GATE = DataGate()
-# Restore endpoints take the gate exclusively themselves.
+# Restore endpoints take the gate exclusively themselves. Logging in and out
+# only touch the user's own row, so they stay possible during a restore or update.
 DATA_GATE_EXEMPT_ENDPOINTS = {
+    "login_action",
+    "logout",
     "settings_upload_database",
     "settings_restore_database_backup",
     "settings_cloud_backup_restore",
+    "settings_updates_resume",
     "static",
 }
 
@@ -711,6 +715,7 @@ def stage_consistent_snapshot(target_dir: Path) -> dict:
     manifest = {
         "format_version": BACKUP_FORMAT_VERSION,
         "app_name": "Statement Software v5",
+        "app_version": APP_VERSION,
         "created_at_utc": utc_timestamp(),
         "database_file": "firefly_statement.db",
         "uploads_dir": "uploads",
@@ -942,7 +947,7 @@ def create_admin_bootstrap_file(password: str) -> None:
 
 # --- Auth helpers ---
 
-PUBLIC_ENDPOINTS = {"login_page", "login_action", "login_logo", "static"}
+PUBLIC_ENDPOINTS = {"login_page", "login_action", "login_logo", "static", "healthz"}
 API_ENDPOINTS = set()  # populated by @api_route decorator
 API_ACCESS_FULL = "full_control"
 API_ACCESS_READ = "read_only"
@@ -1046,6 +1051,9 @@ WEB_AUDIT_ACTIONS = {
     "api_fx_refresh": ("refresh_fx_rate", "app_setting"),
     "settings_save": ("update_settings", "app_setting"),
     "settings_github_backup_save": ("update_github_backup_settings", "app_setting"),
+    "settings_updates_check": ("check_software_updates", "software_update"),
+    "settings_updates_install": ("request_software_update", "software_update"),
+    "settings_updates_resume": ("resume_saving_after_update", "software_update"),
     "settings_upload_database": ("restore_database_upload", "database"),
     "settings_restore_database_backup": ("restore_database_backup", "database"),
     "reload_data": ("reload_from_csv", "database"),
@@ -1404,6 +1412,11 @@ def verify_csrf_token():
 def hold_data_gate():
     if request.method in SAFE_HTTP_METHODS or request.endpoint in DATA_GATE_EXEMPT_ENDPOINTS:
         return
+    if update_paused():
+        message = "The software is being updated. Saving is paused for a few minutes."
+        if _is_ajax_request() or request.endpoint in API_ENDPOINTS:
+            return jsonify({"error": message}), 503
+        return message, 503
     if not DATA_GATE.acquire_shared(timeout=60):
         message = "A backup or restore is in progress. Try again in a minute."
         if _is_ajax_request() or request.endpoint in API_ENDPOINTS:
@@ -4915,6 +4928,7 @@ def render_settings_page(revealed_recovery_key: str = ""):
                 and get_setting("cloud_backup_recovery_key_confirmed", "") != "1" else "")
         ),
         cloud_recovery_key_revealed=bool(revealed_recovery_key),
+        updates=software_update_status(),
     ))
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -5423,8 +5437,8 @@ def _github_backup_scheduler() -> None:
         with app.app_context():
             try:
                 interval_h = float(get_setting("github_backup_interval_hours", "0") or 0)
-                if interval_h <= 0:
-                    continue  # auto-backup disabled
+                if interval_h <= 0 or update_paused():
+                    continue  # auto-backup disabled, or paused for a software update
 
                 last_str = get_setting("github_last_backup", "")
                 if last_str:
@@ -5712,7 +5726,7 @@ def _cloud_backup_scheduler() -> None:
         time.sleep(60)
         try:
             with app.app_context():
-                if cloud_backup_due() and _cloud_job_lock.acquire(blocking=False):
+                if not update_paused() and cloud_backup_due() and _cloud_job_lock.acquire(blocking=False):
                     try:
                         result = _run_cloud_job("backup")
                     finally:
@@ -6054,6 +6068,302 @@ def settings_cloud_backup_restore():
         "success",
     )
     return redirect(url_for("login_page"))
+
+
+# ── Software updates ───────────────────────────────────────────────────────
+#
+# The app never installs anything itself. It checks GitHub for published
+# releases, shows them to admins, and when an admin clicks Update Now it writes
+# a request file into UPDATER_DIR. The host updater (updater/statement_updater.py,
+# a service on the Docker server) picks the request up, installs the release,
+# and reports progress back through files in the same folder:
+#
+#   heartbeat.json   the host updater is alive (rewritten every few seconds)
+#   request.json     written here: which release to install, and who asked
+#   status.json      progress of the current or last update
+#   history.json     every update attempt, newest first
+#   pause.json       written by the host updater: hold all saving
+#   pause-ack.json   written here once saving is held and in-flight saves are done
+
+UPDATE_REPOSITORY = os.environ.get("UPDATE_REPOSITORY", "abdullah2444/statement-software-public").strip()
+UPDATE_API_BASE = os.environ.get("UPDATE_API_BASE", "https://api.github.com").rstrip("/")
+UPDATER_DIR = Path(os.environ.get("UPDATER_DIR") or DATA_DIR / "updater")
+UPDATE_CHECK_HOURS = 6
+UPDATER_HEARTBEAT_SECONDS = 60
+UPDATE_STAGES = [
+    ("preparing", "Preparing"),
+    ("backing_up", "Backing up"),
+    ("installing", "Installing"),
+    ("checking", "Checking"),
+    ("complete", "Complete"),
+]
+_VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+_update_pause_held = False
+_update_scheduler_started = False
+
+
+def _read_app_version() -> str:
+    try:
+        return (BASE_DIR / "VERSION").read_text(encoding="utf-8").strip() or "0.0.0"
+    except OSError:
+        return "0.0.0"
+
+
+APP_VERSION = _read_app_version()
+
+
+def parse_version(value: str) -> tuple[int, int, int] | None:
+    match = _VERSION_RE.match((value or "").strip())
+    return tuple(int(part) for part in match.groups()) if match else None
+
+
+def _read_updater_json(name: str, default):
+    try:
+        return json.loads((UPDATER_DIR / name).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+
+
+def _write_updater_json(name: str, data) -> None:
+    """Write atomically, so the host updater never reads a half-written file."""
+    UPDATER_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = UPDATER_DIR / f".{name}.{uuid.uuid4().hex}.tmp"
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.replace(tmp, UPDATER_DIR / name)
+
+
+def update_paused() -> bool:
+    return (UPDATER_DIR / "pause.json").exists()
+
+
+def sync_update_pause() -> None:
+    """Hold all saving while the host updater asks for it, and let it go afterwards.
+
+    Called every second by the pause watcher thread. Taking the data gate
+    exclusively waits for saves that are already running to finish, so once
+    pause-ack.json exists the recovery backup cannot miss a change.
+    """
+    global _update_pause_held
+    paused = update_paused()
+    if paused and not _update_pause_held:
+        if DATA_GATE.acquire_exclusive(timeout=5):
+            _update_pause_held = True
+            _write_updater_json("pause-ack.json", {"at": utc_timestamp(), "version": APP_VERSION})
+    elif not paused and _update_pause_held:
+        DATA_GATE.release_exclusive()
+        _update_pause_held = False
+        (UPDATER_DIR / "pause-ack.json").unlink(missing_ok=True)
+
+
+def _update_pause_watcher() -> None:
+    while True:
+        try:
+            sync_update_pause()
+        except Exception as exc:
+            print(f"[updates] Pause watcher error: {exc}")
+        time.sleep(1)
+
+
+def check_for_updates() -> dict:
+    """Ask GitHub for published releases and remember the ones newer than this version."""
+    set_setting("update_last_check", utc_timestamp())
+    url = f"{UPDATE_API_BASE}/repos/{UPDATE_REPOSITORY}/releases?per_page=30"
+    try:
+        response = http_requests.get(url, headers={"Accept": "application/vnd.github+json"}, timeout=20)
+        if response.status_code != 200:
+            raise ValueError(f"GitHub answered with an error ({response.status_code}). Try again later.")
+        data = response.json()
+        if not isinstance(data, list):
+            raise ValueError("GitHub sent an answer this app doesn't understand.")
+    except (http_requests.RequestException, ValueError) as exc:
+        message = str(exc) if isinstance(exc, ValueError) else "Could not reach GitHub. Check this server's internet connection."
+        set_setting("update_last_check_error", message)
+        return {"ok": False, "error": message}
+
+    installed = parse_version(APP_VERSION) or (0, 0, 0)
+    releases = []
+    for item in data:
+        if not isinstance(item, dict) or item.get("draft") or item.get("prerelease"):
+            continue
+        version = parse_version(str(item.get("tag_name") or ""))
+        if version is None:
+            continue
+        releases.append({
+            "tag": str(item["tag_name"]),
+            "version": "%d.%d.%d" % version,
+            "name": str(item.get("name") or item["tag_name"])[:200],
+            "notes": str(item.get("body") or "")[:20000],
+            "url": str(item.get("html_url") or "") if str(item.get("html_url") or "").startswith("https://github.com/") else "",
+            "published_at": str(item.get("published_at") or ""),
+        })
+    releases.sort(key=lambda r: parse_version(r["version"]), reverse=True)
+    newer = [r for r in releases if parse_version(r["version"]) > installed][:10]
+    set_setting("update_latest_version", releases[0]["version"] if releases else "")
+    set_setting("update_available_releases", json.dumps(newer))
+    set_setting("update_last_check_error", "")
+    return {"ok": True, "latest": releases[0]["version"] if releases else "", "newer": len(newer)}
+
+
+def available_updates() -> list[dict]:
+    """Releases newer than the running version, newest first, from the last check."""
+    try:
+        releases = json.loads(get_setting("update_available_releases", "") or "[]")
+    except json.JSONDecodeError:
+        return []
+    installed = parse_version(APP_VERSION) or (0, 0, 0)
+    return [r for r in releases if (parse_version(r.get("version", "")) or (0, 0, 0)) > installed]
+
+
+def updater_online() -> bool:
+    heartbeat = _read_updater_json("heartbeat.json", {})
+    at = _parse_utc(str(heartbeat.get("at", "")))
+    return at is not None and (utc_now() - at).total_seconds() <= UPDATER_HEARTBEAT_SECONDS
+
+
+def update_in_progress() -> bool:
+    return (UPDATER_DIR / "request.json").exists() or _read_updater_json("status.json", {}).get("state") == "running"
+
+
+def software_update_status() -> dict:
+    """Everything the Software Updates card shows."""
+    releases = available_updates()
+    run = _read_updater_json("status.json", {})
+    history = _read_updater_json("history.json", [])
+    return {
+        "installed": APP_VERSION,
+        "latest": get_setting("update_latest_version", ""),
+        "available": releases,
+        "last_check": get_setting("update_last_check", ""),
+        "last_check_error": get_setting("update_last_check_error", ""),
+        "updater_online": updater_online(),
+        "updater_installed": (UPDATER_DIR / "heartbeat.json").exists(),
+        "paused": update_paused(),
+        "requested": (UPDATER_DIR / "request.json").exists(),
+        "in_progress": update_in_progress(),
+        "run": run if isinstance(run, dict) else {},
+        "history": history[:20] if isinstance(history, list) else [],
+        "stages": UPDATE_STAGES,
+    }
+
+
+def _update_check_due() -> bool:
+    last = _parse_utc(get_setting("update_last_check", ""))
+    return last is None or utc_now() - last >= timedelta(hours=UPDATE_CHECK_HOURS)
+
+
+def _update_check_scheduler() -> None:
+    while True:
+        time.sleep(60)
+        try:
+            with app.app_context():
+                if not update_paused() and _update_check_due():
+                    result = check_for_updates()
+                    if not result["ok"]:
+                        print(f"[updates] Check failed: {result['error']}")
+        except Exception as exc:
+            print(f"[updates] Unexpected scheduler error: {exc}")
+
+
+def start_update_threads() -> None:
+    global _update_scheduler_started
+    with _scheduler_lock:
+        if _update_scheduler_started:
+            return
+        _update_scheduler_started = True
+    threading.Thread(target=_update_pause_watcher, name="update-pause-watcher", daemon=True).start()
+    threading.Thread(target=_update_check_scheduler, name="update-check-scheduler", daemon=True).start()
+
+
+def software_update_notice() -> dict | None:
+    """A banner for the top of every page, or None."""
+    if update_paused():
+        return {"kind": "paused", "text": "The software is being updated. Saving is paused for a few minutes."}
+    user = getattr(g, "user", None)
+    if not user or user["role"] != "admin":
+        return None
+    releases = available_updates()
+    if releases and not update_in_progress():
+        return {"kind": "available", "text": f"Version {releases[0]['version']} of the software is available."}
+    return None
+
+
+@app.context_processor
+def inject_software_update_notice() -> dict:
+    def notice():
+        try:
+            return software_update_notice()
+        except (sqlite3.Error, OSError):
+            return None
+    return {"software_update_notice": notice}
+
+
+@app.route("/healthz")
+def healthz():
+    """Used by the host updater to check that a new version really works."""
+    try:
+        get_db().execute("select count(*) from users").fetchone()
+    except sqlite3.Error:
+        return jsonify({"ok": False, "version": APP_VERSION}), 503
+    return jsonify({"ok": True, "version": APP_VERSION})
+
+
+def _updates_response(ok: bool, message: str, status: int = 200):
+    if _is_ajax_request():
+        return jsonify({"ok": ok, "message": message} if ok else {"error": message}), status
+    flash(message, "success" if ok else "error")
+    return redirect(url_for("settings_page") + "#software-updates")
+
+
+@app.route("/settings/updates/check", methods=["POST"])
+@admin_required
+def settings_updates_check():
+    result = check_for_updates()
+    if not result["ok"]:
+        return _updates_response(False, result["error"], 502)
+    if result["newer"]:
+        return _updates_response(True, f"Version {result['latest']} is available.")
+    return _updates_response(True, f"You have the latest version ({APP_VERSION}).")
+
+
+@app.route("/settings/updates/install", methods=["POST"])
+@admin_required
+def settings_updates_install():
+    target = (request.form.get("version") or (request.get_json(silent=True) or {}).get("version") or "").strip()
+    release = next((r for r in available_updates() if r["version"] == target), None)
+    if release is None:
+        return _updates_response(False, "That version is not available. Click Check for Updates and try again.", 400)
+    if not updater_online():
+        return _updates_response(False, "The updater service on the server is not running, so the update can't start.", 409)
+    if update_in_progress():
+        return _updates_response(False, "An update is already running.", 409)
+    _write_updater_json("request.json", {
+        "id": utc_now().strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:6],
+        "target": release["tag"],
+        "from_version": APP_VERSION,
+        "requested_by": g.user["username"],
+        "requested_at": utc_timestamp(),
+    })
+    return _updates_response(True, f"Update to version {release['version']} requested.")
+
+
+@app.route("/settings/updates/resume", methods=["POST"])
+@admin_required
+def settings_updates_resume():
+    """Escape hatch: let people save again if the updater died and left saving paused."""
+    if not update_paused():
+        return _updates_response(True, "Saving is not paused.")
+    if updater_online():
+        return _updates_response(False, "The updater is still working. Wait for it to finish.", 409)
+    (UPDATER_DIR / "pause.json").unlink(missing_ok=True)
+    return _updates_response(True, "Saving is turned back on.")
+
+
+@app.route("/api/updates/status")
+@admin_required
+def api_updates_status():
+    response = jsonify(software_update_status())
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/reload", methods=["POST"])
@@ -8839,6 +9149,7 @@ if __name__ == "__main__":
     resequence_all_clients()
     start_backup_scheduler()
     start_cloud_backup_scheduler()
+    start_update_threads()
     app.run(
         host=os.environ.get("HOST", "0.0.0.0"),
         port=int(os.environ.get("PORT", "5050")),

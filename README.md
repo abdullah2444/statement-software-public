@@ -271,9 +271,13 @@ If setup says the password is wrong but the app already has an admin user, reset
 
 The reset command asks for a new password and keeps the existing database.
 
-## Updating From GitHub
+## Software Updates From Settings
 
-Before updating:
+On a Docker server, admins can install new releases from **Settings → Software Updates**: review the release notes, click **Update Now**, and the app makes a verified recovery backup, pauses saving for a few minutes, restarts on the new version, checks it, and puts the previous version and data back by itself if the checks fail. This needs a small updater service set up once on the server; see [docs/UPDATES.md](docs/UPDATES.md), which also explains how to publish a release. The installed version is in the `VERSION` file.
+
+## Updating From GitHub By Hand
+
+For servers without the updater service. Before updating:
 
 ```bash
 ./setup.sh backup
