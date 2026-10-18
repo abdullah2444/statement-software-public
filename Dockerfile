@@ -14,12 +14,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy app files
-COPY app.py cloud_backup.py ./
+COPY VERSION app.py cloud_backup.py update_helper.py ./
 COPY templates/ templates/
 COPY static/ static/
 
-# Create data directory for database, uploads, and backups
-RUN mkdir -p /data /data/uploads /data/backups
+# Create data directory for database, uploads, backups, and the updater's shared folder
+RUN mkdir -p /data /data/uploads /data/backups /data/updater
 
 # Environment variables
 ENV PORT=18451
