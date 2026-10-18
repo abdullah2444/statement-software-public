@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import threading
@@ -154,6 +155,28 @@ class CloudBackupTests(unittest.TestCase):
         with patch("cloud_backup.requests.get", return_value=self.b2_answer(["acme-backups"], capabilities=("listFiles", "readFiles"))):
             with self.assertRaisesRegex(cloud_backup.CloudBackupError, "Read and Write"):
                 cloud_backup.discover_b2(CONFIG["cloud_backup_key_id"], CONFIG["cloud_backup_app_key"])
+
+    def test_wrong_key_fails_fast_before_restic(self):
+        config = cloud_backup.B2Config("us-east-005", "acme-backups", "p", "KEYID12345", "SECRETAPPKEY123", "RECOVERY-KEY-VALUE")
+        with patch("cloud_backup.restic_available", return_value=True), \
+             patch("cloud_backup.subprocess.run") as run:
+            with patch("cloud_backup.requests.get", return_value=self.b2_answer([], status=401)):
+                with self.assertRaisesRegex(cloud_backup.CloudBackupError, "refused the key"):
+                    cloud_backup.Restic(config).run(["snapshots"])
+            with patch("cloud_backup.requests.get", return_value=self.b2_answer(["other-bucket"])):
+                with self.assertRaisesRegex(cloud_backup.CloudBackupError, "can't reach the bucket acme-backups"):
+                    cloud_backup.Restic(config).run(["snapshots"])
+            with patch("cloud_backup.requests.get", side_effect=cloud_backup.requests.ConnectionError()):
+                with self.assertRaisesRegex(cloud_backup.CloudBackupError, "Could not reach Backblaze"):
+                    cloud_backup.Restic(config).run(["snapshots"])
+            run.assert_not_called()
+            run.return_value = subprocess.CompletedProcess([], 0, "[]", "")
+            restic = cloud_backup.Restic(config)
+            with patch("cloud_backup.requests.get", return_value=self.b2_answer(["acme-backups"])) as get:
+                restic.run(["snapshots"])
+                restic.run(["snapshots"])
+            self.assertEqual(get.call_count, 1, "the key is checked once, not before every command")
+            self.assertEqual(run.call_count, 2)
 
     @unittest.skipUnless(HAVE_RESTIC, "restic not installed")
     def test_setup_with_only_the_two_keys(self):

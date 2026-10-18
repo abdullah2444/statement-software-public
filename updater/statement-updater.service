@@ -1,0 +1,14 @@
+[Unit]
+Description=Statement Software updater (installs releases requested from Settings)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/statement-updater.env
+ExecStart=/usr/bin/python3 /opt/statement-updater/statement_updater.py run
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

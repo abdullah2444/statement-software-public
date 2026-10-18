@@ -53,6 +53,8 @@
     text-align: center;
   }
   .backup-alert a { color: #92400e; font-weight: 700; }
+  .update-notice-available { background: #eff6ff; border-bottom-color: #bfdbfe; color: #1e3a8a; }
+  .update-notice-available a { color: #1e3a8a; }
 </style>
 <script>
 window.fireflyCsrfToken = {{ csrf_token()|tojson }};
@@ -148,6 +150,13 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
 {% if backup_alert %}
 <div class="backup-alert" role="alert">
   ⚠ {{ backup_alert }} <a href="{{ url_for('settings_page') }}#cloud-backup">Open backup settings</a>
+</div>
+{% endif %}
+{% set update_notice = software_update_notice() if software_update_notice is defined else None %}
+{% if update_notice %}
+<div class="backup-alert update-notice update-notice-{{ update_notice.kind }}" role="status">
+  {{ update_notice.text }}
+  {% if update_notice.kind == 'available' %}<a href="{{ url_for('settings_page') }}#software-updates">Review the update</a>{% endif %}
 </div>
 {% endif %}
 <div class="user-bar desktop-only">

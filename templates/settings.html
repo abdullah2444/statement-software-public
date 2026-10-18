@@ -165,6 +165,22 @@
       .cloud-box-help ol { margin: 8px 0 0 18px; padding: 0; }
       .cloud-box-help li { margin-bottom: 6px; }
       .cloud-box-key { background: #fffbeb; border-color: #f59e0b; color: #78350f; }
+      .release { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px 14px; margin: 12px 0; }
+      .release-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 14px; margin-bottom: 8px; }
+      .release-head a { font-size: 13px; color: #1d4ed8; }
+      .release-date { font-size: 12px; color: #6b7280; }
+      .release-notes { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; color: #374151; max-height: 320px; overflow-y: auto; }
+      .upd-steps { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 0; margin: 16px 0 0; }
+      .upd-steps li { font-size: 12px; font-weight: 600; padding: 6px 10px; border-radius: 999px; background: #f1f5f9; color: #64748b; }
+      .upd-steps li.active { background: #dbeafe; color: #1e3a8a; }
+      .upd-steps li.done { background: #dcfce7; color: #166534; }
+      .upd-steps li.failed { background: #fee2e2; color: #991b1b; }
+      .upd-subhead { font-size: 14px; font-weight: 600; color: #111827; margin: 20px 0 8px; }
+      .upd-result { font-weight: 600; white-space: nowrap; }
+      #software-updates .db-table td.upd-details { white-space: normal; min-width: 260px; }
+      .upd-result-installed { color: #166534; }
+      .upd-result-rolled_back, .upd-result-not_started { color: #92400e; }
+      .upd-result-rollback_failed { color: #991b1b; }
       .cloud-key { font-size: 18px; font-weight: 700; letter-spacing: 0.04em; margin: 8px 0; word-break: break-all; user-select: all; }
       .cloud-advanced { margin: 0 0 16px; }
       .cloud-advanced summary { cursor: pointer; font-size: 13px; font-weight: 600; color: #1d4ed8; }
@@ -280,7 +296,97 @@
       {% endif %}
       {% endwith %}
 
-      <form method="POST" action="{{ url_for('settings_save') }}">
+      <!-- ── Software Updates ─────────────────────────────── -->
+      <div class="settings-card" id="software-updates" data-last-run="{{ updates.run.id if updates.run.state != 'running' else '' }}">
+        <h2>
+          Software Updates
+          {% if updates.in_progress %}
+            <span class="key-status missing">Updating</span>
+          {% elif updates.available %}
+            <span class="key-status missing">Update available</span>
+          {% elif updates.last_check %}
+            <span class="key-status configured">Up to date</span>
+          {% endif %}
+        </h2>
+        <p>New versions are published on GitHub. Review what changed, then click Update Now. The app saves a recovery backup first, and if anything goes wrong it puts the previous version and your data back by itself.</p>
+
+        <div class="db-meta">
+          <div class="db-meta-item"><strong>Installed version</strong><span id="upd-installed">{{ updates.installed }}</span></div>
+          <div class="db-meta-item"><strong>Latest version</strong><span>{{ updates.latest or 'Not checked yet' }}</span></div>
+          <div class="db-meta-item"><strong>Last checked</strong><span>{{ (updates.last_check[:16].replace('T', ' ') ~ ' UTC') if updates.last_check else 'Never' }}</span></div>
+          <div class="db-meta-item"><strong>Updater service</strong><span id="upd-service">{{ 'Running' if updates.updater_online else ('Not responding' if updates.updater_installed else 'Not installed') }}</span></div>
+        </div>
+
+        {% if updates.last_check_error %}
+        <div class="cloud-box cloud-box-error">Last check failed: {{ updates.last_check_error }}</div>
+        {% endif %}
+        {% if not updates.updater_installed %}
+        <div class="cloud-box cloud-box-warn">The updater service isn't installed on this server yet, so updates can be checked but not installed from here. It is set up once on the server; see docs/UPDATES.md.</div>
+        {% elif not updates.updater_online %}
+        <div class="cloud-box cloud-box-warn">The updater service on the server is not responding, so Update Now won't work until it is running again.</div>
+        {% endif %}
+        {% if updates.paused and not updates.updater_online %}
+        <form method="POST" action="{{ url_for('settings_updates_resume') }}" class="cloud-box cloud-box-error">
+          {{ csrf_input() }}
+          Saving is paused for an update, but the updater has stopped responding.
+          <button type="submit" class="btn-secondary" onclick="return confirm('Turn saving back on? Only do this if no update is running.');">Turn Saving Back On</button>
+        </form>
+        {% endif %}
+
+        {% for release in updates.available %}
+        <div class="release">
+          <div class="release-head">
+            <strong>Version {{ release.version }}</strong>
+            <span class="release-date">{{ release.published_at[:10] }}</span>
+            {% if release.url %}<a href="{{ release.url }}" target="_blank" rel="noopener noreferrer">View on GitHub</a>{% endif %}
+          </div>
+          <div class="release-notes">{{ release.notes or 'No release notes.' }}</div>
+        </div>
+        {% endfor %}
+
+        <div class="settings-actions" style="justify-content:flex-start;flex-wrap:wrap;gap:8px;">
+          <form method="POST" action="{{ url_for('settings_updates_check') }}" style="margin:0;">
+            {{ csrf_input() }}
+            <button type="submit" class="btn-secondary">Check for Updates</button>
+          </form>
+          {% if updates.available %}
+          <button type="button" class="btn-save" id="upd-install-btn" data-version="{{ updates.available[0].version }}"
+            {% if updates.in_progress or not updates.updater_online %}disabled{% endif %}>Update Now to {{ updates.available[0].version }}</button>
+          {% endif %}
+        </div>
+        {% if updates.available %}
+        <div class="settings-field"><div class="field-hint">While the update runs (usually a few minutes), people can still look at everything, but saving is paused. The page reconnects by itself after the app restarts.</div></div>
+        {% endif %}
+
+        <div id="upd-progress" style="display:none;">
+          <ol class="upd-steps" id="upd-steps">
+            {% for key, label in updates.stages %}<li data-stage="{{ key }}">{{ label }}</li>{% endfor %}
+          </ol>
+          <div id="upd-message" class="cloud-box"></div>
+        </div>
+
+        {% if updates.history %}
+        <h3 class="upd-subhead">Update history</h3>
+        <div class="table-scroll-wrap">
+          <table class="db-table">
+            <thead><tr><th>Date</th><th>From</th><th>To</th><th>Result</th><th>Details</th></tr></thead>
+            <tbody>
+              {% for item in updates.history %}
+              <tr>
+                <td>{{ (item.finished_at or item.started_at or '')[:16].replace('T', ' ') }}</td>
+                <td>{{ item.from_version or '' }}</td>
+                <td>{{ (item.target or '').lstrip('v') }}</td>
+                <td><span class="upd-result upd-result-{{ item.result or 'unknown' }}">{{ {'installed': 'Installed', 'rolled_back': 'Put back', 'not_started': 'Not installed', 'rollback_failed': 'Needs attention'}.get(item.result, item.result or '') }}</span></td>
+                <td class="upd-details">{{ item.message or '' }}{% if item.requested_by %} <span class="release-date">(by {{ item.requested_by }})</span>{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+      </div>
+
+      <form method="POST" action="{{ url_for('settings_save') }}" enctype="multipart/form-data">
         <div class="settings-card">
           <h2>Exchange Rate</h2>
           <p>Choose which rate to use for Approx Total (RMB) calculations on the dashboard.</p>
@@ -378,6 +484,38 @@
             </div>
           </div>
           {% endfor %}
+        </div>
+
+        <div class="settings-card" id="login-screen">
+          <h2>Login Screen</h2>
+          <p>Change the name, welcome line and logo people see on the sign-in page. Leave a box empty to use the default.</p>
+          <input type="hidden" name="login_branding_form" value="1">
+          <div class="settings-field">
+            <label for="login_title">Company Name</label>
+            <input type="text" id="login_title" name="login_title" maxlength="{{ login_branding_max_length }}"
+                   value="{{ login_branding_saved.login_title }}" placeholder="{{ login_branding_defaults.login_title }}">
+            <div class="field-hint">Shown as the heading and in the browser tab. Default: {{ login_branding_defaults.login_title }}.</div>
+          </div>
+          <div class="settings-field">
+            <label for="login_subtitle">Welcome Line</label>
+            <input type="text" id="login_subtitle" name="login_subtitle" maxlength="{{ login_branding_max_length }}"
+                   value="{{ login_branding_saved.login_subtitle }}" placeholder="{{ login_branding_defaults.login_subtitle }}">
+            <div class="field-hint">The small line under the name. Default: {{ login_branding_defaults.login_subtitle }}.</div>
+          </div>
+          <div class="settings-field">
+            <label for="login_logo">Logo</label>
+            {% if login_logo_set %}
+            <img src="{{ url_for('login_logo') }}" alt="Current login logo" style="display:block;max-width:180px;max-height:72px;object-fit:contain;margin-bottom:8px;">
+            {% endif %}
+            <input type="file" id="login_logo" name="login_logo" accept=".png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp">
+            <div class="field-hint">PNG, JPG, GIF or WebP, up to 2 MB. Choose a file to replace the current logo, or leave empty to keep it.</div>
+            {% if login_logo_set %}
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:8px;font-weight:500;">
+              <input type="checkbox" name="remove_login_logo" value="1" style="width:auto;">
+              Remove the logo
+            </label>
+            {% endif %}
+          </div>
         </div>
 
         <div class="settings-actions">
@@ -947,6 +1085,93 @@
       });
 
       {% if cloud.job_running %}startPolling();{% endif %}
+    })();
+    </script>
+    <script>
+    (function() {
+      var card = document.getElementById('software-updates');
+      if (!card) return;
+      var installBtn = document.getElementById('upd-install-btn');
+      var progress = document.getElementById('upd-progress');
+      var box = document.getElementById('upd-message');
+      var csrf = card.querySelector('input[name="csrf_token"]').value;
+      var startVersion = document.getElementById('upd-installed').textContent.trim();
+      var order = ['preparing', 'backing_up', 'installing', 'checking', 'complete'];
+      var polling = null;
+      var failures = 0;
+      // The last finished update; ignore it until the updater starts the new one.
+      var oldRunId = card.getAttribute('data-last-run');
+
+      function show(kind, text) {
+        progress.style.display = 'block';
+        box.className = 'cloud-box' + (kind ? ' cloud-box-' + kind : '');
+        box.textContent = text;  // plain text: never render server messages as HTML
+      }
+      function markSteps(stage, state) {
+        var current = order.indexOf(stage === 'rolling_back' ? 'checking' : stage);
+        Array.prototype.forEach.call(document.querySelectorAll('#upd-steps li'), function(li, i) {
+          li.className = '';
+          if (state === 'done' && stage === 'complete') li.className = 'done';
+          else if (i < current) li.className = 'done';
+          else if (i === current) li.className = state === 'failed' ? 'failed' : 'active';
+        });
+      }
+      function refresh() {
+        fetch('/api/updates/status', {headers: {'X-Requested-With': 'XMLHttpRequest'}, cache: 'no-store'})
+          .then(function(r) {
+            if (!r.ok) throw new Error('status ' + r.status);
+            return r.json();
+          })
+          .then(function(st) {
+            failures = 0;
+            var run = st.run || {};
+            if (st.requested || (oldRunId && run.id === oldRunId)) {
+              markSteps('preparing', 'running');
+              show('', 'Waiting for the updater to start…');
+              return;
+            }
+            if (!run.state) return;
+            markSteps(run.stage, run.state);
+            if (run.state === 'running') {
+              show('', run.message || 'Working…');
+              return;
+            }
+            clearInterval(polling); polling = null;
+            if (run.result === 'installed') {
+              show('ok', run.message || 'Update complete.');
+              if (st.installed !== startVersion) setTimeout(function() { location.reload(); }, 4000);
+            } else {
+              show(run.result === 'rollback_failed' ? 'error' : 'warn', run.message || 'The update did not finish.');
+              if (installBtn) installBtn.disabled = false;
+            }
+          })
+          .catch(function() {
+            // While the app restarts it can't answer. Keep trying; it comes back by itself.
+            failures += 1;
+            show('', 'The app is restarting with the new version. Reconnecting…' + (failures > 60 ? ' (this is taking longer than usual)' : ''));
+          });
+      }
+      function startPolling() { if (!polling) polling = setInterval(refresh, 2000); refresh(); }
+
+      if (installBtn) {
+        installBtn.addEventListener('click', function() {
+          var version = installBtn.getAttribute('data-version');
+          if (!confirm('Install version ' + version + ' now?\n\nA recovery backup is made first. Saving is paused for a few minutes and the app restarts. If the new version does not work, the previous version and your data are put back automatically.')) return;
+          installBtn.disabled = true;
+          show('', 'Requesting the update…');
+          var body = new FormData();
+          body.append('version', version);
+          fetch('/settings/updates/install', {method: 'POST', body: body, headers: {'X-CSRF-Token': csrf, 'X-Requested-With': 'XMLHttpRequest'}})
+            .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, d: d}; }); })
+            .then(function(res) {
+              if (!res.ok) { installBtn.disabled = false; show('error', res.d.error || 'Could not start the update.'); return; }
+              startPolling();
+            })
+            .catch(function(err) { installBtn.disabled = false; show('error', 'Network error: ' + err.message); });
+        });
+      }
+
+      {% if updates.in_progress %}startPolling();{% endif %}
     })();
     </script>
   </body>
