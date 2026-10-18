@@ -280,7 +280,7 @@
       {% endif %}
       {% endwith %}
 
-      <form method="POST" action="{{ url_for('settings_save') }}">
+      <form method="POST" action="{{ url_for('settings_save') }}" enctype="multipart/form-data">
         <div class="settings-card">
           <h2>Exchange Rate</h2>
           <p>Choose which rate to use for Approx Total (RMB) calculations on the dashboard.</p>
@@ -378,6 +378,38 @@
             </div>
           </div>
           {% endfor %}
+        </div>
+
+        <div class="settings-card" id="login-screen">
+          <h2>Login Screen</h2>
+          <p>Change the name, welcome line and logo people see on the sign-in page. Leave a box empty to use the default.</p>
+          <input type="hidden" name="login_branding_form" value="1">
+          <div class="settings-field">
+            <label for="login_title">Company Name</label>
+            <input type="text" id="login_title" name="login_title" maxlength="{{ login_branding_max_length }}"
+                   value="{{ login_branding_saved.login_title }}" placeholder="{{ login_branding_defaults.login_title }}">
+            <div class="field-hint">Shown as the heading and in the browser tab. Default: {{ login_branding_defaults.login_title }}.</div>
+          </div>
+          <div class="settings-field">
+            <label for="login_subtitle">Welcome Line</label>
+            <input type="text" id="login_subtitle" name="login_subtitle" maxlength="{{ login_branding_max_length }}"
+                   value="{{ login_branding_saved.login_subtitle }}" placeholder="{{ login_branding_defaults.login_subtitle }}">
+            <div class="field-hint">The small line under the name. Default: {{ login_branding_defaults.login_subtitle }}.</div>
+          </div>
+          <div class="settings-field">
+            <label for="login_logo">Logo</label>
+            {% if login_logo_set %}
+            <img src="{{ url_for('login_logo') }}" alt="Current login logo" style="display:block;max-width:180px;max-height:72px;object-fit:contain;margin-bottom:8px;">
+            {% endif %}
+            <input type="file" id="login_logo" name="login_logo" accept=".png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp">
+            <div class="field-hint">PNG, JPG, GIF or WebP, up to 2 MB. Choose a file to replace the current logo, or leave empty to keep it.</div>
+            {% if login_logo_set %}
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:8px;font-weight:500;">
+              <input type="checkbox" name="remove_login_logo" value="1" style="width:auto;">
+              Remove the logo
+            </label>
+            {% endif %}
+          </div>
         </div>
 
         <div class="settings-actions">
