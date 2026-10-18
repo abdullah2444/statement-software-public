@@ -21,7 +21,27 @@ import time
 import urllib.request
 from pathlib import Path
 
-import app as statement_app
+
+def _drop_root() -> None:
+    """`docker exec` runs this as root. Switch to the app's own user before touching
+    any data, or the backup files and SQLite's -wal/-shm files would end up owned by
+    root and the app (which runs as "app") could no longer write its database."""
+    if os.name != "posix" or os.geteuid() != 0:
+        return
+    try:
+        import pwd
+        account = pwd.getpwnam("app")
+    except (ImportError, KeyError):
+        return  # an older image without the app user: stay as before
+    os.setgroups([])
+    os.setgid(account.pw_gid)
+    os.setuid(account.pw_uid)
+    os.environ["HOME"] = account.pw_dir
+
+
+_drop_root()
+
+import app as statement_app  # noqa: E402  (must come after dropping root)
 
 CLOUD_JOB_WAIT_SECONDS = 20 * 60
 

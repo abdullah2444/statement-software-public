@@ -9450,13 +9450,32 @@ def api_delete_entry_image(entry_id):
     return jsonify({"ok": True, "entry": row_to_dict(updated)})
 
 
-if __name__ == "__main__":
+_services_started = False
+_services_lock = threading.Lock()
+
+
+def start_app_services() -> None:
+    """Prepare the database and start the background jobs, once per process.
+
+    Called by `python app.py` and by wsgi.py under Gunicorn. Gunicorn runs a
+    single worker process, so the backup, cloud-backup and update jobs run
+    exactly once (more workers would each start their own).
+    """
+    global _services_started
+    with _services_lock:
+        if _services_started:
+            return
+        _services_started = True
     init_db()
     ensure_seeded()
     resequence_all_clients()
     start_backup_scheduler()
     start_cloud_backup_scheduler()
     start_update_threads()
+
+
+if __name__ == "__main__":
+    start_app_services()
     app.run(
         host=os.environ.get("HOST", "0.0.0.0"),
         port=int(os.environ.get("PORT", "5050")),

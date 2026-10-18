@@ -102,6 +102,8 @@ else
 services:
   $SERVICE:
     image: statement-software:current
+    # Keep memory for the rest of the server even if a big backup or export runs.
+    mem_limit: 768m
     volumes:
       - $CHANNEL:/data/updater
 YAML

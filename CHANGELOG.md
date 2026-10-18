@@ -4,6 +4,19 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.1
+
+Runs the app the way it should run on a server. Nothing changes in how you use it.
+
+- Uses a proper web server (Gunicorn) instead of the built-in test server, so
+  several people can work at the same time without slowing each other down.
+- The app no longer runs as the server's all-powerful "root" user. If someone
+  ever broke into the app, they could do much less.
+- Docker now checks every 30 seconds that the app and its database answer,
+  and marks it "unhealthy" if not.
+- New servers set up with the updater cap the app at 768 MB of memory, so a
+  big backup or export can't starve the rest of the server.
+
 ## 5.2.0
 
 Security update. Nothing changes in how you use the app, except where noted.
