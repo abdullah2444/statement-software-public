@@ -1494,8 +1494,10 @@
               <div class="image-drop-zone" id="add-drop-zone">
                 <div class="drop-zone-placeholder" id="add-drop-placeholder">
                   <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
-                  <span>Drop image or click to upload</span>
-                  <small>Receipt / invoice / proof (optional)</small>
+                  <div class="drop-zone-text">
+                    <span>Drop image or click to upload</span>
+                    <small>Receipt / invoice / proof (optional)</small>
+                  </div>
                 </div>
                 <img id="add-image-preview" class="image-preview" data-lightbox-edit style="display:none; cursor:zoom-in;">
                 <input type="file" name="image" accept="image/*" id="add-image-input" class="file-input-hidden">
@@ -1539,9 +1541,9 @@
                     <option value="OUT">OUT</option>
                   </select>
                 </label>
-                <label>
+                <label class="full-phone">
                   <span>Amount</span>
-                  <input type="number" step="0.01" name="amount" required>
+                  <input type="number" step="0.01" name="amount" inputmode="decimal" required>
                 </label>
                 <label>
                   <span>Entry Type</span>
@@ -1559,7 +1561,7 @@
                     {% endfor %}
                   </select>
                 </label>
-                <label>
+                <label class="full-phone">
                   <span>Transfer Group</span>
                   <input type="text" name="transfer_group">
                 </label>

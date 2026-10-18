@@ -4,6 +4,16 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.1.2
+
+**Fixed (phones)**
+- Add Entry and Edit no longer scroll sideways (Safari's date box made the
+  form wider than the screen), and the page behind them stays still.
+- Short fields sit in pairs (Date and No., Currency and Direction, Type and
+  Category), so the whole form fits on one screen.
+- The photo box is a slim row instead of a big square.
+- Save and Cancel are the same size, and Amount opens the number keypad.
+
 ## 5.1.1
 
 **Fixed**

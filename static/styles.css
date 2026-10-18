@@ -1034,6 +1034,12 @@ input:disabled {
   opacity: 0.4;
 }
 
+.drop-zone-text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .drop-zone-placeholder span {
   font-size: 0.88rem;
   font-weight: 500;

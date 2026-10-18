@@ -1124,6 +1124,75 @@
   }
   .settings-card select,
   .settings-card input { max-width: 100%; }
+
+  /* -- Add / edit entry pop-up on phones --
+     html scrolls here (overflow-x above), so locking only body let the page
+     move behind the pop-up. The panel only scrolls up and down, and nothing
+     inside it may be wider than the screen (Safari's date box was). */
+  html:has(body.modal-open) { overflow: hidden !important; }
+  .entry-modal { overscroll-behavior: contain; }
+  .entry-modal-panel {
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
+  .entry-modal .add-entry-layout,
+  .entry-modal .add-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .entry-modal .add-grid > *,
+  .entry-modal .form-fields-panel,
+  .entry-modal .image-upload-panel { min-width: 0; }
+  .entry-modal input,
+  .entry-modal select { min-width: 0; max-width: 100%; }
+  .entry-modal input[type="date"] {
+    -webkit-appearance: none;
+    appearance: none;
+    display: block;
+    text-align: left;
+  }
+  .entry-modal input[type="date"]::-webkit-date-and-time-value { text-align: left; }
+
+  /* Short fields in pairs, so the form is half as long. */
+  @media (min-width: 340px) {
+    .entry-modal .add-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+      gap: 12px 10px !important;
+    }
+    .entry-modal .add-grid > .full,
+    .entry-modal .add-grid > .full-phone { grid-column: 1 / -1 !important; }
+
+    /* The Edit pop-up gets the same pairs. */
+    .mobile-edit-sheet .inline-edit-form {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+      gap: 12px 10px !important;
+    }
+    .mobile-edit-sheet .inline-edit-form > :not(label),
+    .mobile-edit-sheet .inline-edit-form > .edit-wide,
+    .mobile-edit-sheet .inline-edit-form > .checkline,
+    .mobile-edit-sheet .inline-edit-form > label:has([name="amount"]),
+    .mobile-edit-sheet .inline-edit-form > label:has([name="transfer_group"]),
+    .mobile-edit-sheet .inline-edit-form > label:has([name="profit_expense_account_id"]) { grid-column: 1 / -1 !important; }
+  }
+  .mobile-edit-sheet .inline-edit-form > * { min-width: 0; }
+
+  /* The photo box is a slim row instead of a big square. */
+  .entry-modal .image-drop-zone { min-height: 64px !important; }
+  .entry-modal .drop-zone-placeholder {
+    flex-direction: row;
+    gap: 12px;
+    padding: 12px 14px;
+    text-align: left;
+  }
+  .entry-modal .drop-zone-placeholder svg { width: 28px; height: 28px; flex: 0 0 28px; }
+  .entry-modal .drop-zone-text { gap: 2px; }
+  .entry-modal .parse-status:empty { display: none; }
+
+  /* Save and Cancel are the same size. */
+  .entry-modal .modal-form-actions { flex-wrap: nowrap; }
+  .entry-modal .modal-form-actions .button { flex: 1 1 0; min-width: 0; }
+  .mobile-edit-sheet .edit-actions { flex-wrap: wrap; gap: 8px; }
+  .mobile-edit-sheet .edit-actions .button { flex: 1 1 0; min-width: 0; justify-content: center; text-align: center; }
 }
 
 /* -- Small phones (480px) -- */
