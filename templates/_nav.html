@@ -1,22 +1,66 @@
 <style>
+  /* Top bar: company name on the left, links on the right, current page highlighted. */
   .user-bar {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 16px;
-    padding: 8px 24px;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-height: 60px;
+    padding: 8px max(24px, calc((100vw - 1360px) / 2));
+    background: #fff;
+    border-bottom: 1px solid #dce5e8;
     font-size: 13px;
     color: #6b7280;
   }
-  .user-bar a,
+  .user-bar .nav-brand {
+    margin-right: auto;
+    padding: 8px 0;
+    color: #103a46;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    text-decoration: none;
+  }
+  .user-bar .nav-account {
+    max-width: 160px;
+    padding: 8px 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .user-bar a:not(.nav-brand),
   .user-bar .nav-link-button {
+    padding: 9px 12px;
+    border-radius: 8px;
     color: #103a46;
     text-decoration: none;
     font-weight: 600;
   }
-  .user-bar a:hover,
+  .user-bar a:not(.nav-brand):hover,
   .user-bar .nav-link-button:hover {
-    text-decoration: underline;
+    background: #eef4f4;
+  }
+  .user-bar .nav-brand:hover { text-decoration: none; }
+  .user-bar a[aria-current="page"],
+  .mobile-drawer-panel a[aria-current="page"] {
+    background: #e8f2f2;
+    color: #0f5f62;
+    font-weight: 700;
+  }
+  a.mobile-title { color: inherit; text-decoration: none; }
+  /* Keyboard users: a clear outline on whatever is selected, and a skip link. */
+  :focus-visible { outline: 3px solid #268b9a; outline-offset: 2px; }
+  .skip-link {
+    position: fixed; top: 12px; left: 16px; z-index: 9999;
+    padding: 10px 16px; border-radius: 8px;
+    background: #fff; color: #103a46; font-weight: 700;
+    box-shadow: 0 4px 16px rgba(15, 23, 42, 0.2);
+    transform: translateY(-200%);
+  }
+  .skip-link:focus { transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
   }
   .nav-link-form {
     display: inline-flex;
@@ -159,17 +203,24 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
   {% if update_notice.kind == 'available' %}<a href="{{ url_for('settings_page') }}#software-updates">Review the update</a>{% endif %}
 </div>
 {% endif %}
+{% set is_admin = (g.user.role == 'admin') if g.user else (session.get('role') == 'admin') %}
+{% set nav_user = g.user.username if g.user else session.get('username', '') %}
+{% set brand = app_brand_name() %}
+{% macro nav_link(section, endpoint, label) -%}
+<a href="{{ url_for(endpoint) }}"{% if nav_section == section %} aria-current="page"{% endif %}>{{ label }}</a>
+{%- endmacro %}
+<a class="skip-link" href="#main-content">Skip to content</a>
 <div class="user-bar desktop-only">
-  <span>{{ g.user.username if g.user else session.get('username', '') }}</span>
-  <a href="{{ url_for('index') }}">Dashboard</a>
-  {% set is_admin = (g.user.role == 'admin') if g.user else (session.get('role') == 'admin') %}
+  <a class="nav-brand" href="{{ url_for('index') }}">{{ brand }}</a>
+  <span class="nav-account">{{ nav_user }}</span>
+  {{ nav_link('dashboard', 'index', 'Dashboard') }}
   {% if is_admin %}
-  <a href="{{ url_for('admin_users') }}">Users</a>
-  <a href="{{ url_for('admin_tokens') }}">API Tokens</a>
-  <a href="{{ url_for('settings_page') }}">Settings</a>
+  {{ nav_link('users', 'admin_users', 'Users') }}
+  {{ nav_link('tokens', 'admin_tokens', 'API Tokens') }}
+  {{ nav_link('settings', 'settings_page', 'Settings') }}
   {% endif %}
-  <a href="{{ url_for('expense_list') }}">Expenses</a>
-  <a href="{{ url_for('change_password') }}">Password</a>
+  {{ nav_link('expenses', 'expense_list', 'Expenses') }}
+  {{ nav_link('password', 'change_password', 'Password') }}
   <form method="post" action="{{ url_for('logout') }}" class="nav-link-form">
     <button type="submit" class="nav-link-button">Logout</button>
   </form>
@@ -178,29 +229,28 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
 <!-- Mobile navigation -->
 <div class="mobile-nav mobile-only">
   <div class="mobile-nav-bar">
-    <button class="hamburger" id="mobile-menu-toggle" aria-label="Menu">
+    <button class="hamburger" id="mobile-menu-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-drawer">
       <span></span><span></span><span></span>
     </button>
-    <span class="mobile-title">Firefly</span>
-    <span class="mobile-user">{{ g.user.username if g.user else session.get('username', '') }}</span>
+    <a class="mobile-title" href="{{ url_for('index') }}">{{ brand }}</a>
+    <span class="mobile-user">{{ nav_user }}</span>
   </div>
   <div class="mobile-drawer" id="mobile-drawer">
     <div class="mobile-drawer-overlay" id="mobile-drawer-overlay"></div>
-    <nav class="mobile-drawer-panel">
+    <nav class="mobile-drawer-panel" role="dialog" aria-modal="true" aria-label="Main menu">
       <div class="mobile-drawer-header">
-        <span>{{ g.user.username if g.user else session.get('username', '') }}</span>
+        <span>{{ nav_user }}</span>
         <button id="mobile-drawer-close" aria-label="Close menu">&times;</button>
       </div>
-      <a href="{{ url_for('index') }}">Dashboard</a>
-      <a href="{{ url_for('quick_submit_page') }}">Quick Submit</a>
-      <a href="{{ url_for('expense_list') }}">Expenses</a>
-      {% set is_admin = (g.user.role == 'admin') if g.user else (session.get('role') == 'admin') %}
+      {{ nav_link('dashboard', 'index', 'Dashboard') }}
+      {{ nav_link('quick_submit', 'quick_submit_page', 'Quick Submit') }}
+      {{ nav_link('expenses', 'expense_list', 'Expenses') }}
       {% if is_admin %}
-      <a href="{{ url_for('admin_users') }}">Users</a>
-      <a href="{{ url_for('admin_tokens') }}">API Tokens</a>
-      <a href="{{ url_for('settings_page') }}">Settings</a>
+      {{ nav_link('users', 'admin_users', 'Users') }}
+      {{ nav_link('tokens', 'admin_tokens', 'API Tokens') }}
+      {{ nav_link('settings', 'settings_page', 'Settings') }}
       {% endif %}
-      <a href="{{ url_for('change_password') }}">Change Password</a>
+      {{ nav_link('password', 'change_password', 'Change Password') }}
       <form method="post" action="{{ url_for('logout') }}" class="nav-link-form mobile-drawer-logout">
         <button type="submit" class="nav-link-button">Logout</button>
       </form>
@@ -210,18 +260,61 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
 
 <script>
 (function() {
-  var toggle = document.getElementById('mobile-menu-toggle');
+  // "Skip to content" lands on the page's main area.
+  var main = document.querySelector('main, .settings-shell, .admin-shell, .content-wrap, .shell');
+  if (main && !document.getElementById('main-content')) { main.id = main.id || 'main-content'; main.tabIndex = -1; }
+  var skip = document.querySelector('.skip-link');
+  if (skip && main) skip.setAttribute('href', '#' + main.id);
+
+  // The dashboard's fold-out sections open with Enter or Space too.
+  document.querySelectorAll('#bank-toggle, #supplier-toggle, #expense-toggle, #client-toggle').forEach(function(toggle) {
+    toggle.tabIndex = 0;
+    toggle.setAttribute('role', 'button');
+    function sync() { toggle.setAttribute('aria-expanded', String(toggle.classList.contains('is-open'))); }
+    sync();
+    toggle.addEventListener('click', function() { requestAnimationFrame(sync); });
+    toggle.addEventListener('keydown', function(event) {
+      if (event.target === toggle && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); toggle.click(); }
+    });
+  });
+
+  var menuButton = document.getElementById('mobile-menu-toggle');
   var drawer = document.getElementById('mobile-drawer');
   var overlay = document.getElementById('mobile-drawer-overlay');
   var closeBtn = document.getElementById('mobile-drawer-close');
-  if (!toggle || !drawer) return;
-  function open() { drawer.classList.add('is-open'); document.body.style.overflow = 'hidden'; }
-  function close() { drawer.classList.remove('is-open'); document.body.style.overflow = ''; }
-  toggle.addEventListener('click', open);
+  if (!menuButton || !drawer) return;
+  var previousOverflow = '';
+  function open() {
+    previousOverflow = document.body.style.overflow;
+    drawer.classList.add('is-open');
+    document.body.style.overflow = 'hidden';
+    menuButton.setAttribute('aria-expanded', 'true');
+    if (closeBtn) closeBtn.focus();
+  }
+  function close() {
+    if (!drawer.classList.contains('is-open')) return;
+    drawer.classList.remove('is-open');
+    document.body.style.overflow = previousOverflow;
+    menuButton.setAttribute('aria-expanded', 'false');
+    menuButton.focus();
+  }
+  menuButton.addEventListener('click', open);
   if (overlay) overlay.addEventListener('click', close);
   if (closeBtn) closeBtn.addEventListener('click', close);
   drawer.querySelectorAll('a, button[type="submit"]').forEach(function(item) {
     item.addEventListener('click', close);
   });
+  document.addEventListener('keydown', function(event) {
+    if (!drawer.classList.contains('is-open')) return;
+    if (event.key === 'Escape') { event.preventDefault(); close(); }
+    if (event.key === 'Tab') {
+      // Keep keyboard focus inside the open menu.
+      var items = drawer.querySelectorAll('a[href], button:not([disabled])');
+      var first = items[0], last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+  });
+  window.addEventListener('resize', function() { if (window.innerWidth > 768) close(); });
 })();
 </script>

@@ -423,9 +423,30 @@ def csrf_input() -> Markup:
     return Markup(f'<input type="hidden" name="csrf_token" value="{token}">')
 
 
+# Which menu item each page belongs to, so the menu can highlight where you are.
+NAV_SECTIONS = {
+    "index": "dashboard", "client_statement": "dashboard",
+    "quick_submit_page": "quick_submit", "quick_submit_history": "quick_submit",
+    "expense_list": "expenses", "expense_account_view": "expenses",
+    "expense_account_balances": "expenses", "expense_templates_list": "expenses",
+    "admin_users": "users", "admin_tokens": "tokens",
+    "settings_page": "settings", "change_password": "password",
+}
+
+
+def app_brand_name() -> str:
+    """The company name from Settings > Login Screen, shown in the top menu too."""
+    return get_setting("login_title", "").strip() or LOGIN_BRANDING_DEFAULTS["login_title"]
+
+
 @app.context_processor
 def inject_template_helpers() -> dict:
-    return {"csrf_token": get_csrf_token, "csrf_input": csrf_input}
+    return {
+        "csrf_token": get_csrf_token,
+        "csrf_input": csrf_input,
+        "app_brand_name": app_brand_name,
+        "nav_section": NAV_SECTIONS.get(request.endpoint or "", ""),
+    }
 
 
 def get_setting(key: str, default: str = "") -> str:
