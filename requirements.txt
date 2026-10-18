@@ -3,3 +3,4 @@ openpyxl==3.1.5
 weasyprint==63.1
 requests==2.32.3
 openrouter
+gunicorn==23.0.0
