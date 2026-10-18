@@ -4,6 +4,20 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.1.1
+
+**Fixed**
+- Client statements: column headings now sit over their columns, and amounts
+  and balances line up on the right so the numbers are easy to compare.
+- Dashboard: the exchange-rate boxes line up with the balance boxes above them,
+  and the empty grey circle under the USD totals is gone.
+- Dashboard: on medium-size screens the totals no longer cover the section
+  name (for example "Supplier Balances").
+- Dashboard: clients are shown side by side instead of one per row with empty
+  space next to them.
+- Expense pages now use the same width as the rest of the app and line up with
+  the menu.
+
 ## 5.1.0
 
 The first numbered release. From now on, updates can be installed from Settings.
