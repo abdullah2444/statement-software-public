@@ -157,6 +157,19 @@
       }
       .key-status.configured { background: #d1fae5; color: #065f46; }
       .key-status.missing { background: #fee2e2; color: #991b1b; }
+      .cloud-box { padding: 12px 14px; border-radius: 10px; font-size: 13px; margin: 12px 0; border: 1px solid #e5e7eb; background: #f8fafc; color: #1f2937; }
+      .cloud-box-error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+      .cloud-box-warn { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+      .cloud-box-ok { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+      .cloud-box-help { background: #eff6ff; border-color: #bfdbfe; color: #1e3a8a; }
+      .cloud-box-help ol { margin: 8px 0 0 18px; padding: 0; }
+      .cloud-box-help li { margin-bottom: 6px; }
+      .cloud-box-key { background: #fffbeb; border-color: #f59e0b; color: #78350f; }
+      .cloud-key { font-size: 18px; font-weight: 700; letter-spacing: 0.04em; margin: 8px 0; word-break: break-all; user-select: all; }
+      .cloud-inline-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+      .cloud-inline-form input { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; }
+      .cloud-inline-form input[name="confirm_last4"] { width: 80px; text-transform: uppercase; }
+      .settings-field select { padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; background: #fff; max-width: 100%; }
       .flash-msg { padding: 8px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
       .flash-error { background: #fee2e2; color: #991b1b; }
       .flash-success { background: #d1fae5; color: #065f46; }
@@ -431,6 +444,163 @@
         </div>
       </div>
 
+      <!-- ── Cloud Backup (Backblaze B2) ─────────────────────── -->
+      <div class="settings-card" id="cloud-backup">
+        <h2>
+          Cloud Backup (Backblaze B2)
+          {% if cloud.configured %}
+            <span class="key-status configured">Connected</span>
+          {% else %}
+            <span class="key-status missing">Not set up</span>
+          {% endif %}
+        </h2>
+        <p>Encrypted copies of your database and receipts are sent to your own Backblaze B2 bucket. Only someone with the recovery key can open them. Only the changes are uploaded each time, so storage stays small.</p>
+
+        {% if not cloud.restic_installed %}
+        <div class="cloud-box cloud-box-error">The <strong>restic</strong> backup tool is not installed on this server. Rebuild the app with the latest Dockerfile, or install restic (<code>apt install restic</code>).</div>
+        {% endif %}
+
+        {% if cloud_recovery_key %}
+        <div class="cloud-box cloud-box-key">
+          <strong>Your recovery key</strong>
+          <div class="cloud-key mono" id="cloud-recovery-key">{{ cloud_recovery_key }}</div>
+          <div>Write it down or save it in a password manager, somewhere that is <strong>not this server</strong>. If this server is lost, you need this key to open your backups. Nobody, including Backblaze, can recover it for you.</div>
+          {% if not cloud.recovery_key_confirmed %}
+          <form method="POST" action="{{ url_for('settings_cloud_backup_confirm_key') }}" class="cloud-inline-form">
+            {{ csrf_input() }}
+            <label for="confirm_last4">To confirm you saved it, type the last 4 characters:</label>
+            <input type="text" id="confirm_last4" name="confirm_last4" maxlength="4" autocomplete="off" required>
+            <button type="submit" class="btn-save">I saved it</button>
+          </form>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        {% if cloud.configured %}
+        <div class="db-meta">
+          <div class="db-meta-item"><strong>Stored in</strong><span class="mono">{{ cloud.location }}</span></div>
+          <div class="db-meta-item"><strong>Last successful backup</strong><span id="cloud-last-success">{{ (cloud.last_success[:16].replace('T', ' ') ~ ' UTC') if cloud.last_success else 'None yet' }}</span></div>
+          <div class="db-meta-item"><strong>Next backup</strong><span id="cloud-next-run">{{ cloud.next_run or 'Automatic backups off' }}</span></div>
+          <div class="db-meta-item"><strong>Space used in Backblaze</strong><span id="cloud-storage">{{ cloud.storage_label or 'Not measured yet' }}</span></div>
+        </div>
+        {% if cloud.last_error %}
+        <div class="cloud-box cloud-box-error" id="cloud-last-error">Last backup failed: {{ cloud.last_error }}</div>
+        {% endif %}
+        {% if cloud.last_warning %}
+        <div class="cloud-box cloud-box-warn">{{ cloud.last_warning }}</div>
+        {% endif %}
+
+        <div class="settings-actions" style="justify-content:flex-start;flex-wrap:wrap;gap:8px;">
+          <button type="button" class="btn-save" id="cloud-run-btn">Back Up Now</button>
+          <button type="button" class="btn-secondary" id="cloud-verify-btn">Test Restore</button>
+          <button type="button" class="btn-secondary" id="cloud-list-btn">Show Backups</button>
+        </div>
+        <div id="cloud-job" class="cloud-box" style="display:none;"></div>
+        <div class="settings-field"><div class="field-hint">Test Restore opens your newest backup with the recovery key in a scratch folder and checks it. Your live data is not touched.</div></div>
+
+        <div id="cloud-snapshots" style="display:none;margin-top:16px;">
+          <div class="table-scroll-wrap">
+            <table class="db-table">
+              <thead><tr><th>Backup time</th><th>ID</th><th>Actions</th></tr></thead>
+              <tbody id="cloud-snapshot-rows"></tbody>
+            </table>
+          </div>
+          <form method="POST" action="{{ url_for('settings_cloud_backup_restore') }}" id="cloud-restore-form" style="display:none;">
+            {{ csrf_input() }}
+            <input type="hidden" name="snapshot_id" id="cloud-restore-id">
+            <input type="hidden" name="confirm_text" id="cloud-restore-confirm">
+          </form>
+        </div>
+        {% endif %}
+
+        {% if not cloud.configured %}
+        <div class="cloud-box cloud-box-help">
+          <strong>How to set up (about 5 minutes)</strong>
+          <ol>
+            <li>Create a free account at <a href="https://www.backblaze.com/sign-up/cloud-storage" target="_blank" rel="noopener">backblaze.com</a>.</li>
+            <li>Go to <strong>Buckets → Create a Bucket</strong>. Pick a unique name, set it to <strong>Private</strong>, and create it.</li>
+            <li>On the new bucket, click <strong>Lifecycle Settings</strong> and choose <strong>Keep prior versions for this number of days: 7</strong>. This keeps deleted backup pieces for a week as a safety net, then removes them so you don't pay for them forever.</li>
+            <li>Copy the bucket's <strong>Endpoint</strong> (it looks like <code>s3.us-west-004.backblazeb2.com</code>).</li>
+            <li>Go to <strong>Application Keys → Add a New Application Key</strong>. Allow access to <strong>this bucket only</strong> with <strong>Read and Write</strong>. Copy the <strong>keyID</strong> and <strong>applicationKey</strong> (Backblaze shows the second one only once).</li>
+            <li>Paste everything below and click <strong>Save &amp; Connect</strong>. The app will then show your recovery key.</li>
+          </ol>
+        </div>
+        {% endif %}
+
+        <form method="POST" action="{{ url_for('settings_cloud_backup_save') }}" style="margin-top:16px;">
+          {{ csrf_input() }}
+          <div class="settings-field">
+            <label for="cloud_backup_endpoint">Bucket Endpoint</label>
+            <input type="text" id="cloud_backup_endpoint" name="cloud_backup_endpoint" required
+                   value="{{ ('s3.' ~ cloud_region ~ '.backblazeb2.com') if cloud_region else '' }}"
+                   placeholder="s3.us-west-004.backblazeb2.com">
+          </div>
+          <div class="settings-field">
+            <label for="cloud_backup_bucket">Bucket Name</label>
+            <input type="text" id="cloud_backup_bucket" name="cloud_backup_bucket" required value="{{ cloud_bucket }}" placeholder="my-company-backups">
+          </div>
+          <div class="settings-field">
+            <label for="cloud_backup_prefix">Folder In Bucket</label>
+            <input type="text" id="cloud_backup_prefix" name="cloud_backup_prefix" value="{{ cloud_prefix }}">
+            <div class="field-hint">Leave as it is unless you share one bucket between several installations.</div>
+          </div>
+          <div class="settings-field">
+            <label for="cloud_backup_key_id">Key ID</label>
+            <input type="text" id="cloud_backup_key_id" name="cloud_backup_key_id" required value="{{ cloud_key_id }}" autocomplete="off">
+          </div>
+          <div class="settings-field">
+            <label for="cloud_backup_app_key">Application Key</label>
+            <input type="password" id="cloud_backup_app_key" name="cloud_backup_app_key" autocomplete="new-password"
+                   {% if not cloud_app_key_set %}required{% endif %}
+                   placeholder="{% if cloud_app_key_set %}Saved (leave blank to keep it){% else %}K005…{% endif %}">
+          </div>
+          {% if not cloud.configured %}
+          <div class="settings-field">
+            <label for="cloud_backup_recovery_key">Recovery Key (only if you already have backups)</label>
+            <input type="password" id="cloud_backup_recovery_key" name="cloud_backup_recovery_key" autocomplete="off">
+            <div class="field-hint">Setting up a new server after losing the old one? Enter your saved recovery key here to reach your old backups. Otherwise leave it blank and a new key will be made for you.</div>
+          </div>
+          {% endif %}
+          <div class="settings-field">
+            <label for="cloud_backup_interval_hours">Automatic Backups</label>
+            <select id="cloud_backup_interval_hours" name="cloud_backup_interval_hours">
+              {% for value, label in [('0.5', 'Every 30 minutes'), ('1', 'Every hour'), ('6', 'Every 6 hours'), ('12', 'Every 12 hours'), ('24', 'Daily'), ('0', 'Off (manual only)')] %}
+              <option value="{{ value }}" {% if cloud.interval_hours == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="settings-field">
+            <label for="cloud_backup_retention_days">Keep Backups For</label>
+            <select id="cloud_backup_retention_days" name="cloud_backup_retention_days">
+              {% for value, label in [('7', '7 days'), ('14', '14 days'), ('30', '30 days'), ('90', '90 days'), ('0', 'Forever')] %}
+              <option value="{{ value }}" {% if cloud.retention_days == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            <div class="field-hint">Counted from your newest backup, so if backups stop for a while the old ones are kept.</div>
+          </div>
+          <div class="settings-actions" style="justify-content:flex-start;">
+            <button type="submit" class="btn-save">Save &amp; Connect</button>
+          </div>
+        </form>
+
+        {% if cloud.configured %}
+        <div class="settings-actions" style="justify-content:flex-start;flex-wrap:wrap;gap:8px;border-top:1px solid #e5e7eb;padding-top:16px;">
+          {% if cloud.recovery_key_confirmed and not cloud_recovery_key_revealed %}
+          <form method="POST" action="{{ url_for('settings_cloud_backup_reveal_key') }}" class="cloud-inline-form">
+            {{ csrf_input() }}
+            <input type="password" name="current_password" placeholder="Your password" autocomplete="current-password" required style="width:200px;">
+            <button type="submit" class="btn-secondary">Show Recovery Key</button>
+          </form>
+          {% endif %}
+          <form method="POST" action="{{ url_for('settings_cloud_backup_disconnect') }}" class="cloud-inline-form"
+                onsubmit="return confirm('Turn off cloud backups and remove the saved Backblaze keys from this app? Backups already in your bucket are NOT deleted. Make sure you have your recovery key saved.');">
+            {{ csrf_input() }}
+            <button type="submit" class="btn-secondary" style="color:#b91c1c;border-color:#fca5a5;">Turn Off Cloud Backup</button>
+          </form>
+        </div>
+        {% endif %}
+      </div>
+
       <!-- ── GitHub Backup ───────────────────────────────────── -->
       <div class="settings-card" id="github-backup">
         <h2>
@@ -661,6 +831,97 @@
         });
       });
     }
+
+    (function() {
+      var runBtn = document.getElementById('cloud-run-btn');
+      if (!runBtn) return;
+      var verifyBtn = document.getElementById('cloud-verify-btn');
+      var listBtn = document.getElementById('cloud-list-btn');
+      var jobBox = document.getElementById('cloud-job');
+      var csrf = document.querySelector('#cloud-backup input[name="csrf_token"]').value;
+      var polling = null;
+
+      function show(kind, text) {
+        jobBox.className = 'cloud-box' + (kind ? ' cloud-box-' + kind : '');
+        jobBox.textContent = text;  // plain text: never render server messages as HTML
+        jobBox.style.display = 'block';
+      }
+      function setBusy(busy) { runBtn.disabled = busy; verifyBtn.disabled = busy; }
+
+      function refresh() {
+        fetch('/api/cloud-backup/status', {headers: {'X-Requested-With': 'XMLHttpRequest'}})
+          .then(function(r) { return r.json(); })
+          .then(function(st) {
+            var job = st.job || {};
+            if (st.job_running) {
+              setBusy(true);
+              show('', job.message || 'Working…');
+              return;
+            }
+            clearInterval(polling); polling = null;
+            setBusy(false);
+            if (job.state === 'done') show('ok', job.message || 'Finished.');
+            else if (job.state === 'failed') show('error', job.message || 'Failed.');
+            document.getElementById('cloud-last-success').textContent = st.last_success ? st.last_success.slice(0, 16).replace('T', ' ') + ' UTC' : 'None yet';
+            document.getElementById('cloud-next-run').textContent = st.next_run || 'Automatic backups off';
+            document.getElementById('cloud-storage').textContent = st.storage_label || 'Not measured yet';
+          })
+          .catch(function(err) { show('error', 'Could not read backup status: ' + err.message); });
+      }
+      function startPolling() { if (!polling) polling = setInterval(refresh, 3000); refresh(); }
+
+      function start(url, label) {
+        setBusy(true);
+        show('', label);
+        fetch(url, {method: 'POST', headers: {'X-CSRF-Token': csrf, 'X-Requested-With': 'XMLHttpRequest'}})
+          .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, d: d}; }); })
+          .then(function(res) {
+            if (!res.ok) { setBusy(false); show('error', res.d.error || 'Could not start.'); return; }
+            startPolling();
+          })
+          .catch(function(err) { setBusy(false); show('error', 'Network error: ' + err.message); });
+      }
+      runBtn.addEventListener('click', function() { start('/api/cloud-backup/run', 'Backing up…'); });
+      verifyBtn.addEventListener('click', function() { start('/api/cloud-backup/verify', 'Checking backups…'); });
+
+      listBtn.addEventListener('click', function() {
+        var rows = document.getElementById('cloud-snapshot-rows');
+        document.getElementById('cloud-snapshots').style.display = 'block';
+        rows.textContent = '';
+        var loading = rows.insertRow(); loading.insertCell().textContent = 'Loading…';
+        fetch('/api/cloud-backup/snapshots', {headers: {'X-Requested-With': 'XMLHttpRequest'}})
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            rows.textContent = '';
+            if (d.error) { rows.insertRow().insertCell().textContent = d.error; return; }
+            if (!d.snapshots.length) { rows.insertRow().insertCell().textContent = 'No backups yet.'; return; }
+            d.snapshots.forEach(function(snap) {
+              var tr = rows.insertRow();
+              tr.insertCell().textContent = snap.time;
+              var idCell = tr.insertCell(); idCell.textContent = snap.short_id; idCell.className = 'mono';
+              var actions = tr.insertCell();
+              var wrap = document.createElement('div'); wrap.className = 'inline-actions';
+              var dl = document.createElement('a');
+              dl.className = 'btn-secondary'; dl.textContent = 'Download';
+              dl.href = '/settings/cloud-backup/download/' + encodeURIComponent(snap.id);
+              var rs = document.createElement('button');
+              rs.type = 'button'; rs.className = 'btn-save'; rs.textContent = 'Restore';
+              rs.addEventListener('click', function() {
+                var typed = prompt('Restore the backup from ' + snap.time + '?\n\nThis REPLACES all current clients, entries, expenses, users and receipts with the data from that time. Anything entered after it will be lost (a safety copy of the current data is saved on this server first).\n\nType RESTORE to continue:');
+                if (typed !== 'RESTORE') return;
+                document.getElementById('cloud-restore-id').value = snap.id;
+                document.getElementById('cloud-restore-confirm').value = typed;
+                show('', 'Restoring… this can take a minute. Do not close the page.');
+                document.getElementById('cloud-restore-form').submit();
+              });
+              wrap.appendChild(dl); wrap.appendChild(rs); actions.appendChild(wrap);
+            });
+          })
+          .catch(function(err) { rows.textContent = ''; rows.insertRow().insertCell().textContent = 'Network error: ' + err.message; });
+      });
+
+      {% if cloud.job_running %}startPolling();{% endif %}
+    })();
     </script>
   </body>
 </html>

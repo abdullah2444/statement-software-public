@@ -44,6 +44,15 @@
     text-align: left;
     width: 100%;
   }
+  .backup-alert {
+    background: #fef3c7;
+    border-bottom: 1px solid #fcd34d;
+    color: #92400e;
+    font-size: 13px;
+    padding: 10px 16px;
+    text-align: center;
+  }
+  .backup-alert a { color: #92400e; font-weight: 700; }
 </style>
 <script>
 window.fireflyCsrfToken = {{ csrf_token()|tojson }};
@@ -135,6 +144,12 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
 })();
 </script>
 <!-- Desktop navigation -->
+{% set backup_alert = cloud_backup_alert() if cloud_backup_alert is defined else "" %}
+{% if backup_alert %}
+<div class="backup-alert" role="alert">
+  ⚠ {{ backup_alert }} <a href="{{ url_for('settings_page') }}#cloud-backup">Open backup settings</a>
+</div>
+{% endif %}
 <div class="user-bar desktop-only">
   <span>{{ g.user.username if g.user else session.get('username', '') }}</span>
   <a href="{{ url_for('index') }}">Dashboard</a>

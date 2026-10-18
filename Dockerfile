@@ -2,10 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install WeasyPrint system dependencies
+# Install WeasyPrint system dependencies, and restic for encrypted cloud backups
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 \
     libffi-dev libcairo2 libglib2.0-0 fonts-dejavu-core \
+    restic ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
@@ -13,7 +14,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy app files
-COPY app.py .
+COPY app.py cloud_backup.py ./
 COPY templates/ templates/
 COPY static/ static/
 

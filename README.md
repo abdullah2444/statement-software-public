@@ -113,7 +113,19 @@ The app includes a JSON API for integrations and future mobile apps. It supports
 
 API token access levels are simple: `full_control`, `read_only`, and `client_portal`.
 
-## Automatic Full Backups from Settings
+## Encrypted Cloud Backups (Backblaze B2)
+
+Open **Settings → Cloud Backup (Backblaze B2)**. The card walks you through creating a private bucket and an application key, then you paste them in and click **Save & Connect**. Backups run every 30 minutes by default and are kept for 7 days.
+
+- Backups are made with [restic](https://restic.net). They are encrypted on this server before upload and only upload what changed, so 7 days of backups take about as much space as one or two copies.
+- The app shows a **recovery key** once. Save it somewhere that is not this server. You need it to open your backups if the server is lost, and nobody can recover it for you.
+- **Test Restore** opens the newest backup in a scratch folder to prove the key and data work. **Show Backups** lists them with **Download** (a normal full-backup file) and **Restore** (replaces all current data, after saving a safety copy).
+- In the bucket's **Lifecycle Settings**, choose **Keep prior versions for this number of days: 7**. That keeps removed backup pieces for a week as a safety net, then deletes them so storage doesn't grow forever.
+- Admins see a warning at the top of every page when backups stop working or the recovery key hasn't been confirmed.
+- **New server after losing the old one:** install the app, open the same card, enter the same bucket details plus your recovery key, then use **Show Backups → Restore**.
+
+Docker installs include restic. For Python installs, install it with `apt install restic` (or from restic.net).
+
 
 Open **Settings → GitHub Backup**, enter your private backup repository and token, choose **Every 30 minutes**, and save. This backs up the database and uploaded images together in a `.tar.gz` archive. The app checks once a minute and runs a backup when the selected interval has elapsed since the last successful backup.
 
