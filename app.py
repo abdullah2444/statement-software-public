@@ -304,6 +304,44 @@ def ai_feature_off_message(key: str) -> str:
     return AI_FEATURE_OFF_MESSAGE.format(label=AI_FEATURES[key])
 
 
+# Login screen branding, edited by admins in Settings. Blank values fall back to these defaults.
+LOGIN_BRANDING_DEFAULTS = {
+    "login_title": "Firefly Statements",
+    "login_subtitle": "Sign in to continue",
+}
+LOGIN_BRANDING_MAX_LENGTH = 80
+LOGIN_LOGO_MAX_BYTES = 2 * 1024 * 1024
+# Only raster formats, checked by file signature (no SVG, which can carry scripts).
+LOGIN_LOGO_SIGNATURES = {
+    ".png": (b"\x89PNG\r\n\x1a\n",),
+    ".jpg": (b"\xff\xd8\xff",),
+    ".gif": (b"GIF87a", b"GIF89a"),
+    ".webp": (b"RIFF",),
+}
+
+
+def login_branding() -> dict[str, str]:
+    branding = {key: get_setting(key, "").strip() or default for key, default in LOGIN_BRANDING_DEFAULTS.items()}
+    branding["logo_file"] = get_setting("login_logo_file", "")
+    return branding
+
+
+def _login_logo_ext(data: bytes) -> str | None:
+    for ext, signatures in LOGIN_LOGO_SIGNATURES.items():
+        if any(data.startswith(sig) for sig in signatures):
+            if ext == ".webp" and data[8:12] != b"WEBP":
+                continue
+            return ext
+    return None
+
+
+def _remove_login_logo(db: sqlite3.Connection) -> None:
+    current = get_setting("login_logo_file", "")
+    if current:
+        (UPLOAD_DIR / os.path.basename(current)).unlink(missing_ok=True)
+    db.execute("delete from app_settings where key = 'login_logo_file'")
+
+
 def _delete_image_file(image_path: str | None) -> None:
     if image_path:
         (UPLOAD_DIR / image_path).unlink(missing_ok=True)
@@ -909,7 +947,7 @@ def create_admin_bootstrap_file(password: str) -> None:
 
 # --- Auth helpers ---
 
-PUBLIC_ENDPOINTS = {"login_page", "login_action", "static", "healthz"}
+PUBLIC_ENDPOINTS = {"login_page", "login_action", "login_logo", "static", "healthz"}
 API_ENDPOINTS = set()  # populated by @api_route decorator
 API_ACCESS_FULL = "full_control"
 API_ACCESS_READ = "read_only"
@@ -2997,7 +3035,7 @@ def expense_dashboard_data():
 def login_page():
     if "user_id" in session:
         return redirect(url_for("index"))
-    return render_template("login.html")
+    return render_template("login.html", branding=login_branding())
 
 
 @app.route("/login", methods=["POST"])
@@ -3020,7 +3058,15 @@ def login_action():
             return redirect(url_for("change_password"))
         return redirect(url_for("index"))
     flash("Invalid username or password", "error")
-    return render_template("login.html")
+    return render_template("login.html", branding=login_branding())
+
+
+@app.route("/login/logo")
+def login_logo():
+    filename = os.path.basename(get_setting("login_logo_file", ""))
+    if not filename:
+        abort(404)
+    return send_from_directory(UPLOAD_DIR, filename, max_age=0)
 
 
 @app.route("/logout", methods=["POST"])
@@ -4852,6 +4898,10 @@ def render_settings_page(revealed_recovery_key: str = ""):
         models=models,
         model_fetch_status=_openrouter_models_status(),
         ai_features=[(key, label, ai_feature_enabled(key)) for key, label in AI_FEATURES.items()],
+        login_branding_saved={key: get_setting(key, "") for key in LOGIN_BRANDING_DEFAULTS},
+        login_branding_defaults=LOGIN_BRANDING_DEFAULTS,
+        login_branding_max_length=LOGIN_BRANDING_MAX_LENGTH,
+        login_logo_set=bool(get_setting("login_logo_file", "")),
         current_db_info=database_file_info(DB_PATH),
         db_backups=list_database_backups(),
         db_path_display=str(DB_PATH),
@@ -4903,6 +4953,25 @@ def settings_save():
         for key in AI_FEATURES:
             value = "1" if request.form.get(key) == "1" else "0"
             db.execute("insert or replace into app_settings(key, value) values (?, ?)", (key, value))
+    if request.form.get("login_branding_form") == "1":
+        for key in LOGIN_BRANDING_DEFAULTS:
+            value = request.form.get(key, "").strip()[:LOGIN_BRANDING_MAX_LENGTH]
+            db.execute("insert or replace into app_settings(key, value) values (?, ?)", (key, value))
+        logo = request.files.get("login_logo")
+        if logo and logo.filename:
+            data = logo.read(LOGIN_LOGO_MAX_BYTES + 1)
+            ext = _login_logo_ext(data)
+            if len(data) > LOGIN_LOGO_MAX_BYTES or not ext:
+                db.rollback()
+                flash("Logo must be a PNG, JPG, GIF or WebP image under 2 MB. Nothing was saved.", "error")
+                return redirect(url_for("settings_page"))
+            ensure_runtime_dirs()
+            _remove_login_logo(db)
+            filename = f"login-logo-{secrets.token_hex(8)}{ext}"
+            (UPLOAD_DIR / filename).write_bytes(data)
+            db.execute("insert or replace into app_settings(key, value) values ('login_logo_file', ?)", (filename,))
+        elif request.form.get("remove_login_logo") == "1":
+            _remove_login_logo(db)
     db.commit()
     flash("Settings saved", "success")
     return redirect(url_for("settings_page"))

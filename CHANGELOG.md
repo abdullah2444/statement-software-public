@@ -18,6 +18,8 @@ The first numbered release. From now on, updates can be installed from Settings.
 - Encrypted cloud backups to your own Backblaze B2 bucket, every 30 minutes,
   with Test Restore, Download and Restore buttons.
 - Admin switches to turn the AI receipt reading features on and off.
+- Settings → Login Screen: change the company name, welcome line and logo
+  shown on the sign-in page.
 
 **Fixed**
 - Buttons that were broken or hard to reach on phones.

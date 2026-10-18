@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-    <title>Login - Firefly Statements</title>
+    <title>Login - {{ branding.login_title }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=asset_version) }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css', v=asset_version) }}">
     <style>
@@ -23,6 +23,14 @@
         color: #0f172a;
         margin: 0 0 4px;
       }
+      .login-logo {
+        display: block;
+        max-width: 180px;
+        max-height: 72px;
+        margin: 0 0 16px;
+        object-fit: contain;
+      }
+      .login-card h1, .login-card .subtitle { overflow-wrap: anywhere; }
       .login-card .subtitle {
         font-size: 13px;
         color: #64748b;
@@ -77,6 +85,7 @@
         body { padding: 16px; align-items: flex-start; padding-top: 60px; }
         .login-card { padding: 24px 20px; max-width: 100%; border-radius: 14px; }
         .login-card h1 { font-size: 20px; }
+        .login-logo { max-width: 150px; max-height: 60px; }
         .login-field input { padding: 12px; font-size: 16px; min-height: 48px; }
         .login-btn { padding: 14px; font-size: 16px; min-height: 48px; }
       }
@@ -84,8 +93,11 @@
   </head>
   <body>
     <div class="login-card">
-      <h1>Firefly Statements</h1>
-      <p class="subtitle">Sign in to continue</p>
+      {% if branding.logo_file %}
+      <img class="login-logo" src="{{ url_for('login_logo', v=branding.logo_file) }}" alt="">
+      {% endif %}
+      <h1>{{ branding.login_title }}</h1>
+      <p class="subtitle">{{ branding.login_subtitle }}</p>
       {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
       {% for cat, msg in messages %}
