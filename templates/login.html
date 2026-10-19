@@ -30,6 +30,14 @@
         margin: 0 0 16px;
         object-fit: contain;
       }
+      .login-logo-backdrop {
+        display: inline-block;
+        margin: 0 0 16px;
+        padding: 12px 18px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #103a46 0%, #1d4c57 100%);
+      }
+      .login-logo-backdrop .login-logo { margin: 0; }
       .login-card h1, .login-card .subtitle { overflow-wrap: anywhere; }
       .login-card .subtitle {
         font-size: 13px;
@@ -94,7 +102,12 @@
   <body>
     <div class="login-card">
       {% if branding.logo_file %}
+      {% if branding.logo_on_dark %}
+      {# A white logo would vanish on the white card, so it sits on the app's dark colour. #}
+      <span class="login-logo-backdrop"><img class="login-logo" src="{{ url_for('login_logo', v=branding.logo_file) }}" alt=""></span>
+      {% else %}
       <img class="login-logo" src="{{ url_for('login_logo', v=branding.logo_file) }}" alt="">
+      {% endif %}
       {% endif %}
       <h1>{{ branding.login_title }}</h1>
       <p class="subtitle">{{ branding.login_subtitle }}</p>

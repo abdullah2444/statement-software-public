@@ -116,3 +116,46 @@ class LoginBrandingTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def _png(colour, background=None, size=(120, 40)):
+    """A logo-like PNG: a coloured bar, on a see-through or solid background."""
+    from PIL import Image
+    image = Image.new('RGBA', size, background or (0, 0, 0, 0))
+    for x in range(20, 100):
+        for y in range(10, 30):
+            image.putpixel((x, y), colour)
+    out = io.BytesIO()
+    image.save(out, 'PNG')
+    return out.getvalue()
+
+
+try:
+    import PIL  # noqa: F401
+    HAVE_PIL = True
+except ImportError:
+    HAVE_PIL = False
+
+
+@unittest.skipUnless(HAVE_PIL, 'Pillow not installed')
+class LightLogoTests(LoginBrandingTests):
+    """A white logo on a see-through background is shown on a dark background."""
+
+    def test_white_see_through_logo_gets_dark_background(self):
+        self.save(logo=('logo.png', _png((250, 250, 250, 255))))
+        html = self.login_html()
+        self.assertIn('class="login-logo-backdrop"', html)
+        self.assertIn('shows it on a dark background', self.admin.get('/settings').get_data(as_text=True))
+
+    def test_dark_logos_and_solid_backgrounds_stay_as_they_are(self):
+        for logo in (_png((20, 30, 40, 255)), _png((20, 30, 40, 255), background=(255, 255, 255, 255))):
+            self.save(logo=('logo.png', logo))
+            html = self.login_html()
+            self.assertIn('class="login-logo"', html)
+            self.assertNotIn('class="login-logo-backdrop"', html)
+
+    def test_unreadable_file_is_not_light(self):
+        broken = Path(self.tmp.name) / 'uploads' / 'login-logo-broken.png'
+        broken.parent.mkdir(parents=True, exist_ok=True)
+        broken.write_bytes(PNG)
+        self.assertFalse(self.module.logo_is_light(broken.name))

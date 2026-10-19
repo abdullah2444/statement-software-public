@@ -4,6 +4,14 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.4
+
+**Fixed**
+- A white or very light logo on a see-through background vanished on the
+  white login card. The login page now shows such logos on a dark
+  background, and Settings > Login Screen says so. Dark logos, and logos with
+  their own background, look the same as before.
+
 ## 5.2.3
 
 Security update for the building blocks the app is made of. Nothing changes
