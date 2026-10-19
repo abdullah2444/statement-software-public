@@ -110,6 +110,23 @@ Don't rebuild the app by hand with `docker compose up --build`, `setup.sh` or
 is in that folder, not the release that is installed. If you need to, first
 check out the installed release there (`git fetch --tags && git checkout v5.1.0`).
 
+## Package versions
+
+`requirements.txt` lists the packages the app uses. `constraints.txt` pins
+the exact version of every package, including the ones those pull in, so
+every build gets the same code. The **Dependency security check** on GitHub
+checks `constraints.txt` every Monday and emails the owner if a package gets
+a known security problem.
+
+To change a version: edit `requirements.txt`, then rebuild the lock file in a
+clean Python 3.11 environment and run the check:
+
+```
+python -m venv /tmp/v && /tmp/v/bin/pip install -r requirements.txt
+/tmp/v/bin/pip freeze --exclude pip --exclude setuptools --exclude wheel > constraints.txt
+/tmp/v/bin/pip install pip-audit && /tmp/v/bin/pip-audit -r constraints.txt
+```
+
 ## Publishing a release
 
 1. Make the changes on a branch and merge them into `main` after the tests pass.

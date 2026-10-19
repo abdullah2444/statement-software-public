@@ -1,6 +1,6 @@
-Flask==3.1.0
+Flask==3.1.3
 openpyxl==3.1.5
-weasyprint==63.1
-requests==2.32.3
-openrouter
+weasyprint==70.0
+requests==2.34.2
+openrouter==1.3.65
 gunicorn==23.0.0

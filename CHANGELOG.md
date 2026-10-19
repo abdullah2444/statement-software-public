@@ -4,6 +4,17 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.3
+
+Security update for the building blocks the app is made of. Nothing changes
+in how you use it.
+
+- Flask, Requests and WeasyPrint (which makes the PDF statements) updated to
+  versions without known security problems.
+- PDFs can only load the app's own logo, never web addresses or other files.
+- Every package is now locked to an exact version, and GitHub checks them
+  every week for new security problems.
+
 ## 5.2.2
 
 **Improved**
