@@ -9,9 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     restic ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies at the exact versions in constraints.txt; also update pip
+# and setuptools themselves, which ship with known security problems.
+COPY requirements.txt constraints.txt ./
+RUN pip install --no-cache-dir --upgrade pip setuptools \
+    && pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
 # The app runs as this user, not root (docker-entrypoint.sh switches to it)
 RUN groupadd --system --gid 10001 app \

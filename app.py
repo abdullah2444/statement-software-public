@@ -22,6 +22,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 from zoneinfo import ZoneInfo
 
 import requests as http_requests
@@ -616,10 +617,42 @@ def utc_timestamp() -> str:
     return utc_now().isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def pdf_url_allowed(url: str) -> bool:
+    """PDFs may only load the app's own files (the logo), never web addresses or other
+    files on the server, whatever ends up in the statement's HTML."""
+    if not url.lower().startswith("file://"):
+        return False
+    path = Path(unquote(urlsplit(url).path))
+    if os.name == "nt" and str(path).startswith("\\"):
+        path = Path(str(path).lstrip("\\"))
+    static = (BASE_DIR / "static").resolve()
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    return resolved.is_file() and static in resolved.parents
+
+
+def _pdf_url_fetcher():
+    if weasyprint is None or not hasattr(weasyprint, "URLFetcher"):
+        return None
+
+    class StaticOnlyFetcher(weasyprint.URLFetcher):
+        def fetch(self, url, headers=None):
+            if not pdf_url_allowed(url):
+                raise ValueError("PDFs may only use the app's own images.")
+            return super().fetch(url, headers)
+
+    return StaticOnlyFetcher(allowed_protocols=("file",))
+
+
 def render_pdf_bytes(html_string: str) -> bytes:
     if weasyprint is None:
         raise RuntimeError("PDF export requires WeasyPrint to be installed in the runtime environment.")
-    return weasyprint.HTML(string=html_string).write_pdf()
+    fetcher = _pdf_url_fetcher()
+    if fetcher is None:
+        return weasyprint.HTML(string=html_string).write_pdf()
+    return weasyprint.HTML(string=html_string, url_fetcher=fetcher).write_pdf()
 
 
 def china_today() -> date:

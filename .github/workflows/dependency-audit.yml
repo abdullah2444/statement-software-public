@@ -1,0 +1,32 @@
+name: Dependency security check
+
+# Checks every package the app is built with (constraints.txt) against the
+# public list of known security problems. Runs every Monday, and whenever the
+# package lists change. A red run means: update the package named in the log
+# and make a new release. GitHub emails the repository owner when it fails.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  pull_request:
+    paths: ["requirements.txt", "constraints.txt", "Dockerfile"]
+  push:
+    branches: [main]
+    paths: ["requirements.txt", "constraints.txt", "Dockerfile"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Check the exact versions in constraints.txt
+        run: pip-audit --progress-spinner off -r constraints.txt

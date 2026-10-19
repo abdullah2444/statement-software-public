@@ -62,3 +62,41 @@ class ProductionServerTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PdfFetchTests(unittest.TestCase):
+    """PDFs may load the app's own logo, never web addresses or other server files."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        base = Path(cls.tmp.name)
+        with patch.dict(os.environ, {
+            'DATABASE_PATH': str(base / 'test.db'), 'UPLOAD_DIR': str(base / 'uploads'),
+            'BACKUP_DIR': str(base / 'backups'), 'SECRET_KEY': 'test-only',
+        }):
+            spec = importlib.util.spec_from_file_location('pdf_app', ROOT / 'app.py')
+            cls.module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(cls.module)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_only_the_apps_static_files_are_allowed(self):
+        logo = (ROOT / 'static' / 'logo.png').resolve().as_uri()
+        self.assertTrue(self.module.pdf_url_allowed(logo))
+        for url in ['http://169.254.169.254/latest/meta-data', 'https://example.com/x.png',
+                    (ROOT / 'app.py').resolve().as_uri(), (ROOT / 'static' / '..' / 'app.py').resolve().as_uri(),
+                    'file:///etc/passwd', 'data:image/png;base64,AAAA', (ROOT / 'static' / 'missing.png').resolve().as_uri()]:
+            self.assertFalse(self.module.pdf_url_allowed(url), url)
+
+    def test_pinned_versions_have_no_known_problems_listed_here(self):
+        pins = dict(line.split('==') for line in (ROOT / 'requirements.txt').read_text().split() if '==' in line)
+        self.assertGreaterEqual(tuple(int(x) for x in pins['Flask'].split('.')), (3, 1, 3))
+        self.assertGreaterEqual(tuple(int(x) for x in pins['requests'].split('.')), (2, 33, 0))
+        self.assertGreaterEqual(int(pins['weasyprint'].split('.')[0]), 70)
+        self.assertIn('openrouter', pins, 'openrouter must be pinned')
+        constraints = (ROOT / 'constraints.txt').read_text()
+        for name, version in pins.items():
+            self.assertRegex(constraints, rf'(?im)^{name}=={re.escape(version)}$', name)
