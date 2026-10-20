@@ -4,6 +4,14 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.5
+
+**Fixed**
+- Backups could fail with "Permission denied" on servers where older versions
+  had left receipts with no read permission (the app used to run as root,
+  which ignores that). The app now repairs its data's permissions when it
+  starts, and restored receipts always get normal permissions.
+
 ## 5.2.4
 
 **Fixed**

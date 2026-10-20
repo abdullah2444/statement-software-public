@@ -33,6 +33,7 @@ class ProductionServerTests(unittest.TestCase):
         entrypoint = (ROOT / 'docker-entrypoint.sh').read_text(encoding='utf-8')
         self.assertIn('chown -R app:app', entrypoint)
         self.assertIn('setpriv --reuid=app --regid=app', entrypoint)
+        self.assertIn('chmod -R u+rwX', entrypoint, 'root-era files with mode 000 must become readable')
         self.assertNotIn('\r', entrypoint, 'a Windows line ending would break the script on Linux')
         self.assertRegex((ROOT / 'requirements.txt').read_text(), r'(?m)^gunicorn==')
 
@@ -55,6 +56,26 @@ class ProductionServerTests(unittest.TestCase):
             module.start_app_services()
         self.assertEqual(calls, ['init_db', 'ensure_seeded', 'resequence_all_clients', 'start_backup_scheduler',
                                  'start_cloud_backup_scheduler', 'start_update_threads'])
+
+    @unittest.skipIf(os.name == 'nt', 'Windows has no Unix file modes')
+    def test_restored_receipts_get_normal_permissions(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = Path(tmp.name)
+        with patch.dict(os.environ, {
+            'DATABASE_PATH': str(base / 'test.db'), 'UPLOAD_DIR': str(base / 'uploads'),
+            'BACKUP_DIR': str(base / 'backups'), 'SECRET_KEY': 'test-only',
+        }):
+            spec = importlib.util.spec_from_file_location('perm_app', ROOT / 'app.py')
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        staged = base / 'staged'
+        staged.mkdir()
+        receipt = staged / 'receipt.jpg'
+        receipt.write_bytes(b'jpg')
+        receipt.chmod(0)  # as found on the live server
+        module.replace_uploads_contents(staged)
+        self.assertEqual((base / 'uploads' / 'receipt.jpg').stat().st_mode & 0o777, 0o644)
 
     def test_installer_caps_memory(self):
         self.assertIn('mem_limit:', (ROOT / 'scripts' / 'install-updater.sh').read_text(encoding='utf-8'))
