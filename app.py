@@ -501,9 +501,42 @@ LOGIN_LOGO_SIGNATURES = {
 }
 
 
+_logo_light_cache: dict[str, bool] = {}
+
+
+def logo_is_light(filename: str) -> bool:
+    """True for a white or very light logo on a see-through background, which would
+    vanish on the white login card. Worked out once per uploaded file."""
+    if not filename:
+        return False
+    if filename not in _logo_light_cache:
+        _logo_light_cache[filename] = _measure_logo_light(UPLOAD_DIR / os.path.basename(filename))
+    return _logo_light_cache[filename]
+
+
+def _measure_logo_light(path: Path) -> bool:
+    try:
+        from PIL import Image
+        with Image.open(path) as image:
+            image = image.convert("RGBA")
+            image.thumbnail((200, 200))
+            everything = list(image.getdata())
+    except Exception:
+        return False
+    pixels = [p for p in everything if p[3] > 100]
+    # A logo with its own solid background (e.g. dark on white JPG) already shows fine.
+    see_through = sum(1 for p in everything if p[3] < 30)
+    if not pixels or see_through < len(everything) * 0.1:
+        return False
+    # Perceived brightness, 0 = black, 255 = white.
+    brightness = sum(0.299 * r + 0.587 * g + 0.114 * b for r, g, b, _ in pixels) / len(pixels)
+    return brightness > 200
+
+
 def login_branding() -> dict[str, str]:
     branding = {key: get_setting(key, "").strip() or default for key, default in LOGIN_BRANDING_DEFAULTS.items()}
     branding["logo_file"] = get_setting("login_logo_file", "")
+    branding["logo_on_dark"] = logo_is_light(branding["logo_file"])
     return branding
 
 
@@ -5252,6 +5285,7 @@ def render_settings_page(revealed_recovery_key: str = ""):
         login_branding_defaults=LOGIN_BRANDING_DEFAULTS,
         login_branding_max_length=LOGIN_BRANDING_MAX_LENGTH,
         login_logo_set=bool(get_setting("login_logo_file", "")),
+        login_logo_on_dark=logo_is_light(get_setting("login_logo_file", "")),
         current_db_info=database_file_info(DB_PATH),
         db_backups=list_database_backups(),
         db_path_display=str(DB_PATH),

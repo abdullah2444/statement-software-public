@@ -522,7 +522,12 @@
           <div class="settings-field">
             <label for="login_logo">Logo</label>
             {% if login_logo_set %}
+            {% if login_logo_on_dark %}
+            <span style="display:inline-block;padding:10px 16px;border-radius:10px;background:linear-gradient(135deg,#103a46 0%,#1d4c57 100%);margin-bottom:6px;"><img src="{{ url_for('login_logo') }}" alt="Current login logo" style="display:block;max-width:180px;max-height:72px;object-fit:contain;"></span>
+            <div class="field-hint" style="margin-bottom:8px;">This logo is white or very light, so the login page shows it on a dark background.</div>
+            {% else %}
             <img src="{{ url_for('login_logo') }}" alt="Current login logo" style="display:block;max-width:180px;max-height:72px;object-fit:contain;margin-bottom:8px;">
+            {% endif %}
             {% endif %}
             <input type="file" id="login_logo" name="login_logo" accept=".png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp">
             <div class="field-hint">PNG, JPG, GIF or WebP, up to 2 MB. Choose a file to replace the current logo, or leave empty to keep it.</div>
