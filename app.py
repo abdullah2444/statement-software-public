@@ -1157,6 +1157,17 @@ def replace_uploads_contents(source_dir: Path | None) -> None:
             shutil.copytree(child, target)
         else:
             shutil.copy2(child, target)
+    make_readable(UPLOAD_DIR)
+
+
+def make_readable(directory: Path) -> None:
+    """Give restored receipts normal permissions. copy2 keeps the archive's, and some
+    older backups hold files nobody may read; the app no longer runs as root, so it
+    would not be able to show or back them up."""
+    for path in directory.rglob("*"):
+        if path.is_symlink():
+            continue
+        path.chmod(0o755 if path.is_dir() else 0o644)
 
 
 def activate_restore_candidate(candidate_path: Path, label: str, staged_uploads: Path | None = None) -> Path:

@@ -22,6 +22,36 @@ import urllib.request
 from pathlib import Path
 
 
+def _repair_data_permissions(uid: int, gid: int) -> None:
+    """While still root: make sure the app user owns and can read all its data.
+
+    Files left by versions that ran as root can have no permissions at all
+    (seen on a live server). The recovery backup reads every receipt, and it
+    runs before the new version (whose start-up also repairs this) is started,
+    so a single such file would block every update.
+    """
+    paths = [os.environ.get(name) for name in ("UPLOAD_DIR", "BACKUP_DIR", "UPDATER_DIR")]
+    database = os.environ.get("DATABASE_PATH", "/data/firefly_statement.db")
+    paths += [database, database + "-wal", database + "-shm", "/data/updater"]
+    for top in filter(None, paths):
+        if not os.path.exists(top):
+            continue
+        for root, dirs, files in os.walk(top) if os.path.isdir(top) else [(os.path.dirname(top), [], [os.path.basename(top)])]:
+            for name in [None, *dirs, *files]:
+                path = root if name is None else os.path.join(root, name)
+                if os.path.islink(path):
+                    continue
+                try:
+                    st = os.stat(path)
+                    if (st.st_uid, st.st_gid) != (uid, gid):
+                        os.chown(path, uid, gid)
+                    wanted = st.st_mode | (0o700 if os.path.isdir(path) else 0o600)
+                    if wanted != st.st_mode:
+                        os.chmod(path, wanted & 0o7777)
+                except OSError:
+                    pass
+
+
 def _drop_root() -> None:
     """`docker exec` runs this as root. Switch to the app's own user before touching
     any data, or the backup files and SQLite's -wal/-shm files would end up owned by
@@ -33,6 +63,7 @@ def _drop_root() -> None:
         account = pwd.getpwnam("app")
     except (ImportError, KeyError):
         return  # an older image without the app user: stay as before
+    _repair_data_permissions(account.pw_uid, account.pw_gid)
     os.setgroups([])
     os.setgid(account.pw_gid)
     os.setuid(account.pw_uid)
