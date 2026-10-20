@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=asset_version) }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css', v=asset_version) }}">
     <style>
-      body { background: linear-gradient(180deg, #f8fafc 0%, #f3f6fb 100%); }
+      body { background: linear-gradient(180deg, #f8fafc 0%, #f3f6fb 100%); min-height: 100vh; }
       .settings-shell {
         max-width: 900px;
         margin: 40px auto;
@@ -19,12 +19,6 @@
         justify-content: space-between;
         margin-bottom: 24px;
       }
-      .settings-sections { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
-      .settings-sections a {
-        padding: 8px 14px; border: 1px solid var(--line, #dce5e8); border-radius: 8px;
-        background: #fff; color: #103a46; font-size: 14px; font-weight: 600; text-decoration: none;
-      }
-      .settings-sections a:hover { background: #eef4f4; }
       .settings-card[id] { scroll-margin-top: 16px; }
       .settings-header h1 {
         font-size: 24px;
@@ -85,12 +79,6 @@
         font-size: 12px;
         color: #9ca3af;
         margin-top: 4px;
-      }
-      .settings-actions {
-        display: flex;
-        gap: 12px;
-        justify-content: flex-end;
-        margin-top: 20px;
       }
       .btn-save {
         background: #1d4ed8;
@@ -271,8 +259,6 @@
         .settings-header { flex-wrap: wrap; gap: 10px; }
         .settings-header h1 { font-size: 20px; }
         .settings-card { padding: 18px; }
-        .settings-actions { justify-content: stretch; }
-        .settings-actions .btn-save { width: 100%; min-height: 44px; }
       }
       @media (max-width: 480px) {
         .settings-shell { margin: 12px auto; padding: 0 8px; }
@@ -285,6 +271,111 @@
         .btn-back { padding: 8px 14px; font-size: 13px; }
         .key-status { margin-left: 4px; font-size: 11px; }
       }
+
+      /* ── Tabbed layout ─────────────────────────────────────────── */
+      .settings-shell { max-width: 1080px; }
+      .settings-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 24px; align-items: start; }
+      .settings-tabs { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 4px; }
+      .settings-tabs a {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        padding: 10px 14px; border-radius: 10px; color: #334155;
+        font-size: 14px; font-weight: 600; text-decoration: none;
+      }
+      .settings-tabs a:hover { background: #eef4f4; }
+      .settings-tabs a[aria-selected="true"] { background: #fff; color: #0f5f62; box-shadow: 0 1px 0 #dbe3ee, 0 4px 14px rgba(15,23,42,0.06); }
+      .tab-dot { width: 8px; height: 8px; border-radius: 50%; background: #2563eb; flex: 0 0 8px; }
+      .tab-dot-bad { background: #dc2626; }
+      .tabs-ready .settings-panel { display: none; }
+      .tabs-ready .settings-panel.is-active { display: block; }
+      .settings-panel > .settings-card:last-child { margin-bottom: 0; }
+
+      /* ── Card parts ─────────────────────────────────────────────── */
+      .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+      .card-head h2 { margin-bottom: 6px; }
+      .card-head-action { margin: 0; flex: 0 0 auto; }
+      .version-line { font-size: 15px; color: #111827; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .version-line strong { font-size: 20px; }
+      .muted-line { font-size: 13px; color: #6b7280; margin-top: 4px; }
+      .muted-inline { font-weight: 500; color: #6b7280; }
+      .settings-card h2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .card-subhead { font-size: 13px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin: 22px 0 6px; }
+      .card-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 20px; padding-top: 16px; border-top: 1px solid #eef2f6; }
+      .card-actions-left { justify-content: flex-start; border-top: none; padding-top: 0; margin-top: 12px; }
+      .card-actions-split { margin-top: 14px; justify-content: space-between; }
+      .card-actions .cloud-inline-form { margin-top: 0; }
+      .card-actions .field-hint { margin: 0; }
+      .update-offer { border: 1px solid #bfdbfe; background: #f8fbff; border-radius: 12px; padding: 4px 14px 14px; margin: 12px 0; }
+      .update-offer .release { border: none; padding: 8px 0; margin: 0; }
+      .inline-alert { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+      .pill { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1.6; white-space: nowrap; }
+      .pill-ok { background: #dcfce7; color: #166534; }
+      .pill-info { background: #dbeafe; color: #1e3a8a; }
+      .pill-warn { background: #fef3c7; color: #92400e; }
+      .pill-bad { background: #fee2e2; color: #991b1b; }
+      .pill-muted { background: #f1f5f9; color: #475569; }
+
+      /* Lists instead of wide tables: nothing runs off the edge. */
+      .list { list-style: none; margin: 0; padding: 0; }
+      .list-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid #f1f5f9; }
+      .list-row:last-child { border-bottom: none; }
+      .list-main { min-width: 0; }
+      .list-title { font-size: 14px; font-weight: 600; color: #111827; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .list-sub { font-size: 13px; color: #6b7280; margin-top: 2px; overflow-wrap: anywhere; }
+      .list-side { font-size: 12px; color: #6b7280; text-align: right; white-space: nowrap; flex: 0 0 auto; }
+      .list-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+      .list-actions form { margin: 0; }
+
+      details.more { margin-top: 12px; border-top: 1px solid #eef2f6; padding-top: 10px; }
+      details.more > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: #1d4ed8; padding: 4px 0; list-style-position: inside; }
+      details.more[open] > summary { margin-bottom: 4px; }
+      .more-body { padding: 10px 0 4px; }
+      .kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; font-size: 13px; color: #374151; }
+      .kv .mono { overflow-wrap: anywhere; color: #111827; }
+      .cloud-settings-form { margin-top: 12px; }
+      .inline-password { width: 200px; min-height: 40px; box-sizing: border-box; }
+
+      details.collapsible-card > summary { cursor: pointer; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      details.collapsible-card > summary::-webkit-details-marker { display: none; }
+      details.collapsible-card > summary::after { content: "Show"; font-size: 13px; font-weight: 600; color: #1d4ed8; margin-left: auto; }
+      details.collapsible-card[open] > summary::after { content: "Hide"; }
+      .summary-title { font-size: 16px; font-weight: 600; color: #111827; }
+      details.collapsible-card > summary .pill { margin-left: 0; }
+
+      /* One button size everywhere on this page. */
+      .settings-shell :is(.btn-save, .btn-secondary, .btn-back, .btn-danger) {
+        display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+        min-height: 40px; padding: 0 16px; box-sizing: border-box;
+        border-radius: 10px; font-size: 14px; font-weight: 600; line-height: 1.2;
+        text-decoration: none; white-space: nowrap; cursor: pointer;
+      }
+      .settings-shell a.btn-save { color: #fff; }
+      .settings-shell .btn-sm { min-height: 34px; padding: 0 12px; font-size: 13px; }
+      .btn-danger { background: #fff; color: #b91c1c; border: 1px solid #fca5a5; }
+      .btn-danger:hover { background: #fef2f2; }
+      .settings-shell button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+      /* Secret keys show as dots without being "passwords" for password managers. */
+      .secret-input { -webkit-text-security: disc; text-security: disc; }
+
+      @media (max-width: 860px) {
+        .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+        .settings-tabs { position: static; flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 2px; }
+        .settings-tabs a { flex: 0 0 auto; padding: 9px 14px; background: #fff; border: 1px solid #dbe3ee; }
+        .settings-tabs a[aria-selected="true"] { border-color: #0f5f62; box-shadow: none; }
+      }
+      @media (max-width: 560px) {
+        .card-head { flex-direction: column; align-items: stretch; }
+        .card-head-action .btn-secondary { width: 100%; }
+        .list-row { flex-wrap: wrap; }
+        .list-actions { width: 100%; }
+        .list-actions > a, .list-actions > form { flex: 1 1 0; }
+        .list-actions .btn-sm { width: 100%; min-height: 40px; }
+        .list-side { text-align: left; }
+        .card-actions { justify-content: stretch; }
+        .card-actions > .btn-save, .card-actions > .btn-secondary, .card-actions > a, .card-actions > button { flex: 1 1 auto; }
+        .settings-upload-row .btn-save { width: 100%; }
+      }
     </style>
   </head>
   <body>
@@ -295,16 +386,6 @@
         <a href="{{ url_for('index') }}" class="btn-back desktop-only">Back to Dashboard</a>
       </div>
 
-      <nav class="settings-sections" aria-label="Settings sections">
-        <a href="#software-updates">Updates</a>
-        <a href="#exchange-rate">Exchange rate</a>
-        <a href="#ai-settings">AI</a>
-        <a href="#login-screen">Login screen</a>
-        <a href="#backup-restore">Backup &amp; restore</a>
-        <a href="#cloud-backup">Cloud backup</a>
-        <a href="#github-backup">GitHub backup</a>
-      </nav>
-
       {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
       {% for cat, msg in messages %}
@@ -313,99 +394,114 @@
       {% endif %}
       {% endwith %}
 
-      <!-- ── Software Updates ─────────────────────────────── -->
-      <div class="settings-card" id="software-updates" data-last-run="{{ updates.run.id if updates.run.state != 'running' else '' }}">
-        <h2>
-          Software Updates
-          {% if updates.in_progress %}
-            <span class="key-status missing">Updating</span>
-          {% elif updates.available %}
-            <span class="key-status missing">Update available</span>
-          {% elif updates.last_check %}
-            <span class="key-status configured">Up to date</span>
-          {% endif %}
-        </h2>
-        <p>New versions are published on GitHub. Review what changed, then click Update Now. The app saves a recovery backup first, and if anything goes wrong it puts the previous version and your data back by itself.</p>
+      <div class="settings-layout">
+        <nav class="settings-tabs" aria-label="Settings sections" role="tablist">
+          <a href="#updates" role="tab" data-tab="updates">Updates{% if updates.available %}<span class="tab-dot" title="Update available"></span>{% endif %}</a>
+          <a href="#general" role="tab" data-tab="general">General</a>
+          <a href="#ai" role="tab" data-tab="ai">AI</a>
+          <a href="#backups" role="tab" data-tab="backups">Backups{% if cloud.last_error %}<span class="tab-dot tab-dot-bad" title="Last cloud backup failed"></span>{% endif %}</a>
+        </nav>
 
-        <div class="db-meta">
-          <div class="db-meta-item"><strong>Installed version</strong><span id="upd-installed">{{ updates.installed }}</span></div>
-          <div class="db-meta-item"><strong>Latest version</strong><span>{{ updates.latest or 'Not checked yet' }}</span></div>
-          <div class="db-meta-item"><strong>Last checked</strong><span>{{ (updates.last_check[:16].replace('T', ' ') ~ ' UTC') if updates.last_check else 'Never' }}</span></div>
-          <div class="db-meta-item"><strong>Updater service</strong><span id="upd-service">{{ 'Running' if updates.updater_online else ('Not responding' if updates.updater_installed else 'Not installed') }}</span></div>
-        </div>
-
-        {% if updates.last_check_error %}
-        <div class="cloud-box cloud-box-error">Last check failed: {{ updates.last_check_error }}</div>
-        {% endif %}
-        {% if not updates.updater_installed %}
-        <div class="cloud-box cloud-box-warn">The updater service isn't installed on this server yet, so updates can be checked but not installed from here. It is set up once on the server; see docs/UPDATES.md.</div>
-        {% elif not updates.updater_online %}
-        <div class="cloud-box cloud-box-warn">The updater service on the server is not responding, so Update Now won't work until it is running again.</div>
-        {% endif %}
-        {% if updates.paused and not updates.updater_online %}
-        <form method="POST" action="{{ url_for('settings_updates_resume') }}" class="cloud-box cloud-box-error">
-          {{ csrf_input() }}
-          Saving is paused for an update, but the updater has stopped responding.
-          <button type="submit" class="btn-secondary" onclick="return confirm('Turn saving back on? Only do this if no update is running.');">Turn Saving Back On</button>
-        </form>
-        {% endif %}
-
-        {% for release in updates.available %}
-        <div class="release">
-          <div class="release-head">
-            <strong>Version {{ release.version }}</strong>
-            <span class="release-date">{{ release.published_at[:10] }}</span>
-            {% if release.url %}<a href="{{ release.url }}" target="_blank" rel="noopener noreferrer">View on GitHub</a>{% endif %}
+        <div class="settings-panels">
+      <section class="settings-panel" data-panel="updates" role="tabpanel">
+        <div class="settings-card" id="software-updates" data-last-run="{{ updates.run.id if updates.run.state != 'running' else '' }}">
+          <div class="card-head">
+            <div>
+              <h2>Software</h2>
+              <div class="version-line">
+                Version <strong id="upd-installed">{{ updates.installed }}</strong>
+                {% if updates.in_progress %}<span class="pill pill-warn">Updating</span>
+                {% elif updates.available %}<span class="pill pill-info">Update available</span>
+                {% elif updates.last_check and not updates.last_check_error %}<span class="pill pill-ok">Up to date</span>{% endif %}
+              </div>
+              <div class="muted-line">
+                Last checked {{ (updates.last_check[:16].replace('T', ' ') ~ ' UTC') if updates.last_check else 'never' }}
+                · Updater <span id="upd-service">{{ 'running' if updates.updater_online else ('not responding' if updates.updater_installed else 'not installed') }}</span>
+              </div>
+            </div>
+            <form method="POST" action="{{ url_for('settings_updates_check') }}" class="card-head-action">
+              {{ csrf_input() }}
+              <button type="submit" class="btn-secondary">Check for updates</button>
+            </form>
           </div>
-          <div class="release-notes">{{ release.notes or 'No release notes.' }}</div>
-        </div>
-        {% endfor %}
 
-        <div class="settings-actions" style="justify-content:flex-start;flex-wrap:wrap;gap:8px;">
-          <form method="POST" action="{{ url_for('settings_updates_check') }}" style="margin:0;">
+          {% if updates.last_check_error %}
+          <div class="cloud-box cloud-box-error">Last check failed: {{ updates.last_check_error }}</div>
+          {% endif %}
+          {% if not updates.updater_installed %}
+          <div class="cloud-box cloud-box-warn">The updater service isn't installed on this server yet, so updates can be checked but not installed from here. It is set up once on the server; see docs/UPDATES.md.</div>
+          {% elif not updates.updater_online %}
+          <div class="cloud-box cloud-box-warn">The updater service on the server is not responding, so Update Now won't work until it is running again.</div>
+          {% endif %}
+          {% if updates.paused and not updates.updater_online %}
+          <form method="POST" action="{{ url_for('settings_updates_resume') }}" class="cloud-box cloud-box-error inline-alert">
             {{ csrf_input() }}
-            <button type="submit" class="btn-secondary">Check for Updates</button>
+            <span>Saving is paused for an update, but the updater has stopped responding.</span>
+            <button type="submit" class="btn-secondary" onclick="return confirm('Turn saving back on? Only do this if no update is running.');">Turn saving back on</button>
           </form>
+          {% endif %}
+
           {% if updates.available %}
-          <button type="button" class="btn-save" id="upd-install-btn" data-version="{{ updates.available[0].version }}"
-            {% if updates.in_progress or not updates.updater_online %}disabled{% endif %}>Update Now to {{ updates.available[0].version }}</button>
+          <div class="update-offer">
+            {% for release in updates.available %}
+            <div class="release">
+              <div class="release-head">
+                <strong>Version {{ release.version }}</strong>
+                <span class="release-date">{{ release.published_at[:10] }}</span>
+                {% if release.url %}<a href="{{ release.url }}" target="_blank" rel="noopener noreferrer">View on GitHub</a>{% endif %}
+              </div>
+              <div class="release-notes">{{ release.notes or 'No release notes.' }}</div>
+            </div>
+            {% endfor %}
+            <div class="card-actions card-actions-left">
+              <button type="button" class="btn-save" id="upd-install-btn" data-version="{{ updates.available[0].version }}"
+                {% if updates.in_progress or not updates.updater_online %}disabled{% endif %}>Update now to {{ updates.available[0].version }}</button>
+              <span class="field-hint">Takes a few minutes. People can keep looking, but saving pauses until it's done.</span>
+            </div>
+          </div>
+          {% endif %}
+
+          <div id="upd-progress" style="display:none;">
+            <ol class="upd-steps" id="upd-steps">
+              {% for key, label in updates.stages %}<li data-stage="{{ key }}">{{ label }}</li>{% endfor %}
+            </ol>
+            <div id="upd-message" class="cloud-box"></div>
+          </div>
+
+          {% if updates.history %}
+          {% macro history_item(item) -%}
+          <li class="list-row">
+            <div class="list-main">
+              <div class="list-title">
+                {{ item.from_version or '?' }} → {{ (item.target or '').lstrip('v') }}
+                <span class="pill pill-{{ {'installed': 'ok', 'rolled_back': 'warn', 'not_started': 'warn', 'rollback_failed': 'bad'}.get(item.result, 'info') }}">{{ {'installed': 'Installed', 'rolled_back': 'Put back', 'not_started': 'Not installed', 'rollback_failed': 'Needs attention'}.get(item.result, item.result or '') }}</span>
+              </div>
+              {% if item.result != 'installed' %}<div class="list-sub">{{ item.message or '' }}</div>{% endif %}
+            </div>
+            <div class="list-side">{{ (item.finished_at or item.started_at or '')[:16].replace('T', ' ') }}{% if item.requested_by %}<br>by {{ item.requested_by }}{% endif %}</div>
+          </li>
+          {%- endmacro %}
+          <h3 class="card-subhead">Recent updates</h3>
+          <ul class="list">
+            {% for item in updates.history[:3] %}{{ history_item(item) }}{% endfor %}
+          </ul>
+          {% if updates.history|length > 3 %}
+          <details class="more">
+            <summary>Show all {{ updates.history|length }} updates</summary>
+            <ul class="list">
+              {% for item in updates.history[3:] %}{{ history_item(item) }}{% endfor %}
+            </ul>
+          </details>
+          {% endif %}
           {% endif %}
         </div>
-        {% if updates.available %}
-        <div class="settings-field"><div class="field-hint">While the update runs (usually a few minutes), people can still look at everything, but saving is paused. The page reconnects by itself after the app restarts.</div></div>
-        {% endif %}
+      </section>
 
-        <div id="upd-progress" style="display:none;">
-          <ol class="upd-steps" id="upd-steps">
-            {% for key, label in updates.stages %}<li data-stage="{{ key }}">{{ label }}</li>{% endfor %}
-          </ol>
-          <div id="upd-message" class="cloud-box"></div>
-        </div>
-
-        {% if updates.history %}
-        <h3 class="upd-subhead">Update history</h3>
-        <div class="table-scroll-wrap">
-          <table class="db-table">
-            <thead><tr><th>Date</th><th>From</th><th>To</th><th>Result</th><th>Details</th></tr></thead>
-            <tbody>
-              {% for item in updates.history %}
-              <tr>
-                <td>{{ (item.finished_at or item.started_at or '')[:16].replace('T', ' ') }}</td>
-                <td>{{ item.from_version or '' }}</td>
-                <td>{{ (item.target or '').lstrip('v') }}</td>
-                <td><span class="upd-result upd-result-{{ item.result or 'unknown' }}">{{ {'installed': 'Installed', 'rolled_back': 'Put back', 'not_started': 'Not installed', 'rollback_failed': 'Needs attention'}.get(item.result, item.result or '') }}</span></td>
-                <td class="upd-details">{{ item.message or '' }}{% if item.requested_by %} <span class="release-date">(by {{ item.requested_by }})</span>{% endif %}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% endif %}
-      </div>
-
-      <form method="POST" action="{{ url_for('settings_save') }}" enctype="multipart/form-data">
-        <div class="settings-card" id="exchange-rate">
-          <h2>Exchange Rate</h2>
+      <section class="settings-panel" data-panel="general" role="tabpanel">
+        <form method="POST" action="{{ url_for('settings_save') }}" class="settings-card" id="exchange-rate" autocomplete="off">
+          {{ csrf_input() }}
+          <input type="hidden" name="section" value="exchange-rate">
+          <h2>Exchange rate</h2>
           <p>Choose which rate to use for Approx Total (RMB) calculations on the dashboard.</p>
 
           <div class="settings-field">
@@ -432,20 +528,95 @@
           <div class="settings-field">
             <label>Test API Connection</label>
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-              <button type="button" id="fx-test-btn" style="background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;">Test API</button>
+              <button type="button" id="fx-test-btn" class="btn-secondary">Test API</button>
               <span id="fx-test-result" style="font-size:13px;color:#6b7280;"></span>
             </div>
             <div class="field-hint">Fetches a live USD/CNY rate to verify the API is reachable.</div>
           </div>
-        </div>
+          <div class="card-actions">
+            <button type="submit" class="btn-save">Save</button>
+          </div>
+        </form>
 
-        <div class="settings-card" id="ai-settings">
-          <h2>
-            OpenRouter AI
-            {% if api_key_set %}
-              <span class="key-status configured">Configured</span>
+        <form method="POST" action="{{ url_for('settings_save') }}" enctype="multipart/form-data" class="settings-card" id="login-screen" autocomplete="off">
+          {{ csrf_input() }}
+          <input type="hidden" name="section" value="login-screen">
+          <h2>Login screen</h2>
+          <p>Change the name, welcome line and logo people see on the sign-in page. Leave a box empty to use the default.</p>
+          <input type="hidden" name="login_branding_form" value="1">
+          <div class="settings-field">
+            <label for="login_title">Company Name</label>
+            <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" autocomplete="off" type="text" id="login_title" name="login_title" maxlength="{{ login_branding_max_length }}"
+                   value="{{ login_branding_saved.login_title }}" placeholder="{{ login_branding_defaults.login_title }}">
+            <div class="field-hint">Shown as the heading and in the browser tab. Default: {{ login_branding_defaults.login_title }}.</div>
+          </div>
+          <div class="settings-field">
+            <label for="login_subtitle">Welcome Line</label>
+            <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" autocomplete="off" type="text" id="login_subtitle" name="login_subtitle" maxlength="{{ login_branding_max_length }}"
+                   value="{{ login_branding_saved.login_subtitle }}" placeholder="{{ login_branding_defaults.login_subtitle }}">
+            <div class="field-hint">The small line under the name. Default: {{ login_branding_defaults.login_subtitle }}.</div>
+          </div>
+          <div class="settings-field">
+            <label for="login_logo">Logo</label>
+            {% if login_logo_set %}
+            {% if login_logo_on_dark %}
+            <span style="display:inline-block;padding:10px 16px;border-radius:10px;background:linear-gradient(135deg,#103a46 0%,#1d4c57 100%);margin-bottom:6px;"><img src="{{ url_for('login_logo') }}" alt="Current login logo" style="display:block;max-width:180px;max-height:72px;object-fit:contain;"></span>
+            <div class="field-hint" style="margin-bottom:8px;">This logo is white or very light, so the login page shows it on a dark background.</div>
             {% else %}
-              <span class="key-status missing">Not Set</span>
+            <img src="{{ url_for('login_logo') }}" alt="Current login logo" style="display:block;max-width:180px;max-height:72px;object-fit:contain;margin-bottom:8px;">
+            {% endif %}
+            {% endif %}
+            <input type="file" id="login_logo" name="login_logo" accept=".png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp">
+            <div class="field-hint">PNG, JPG, GIF or WebP, up to 2 MB. Choose a file to replace the current logo, or leave empty to keep it.</div>
+            {% if login_logo_set %}
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:8px;font-weight:500;">
+              <input type="checkbox" name="remove_login_logo" value="1" style="width:auto;">
+              Remove the logo
+            </label>
+            {% endif %}
+          </div>
+          <div class="card-actions">
+            <button type="submit" class="btn-save">Save</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="settings-panel" data-panel="ai" role="tabpanel">
+        <form method="POST" action="{{ url_for('settings_save') }}" class="settings-card" id="ai-features" autocomplete="off">
+          {{ csrf_input() }}
+          <input type="hidden" name="section" value="ai-features">
+          <h2>AI features</h2>
+          <p>Turn each AI feature on or off. When a feature is off, its button is hidden and the app refuses to run it, including through API tokens.</p>
+          <input type="hidden" name="ai_features_form" value="1">
+          {% for key, label, enabled in ai_features %}
+          <div class="settings-field">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+              <input type="checkbox" name="{{ key }}" value="1" {% if enabled %}checked{% endif %} style="width:auto;">
+              {{ label }}
+            </label>
+            <div class="field-hint">
+              {% if key == "ai_parse_image_enabled" %}
+                The "Parse with AI" button on a client page that fills in an entry from a receipt image.
+              {% elif key == "ai_extract_text_enabled" %}
+                Copies all the text out of an image. Only used by API tokens and outside tools; there is no button for it in the app.
+              {% endif %}
+            </div>
+          </div>
+          {% endfor %}
+          <div class="card-actions">
+            <button type="submit" class="btn-save">Save</button>
+          </div>
+        </form>
+
+        <form method="POST" action="{{ url_for('settings_save') }}" class="settings-card" id="ai-settings" autocomplete="off">
+          {{ csrf_input() }}
+          <input type="hidden" name="section" value="ai-settings">
+          <h2>
+            OpenRouter AI key
+            {% if api_key_set %}
+              <span class="pill pill-ok">Set up</span>
+            {% else %}
+              <span class="pill pill-muted">Not set up</span>
             {% endif %}
           </h2>
           <p>API key and model for image parsing and text extraction.</p>
@@ -455,7 +626,7 @@
             {% if api_key_set %}
             <div class="field-hint" style="margin-bottom:6px;">Current: <code>{{ api_key_masked }}</code></div>
             {% endif %}
-            <input type="password" id="openrouter_api_key" name="openrouter_api_key"
+            <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" class="secret-input" autocomplete="off" spellcheck="false" autocapitalize="off" type="text" id="openrouter_api_key" name="openrouter_api_key"
                    value=""
                    placeholder="{% if api_key_set %}Enter new key to replace{% else %}sk-or-...{% endif %}">
             <div class="field-hint">Get your key from openrouter.ai/settings/keys. Leave blank to keep current key.</div>
@@ -480,161 +651,20 @@
               <div class="field-hint">Only vision-capable models are shown. Models are fetched from OpenRouter.</div>
             {% endif %}
           </div>
-        </div>
-
-        <div class="settings-card" id="ai-features">
-          <h2>AI Features</h2>
-          <p>Turn each AI feature on or off. When a feature is off, its button is hidden and the app refuses to run it, including through API tokens.</p>
-          <input type="hidden" name="ai_features_form" value="1">
-          {% for key, label, enabled in ai_features %}
-          <div class="settings-field">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-              <input type="checkbox" name="{{ key }}" value="1" {% if enabled %}checked{% endif %} style="width:auto;">
-              {{ label }}
-            </label>
-            <div class="field-hint">
-              {% if key == "ai_parse_image_enabled" %}
-                The "Parse with AI" button on a client page that fills in an entry from a receipt image.
-              {% elif key == "ai_extract_text_enabled" %}
-                Copies all the text out of an image. Only used by API tokens and outside tools; there is no button for it in the app.
-              {% endif %}
-            </div>
+          <div class="card-actions">
+            <button type="submit" class="btn-save">Save</button>
           </div>
-          {% endfor %}
-        </div>
+        </form>
+      </section>
 
-        <div class="settings-card" id="login-screen">
-          <h2>Login Screen</h2>
-          <p>Change the name, welcome line and logo people see on the sign-in page. Leave a box empty to use the default.</p>
-          <input type="hidden" name="login_branding_form" value="1">
-          <div class="settings-field">
-            <label for="login_title">Company Name</label>
-            <input type="text" id="login_title" name="login_title" maxlength="{{ login_branding_max_length }}"
-                   value="{{ login_branding_saved.login_title }}" placeholder="{{ login_branding_defaults.login_title }}">
-            <div class="field-hint">Shown as the heading and in the browser tab. Default: {{ login_branding_defaults.login_title }}.</div>
-          </div>
-          <div class="settings-field">
-            <label for="login_subtitle">Welcome Line</label>
-            <input type="text" id="login_subtitle" name="login_subtitle" maxlength="{{ login_branding_max_length }}"
-                   value="{{ login_branding_saved.login_subtitle }}" placeholder="{{ login_branding_defaults.login_subtitle }}">
-            <div class="field-hint">The small line under the name. Default: {{ login_branding_defaults.login_subtitle }}.</div>
-          </div>
-          <div class="settings-field">
-            <label for="login_logo">Logo</label>
-            {% if login_logo_set %}
-            {% if login_logo_on_dark %}
-            <span style="display:inline-block;padding:10px 16px;border-radius:10px;background:linear-gradient(135deg,#103a46 0%,#1d4c57 100%);margin-bottom:6px;"><img src="{{ url_for('login_logo') }}" alt="Current login logo" style="display:block;max-width:180px;max-height:72px;object-fit:contain;"></span>
-            <div class="field-hint" style="margin-bottom:8px;">This logo is white or very light, so the login page shows it on a dark background.</div>
-            {% else %}
-            <img src="{{ url_for('login_logo') }}" alt="Current login logo" style="display:block;max-width:180px;max-height:72px;object-fit:contain;margin-bottom:8px;">
-            {% endif %}
-            {% endif %}
-            <input type="file" id="login_logo" name="login_logo" accept=".png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp">
-            <div class="field-hint">PNG, JPG, GIF or WebP, up to 2 MB. Choose a file to replace the current logo, or leave empty to keep it.</div>
-            {% if login_logo_set %}
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:8px;font-weight:500;">
-              <input type="checkbox" name="remove_login_logo" value="1" style="width:auto;">
-              Remove the logo
-            </label>
-            {% endif %}
-          </div>
-        </div>
-
-        <div class="settings-actions">
-          <button type="submit" class="btn-save">Save Settings</button>
-        </div>
-      </form>
-
-      <div class="settings-card" id="backup-restore">
-        <h2>Backup And Restore</h2>
-        <p>Download a full backup with the database and uploaded images, upload a replacement, or restore an older backup. Every restore creates a full safety backup first.</p>
-
-        <div class="db-meta">
-          <div class="db-meta-item">
-            <strong>Current Database</strong>
-            <span class="mono">{{ current_db_info.name }}</span>
-          </div>
-          <div class="db-meta-item">
-            <strong>Size</strong>
-            <span>{{ current_db_info.size_label }}</span>
-          </div>
-          <div class="db-meta-item">
-            <strong>Database Path</strong>
-            <span class="mono">{{ db_path_display }}</span>
-          </div>
-          <div class="db-meta-item">
-            <strong>Backup Directory</strong>
-            <span class="mono">{{ backup_dir_display }}</span>
-          </div>
-        </div>
-
-        <div class="settings-actions" style="justify-content:flex-start; margin-top:0;">
-          <a href="{{ url_for('settings_download_full_backup') }}" class="btn-save">Download Full Backup</a>
-          <a href="{{ url_for('settings_download_database') }}" class="btn-secondary">Download Database Only</a>
-        </div>
-
-        <div class="settings-field" style="margin-top:20px;">
-          <label for="database_file">Upload And Restore</label>
-          <form method="POST" action="{{ url_for('settings_upload_database') }}" enctype="multipart/form-data">
-            {{ csrf_input() }}
-            <div class="settings-upload-row">
-              <input id="database_file" type="file" name="database_file" accept=".tar.gz,.tgz,.db,.sqlite,.sqlite3" required>
-              <button type="submit" class="btn-save">Upload And Restore</button>
-            </div>
-            <div class="field-hint">Accepted files: .tar.gz, .tgz, .db, .sqlite, .sqlite3. Full backups restore uploaded images; database-only files do not include images.</div>
-          </form>
-        </div>
-
-        <div class="settings-field" style="margin-top:24px;">
-          <label>Available Backups</label>
-          {% if db_backups %}
-          <div class="table-scroll-wrap">
-            <table class="db-table">
-              <thead>
-                <tr>
-                  <th>Filename</th>
-                  <th>Type</th>
-                  <th>Created</th>
-                  <th>Size</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for backup in db_backups %}
-                <tr>
-                  <td class="mono">{{ backup.name }}</td>
-                  <td>{{ backup.kind }}</td>
-                  <td>{{ backup.created_at }}</td>
-                  <td>{{ backup.size_label }}</td>
-                  <td>
-                    <div class="inline-actions">
-                      <a href="{{ url_for('settings_download_database_backup', backup_name=backup.name) }}" class="btn-secondary">Download</a>
-                      <form method="POST" action="{{ url_for('settings_restore_database_backup') }}" class="inline-form" onsubmit="return confirm('Restore backup {{ backup.name }}? The current database will be saved first.');">
-                        {{ csrf_input() }}
-                        <input type="hidden" name="backup_name" value="{{ backup.name }}">
-                        <button type="submit" class="btn-save">Restore</button>
-                      </form>
-                    </div>
-                  </td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-          {% else %}
-          <div class="field-hint">No backups stored yet. A backup will be created automatically the first time you restore a database.</div>
-          {% endif %}
-        </div>
-      </div>
-
-      <!-- ── Cloud Backup (Backblaze B2) ─────────────────────── -->
+      <section class="settings-panel" data-panel="backups" role="tabpanel">
       <div class="settings-card" id="cloud-backup">
         <h2>
-          Cloud Backup (Backblaze B2)
+          Cloud backup <span class="muted-inline">(Backblaze B2)</span>
           {% if cloud.configured %}
-            <span class="key-status configured">Connected</span>
+            <span class="pill pill-ok">Connected</span>
           {% else %}
-            <span class="key-status missing">Not set up</span>
+            <span class="pill pill-muted">Not set up</span>
           {% endif %}
         </h2>
         <p>Encrypted copies of your database and receipts are sent to your own Backblaze B2 bucket. Only someone with the recovery key can open them. Only the changes are uploaded each time, so storage stays small.</p>
@@ -652,7 +682,7 @@
           <form method="POST" action="{{ url_for('settings_cloud_backup_confirm_key') }}" class="cloud-inline-form">
             {{ csrf_input() }}
             <label for="confirm_last4">To confirm you saved it, type the last 4 characters:</label>
-            <input type="text" id="confirm_last4" name="confirm_last4" maxlength="4" autocomplete="off" required>
+            <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" type="text" id="confirm_last4" name="confirm_last4" maxlength="4" autocomplete="off" required>
             <button type="submit" class="btn-save">I saved it</button>
           </form>
           {% endif %}
@@ -673,10 +703,10 @@
         <div class="cloud-box cloud-box-warn">{{ cloud.last_warning }}</div>
         {% endif %}
 
-        <div class="settings-actions" style="justify-content:flex-start;flex-wrap:wrap;gap:8px;">
-          <button type="button" class="btn-save" id="cloud-run-btn">Back Up Now</button>
-          <button type="button" class="btn-secondary" id="cloud-verify-btn">Test Restore</button>
-          <button type="button" class="btn-secondary" id="cloud-list-btn">Show Backups</button>
+        <div class="card-actions card-actions-left">
+          <button type="button" class="btn-save" id="cloud-run-btn">Back up now</button>
+          <button type="button" class="btn-secondary" id="cloud-verify-btn">Test restore</button>
+          <button type="button" class="btn-secondary" id="cloud-list-btn">Show backups</button>
         </div>
         <div id="cloud-job" class="cloud-box" style="display:none;"></div>
         <div class="settings-field"><div class="field-hint">Test Restore opens your newest backup with the recovery key in a scratch folder and checks it. Your live data is not touched.</div></div>
@@ -709,15 +739,16 @@
         </div>
         {% endif %}
 
-        <form method="POST" action="{{ url_for('settings_cloud_backup_save') }}" style="margin-top:16px;">
+        {% if cloud.configured %}<details class="more"><summary>Connection and schedule</summary>{% endif %}
+        <form method="POST" action="{{ url_for('settings_cloud_backup_save') }}" class="cloud-settings-form" autocomplete="off">
           {{ csrf_input() }}
           <div class="settings-field">
             <label for="cloud_backup_key_id">Key ID</label>
-            <input type="text" id="cloud_backup_key_id" name="cloud_backup_key_id" required value="{{ cloud_key_id }}" autocomplete="off">
+            <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" type="text" id="cloud_backup_key_id" name="cloud_backup_key_id" required value="{{ cloud_key_id }}" autocomplete="off">
           </div>
           <div class="settings-field">
             <label for="cloud_backup_app_key">Application Key</label>
-            <input type="password" id="cloud_backup_app_key" name="cloud_backup_app_key" autocomplete="new-password"
+            <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" class="secret-input" autocomplete="off" spellcheck="false" autocapitalize="off" type="text" id="cloud_backup_app_key" name="cloud_backup_app_key"
                    {% if not cloud_app_key_set %}required{% endif %}
                    placeholder="{% if cloud_app_key_set %}Saved (leave blank to keep it){% else %}K005…{% endif %}">
           </div>
@@ -726,24 +757,24 @@
             <div class="field-hint" style="margin:8px 0 12px;">Leave these empty and the app fills them in from your key. Only type a bucket name if your key can reach more than one bucket.</div>
           <div class="settings-field">
               <label for="cloud_backup_endpoint">Bucket Endpoint</label>
-              <input type="text" id="cloud_backup_endpoint" name="cloud_backup_endpoint"
+              <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" autocomplete="off" type="text" id="cloud_backup_endpoint" name="cloud_backup_endpoint"
                      value="{{ ('s3.' ~ cloud_region ~ '.backblazeb2.com') if cloud_region else '' }}"
                      placeholder="Found automatically">
             </div>
             <div class="settings-field">
               <label for="cloud_backup_bucket">Bucket Name</label>
-              <input type="text" id="cloud_backup_bucket" name="cloud_backup_bucket" value="{{ cloud_bucket }}" placeholder="Found automatically">
+              <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" autocomplete="off" type="text" id="cloud_backup_bucket" name="cloud_backup_bucket" value="{{ cloud_bucket }}" placeholder="Found automatically">
             </div>
             <div class="settings-field">
               <label for="cloud_backup_prefix">Folder In Bucket</label>
-              <input type="text" id="cloud_backup_prefix" name="cloud_backup_prefix" value="{{ cloud_prefix }}">
+              <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" autocomplete="off" type="text" id="cloud_backup_prefix" name="cloud_backup_prefix" value="{{ cloud_prefix }}">
               <div class="field-hint">Leave as it is unless you share one bucket between several installations.</div>
             </div>
           </details>
           {% if not cloud.configured %}
           <div class="settings-field">
             <label for="cloud_backup_recovery_key">Recovery Key (only if you already have backups)</label>
-            <input type="password" id="cloud_backup_recovery_key" name="cloud_backup_recovery_key" autocomplete="off">
+            <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" class="secret-input" autocomplete="off" spellcheck="false" autocapitalize="off" type="text" id="cloud_backup_recovery_key" name="cloud_backup_recovery_key">
             <div class="field-hint">Setting up a new server after losing the old one? Enter your saved recovery key here to reach your old backups. Otherwise leave it blank and a new key will be made for you.</div>
           </div>
           {% endif %}
@@ -764,41 +795,108 @@
             </select>
             <div class="field-hint">Counted from your newest backup, so if backups stop for a while the old ones are kept.</div>
           </div>
-          <div class="settings-actions" style="justify-content:flex-start;">
-            <button type="submit" class="btn-save">Save &amp; Connect</button>
+          <div class="card-actions card-actions-left">
+            <button type="submit" class="btn-save">{{ 'Save' if cloud.configured else 'Save & connect' }}</button>
           </div>
         </form>
+        {% if cloud.configured %}</details>{% endif %}
 
         {% if cloud.configured %}
-        <div class="settings-actions" style="justify-content:flex-start;flex-wrap:wrap;gap:8px;border-top:1px solid #e5e7eb;padding-top:16px;">
+        <div class="card-actions card-actions-left card-actions-split">
           {% if cloud.recovery_key_confirmed and not cloud_recovery_key_revealed %}
           <form method="POST" action="{{ url_for('settings_cloud_backup_reveal_key') }}" class="cloud-inline-form">
             {{ csrf_input() }}
-            <input type="password" name="current_password" placeholder="Your password" autocomplete="current-password" required style="width:200px;">
-            <button type="submit" class="btn-secondary">Show Recovery Key</button>
+            <input type="password" name="current_password" placeholder="Your password" autocomplete="current-password" required class="inline-password">
+            <button type="submit" class="btn-secondary">Show recovery key</button>
           </form>
           {% endif %}
           <form method="POST" action="{{ url_for('settings_cloud_backup_disconnect') }}" class="cloud-inline-form"
                 onsubmit="return confirm('Turn off cloud backups and remove the saved Backblaze keys from this app? Backups already in your bucket are NOT deleted. Make sure you have your recovery key saved.');">
             {{ csrf_input() }}
-            <button type="submit" class="btn-secondary" style="color:#b91c1c;border-color:#fca5a5;">Turn Off Cloud Backup</button>
+            <button type="submit" class="btn-danger">Turn off cloud backup</button>
           </form>
         </div>
         {% endif %}
       </div>
 
-      <!-- ── GitHub Backup ───────────────────────────────────── -->
-      <div class="settings-card" id="github-backup">
-        <h2>
-          GitHub Backup
-          {% if github_backup_repo and github_backup_token_set %}
-            <span class="key-status configured">Configured</span>
-          {% else %}
-            <span class="key-status missing">Not Set</span>
-          {% endif %}
-        </h2>
-        <p>Automatically save a full backup of your database and uploaded images to your private GitHub repository.</p>
+        <div class="settings-card" id="backup-restore">
+          <div class="card-head">
+            <div>
+              <h2>Backups on this server</h2>
+              <div class="muted-line">
+                {{ db_backups|length }} backup{{ '' if db_backups|length == 1 else 's' }}{% if db_backups %} · newest {{ db_backups[0].when }}{% endif %} · database {{ current_db_info.size_label }}
+              </div>
+            </div>
+          </div>
+          <p>A full backup holds the database and all receipt images. Every restore saves a safety backup first.</p>
+          <div class="card-actions card-actions-left">
+            <a href="{{ url_for('settings_download_full_backup') }}" class="btn-save">Download full backup</a>
+            <a href="{{ url_for('settings_download_database') }}" class="btn-secondary">Download database only</a>
+          </div>
 
+          {% if db_backups %}
+          {% macro backup_item(backup) -%}
+          <li class="list-row">
+            <div class="list-main">
+              <div class="list-title">{{ backup.when }}</div>
+              <div class="list-sub">{{ backup.reason }} · {{ backup.kind }} · {{ backup.size_label }}</div>
+            </div>
+            <div class="list-actions">
+              <a href="{{ url_for('settings_download_database_backup', backup_name=backup.name) }}" class="btn-secondary btn-sm" title="{{ backup.name }}">Download</a>
+              <form method="POST" action="{{ url_for('settings_restore_database_backup') }}" onsubmit="return confirm('Restore the backup from {{ backup.when }}? Your current data is saved first.');">
+                {{ csrf_input() }}
+                <input type="hidden" name="backup_name" value="{{ backup.name }}">
+                <button type="submit" class="btn-secondary btn-sm">Restore</button>
+              </form>
+            </div>
+          </li>
+          {%- endmacro %}
+          <h3 class="card-subhead">Newest backups</h3>
+          <ul class="list">
+            {% for backup in db_backups[:5] %}{{ backup_item(backup) }}{% endfor %}
+          </ul>
+          {% if db_backups|length > 5 %}
+          <details class="more">
+            <summary>Show {{ db_backups|length - 5 }} older backup{{ '' if db_backups|length == 6 else 's' }}</summary>
+            <ul class="list">
+              {% for backup in db_backups[5:] %}{{ backup_item(backup) }}{% endfor %}
+            </ul>
+          </details>
+          {% endif %}
+          {% else %}
+          <div class="field-hint">No backups stored yet. One is made automatically before every update and restore.</div>
+          {% endif %}
+
+          <details class="more">
+            <summary>Restore from a file on your computer</summary>
+            <form method="POST" action="{{ url_for('settings_upload_database') }}" enctype="multipart/form-data" class="more-body">
+              {{ csrf_input() }}
+              <div class="settings-upload-row">
+                <input id="database_file" type="file" name="database_file" accept=".tar.gz,.tgz,.db,.sqlite,.sqlite3" required>
+                <button type="submit" class="btn-save">Upload and restore</button>
+              </div>
+              <div class="field-hint">A full backup (.tar.gz) also restores receipt images; a database file (.db) does not.</div>
+            </form>
+          </details>
+          <details class="more">
+            <summary>Where files are stored</summary>
+            <div class="more-body kv">
+              <span>Database</span><span class="mono">{{ db_path_display }}</span>
+              <span>Backups</span><span class="mono">{{ backup_dir_display }}</span>
+            </div>
+          </details>
+        </div>
+
+        <details class="settings-card collapsible-card" id="github-backup">
+          <summary>
+            <span class="summary-title">GitHub backup <span class="muted-inline">(older method)</span></span>
+            {% if github_backup_repo and github_backup_token_set %}
+              <span class="pill pill-ok">Set up</span>
+            {% else %}
+              <span class="pill pill-muted">Not set up</span>
+            {% endif %}
+          </summary>
+          <p style="margin-top:12px;">Saves a full backup to a private GitHub repository. Cloud Backup above is the recommended way now.</p>
         {% if github_last_backup %}
         <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:#166534;">
           ✅ Last backup: <strong>{{ github_last_backup[:16].replace('T',' ') }} UTC</strong>
@@ -823,7 +921,7 @@
           {{ csrf_input() }}
           <div class="settings-field">
             <label for="github_backup_repo">Backup Repository</label>
-            <input type="text" id="github_backup_repo" name="github_backup_repo"
+            <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" autocomplete="off" type="text" id="github_backup_repo" name="github_backup_repo"
                    value="{{ github_backup_repo }}"
                    placeholder="username/statement-backups">
             <div class="field-hint">Format: <code>your-username/repo-name</code> (must be a GitHub repository you own)</div>
@@ -833,7 +931,7 @@
             {% if github_backup_token_set %}
             <div class="field-hint" style="margin-bottom:6px;">Current: <code>{{ github_backup_token_masked }}</code></div>
             {% endif %}
-            <input type="password" id="github_backup_token" name="github_backup_token"
+            <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" class="secret-input" autocomplete="off" spellcheck="false" autocapitalize="off" type="text" id="github_backup_token" name="github_backup_token"
                    value=""
                    placeholder="{% if github_backup_token_set %}Enter new token to replace{% else %}ghp_xxxxxxxxxxxx{% endif %}">
             <div class="field-hint">
@@ -843,7 +941,7 @@
           </div>
           <div class="settings-field" style="margin-top:8px;">
             <label for="github_backup_interval_hours">Auto-Backup Schedule</label>
-            <select id="github_backup_interval_hours" name="github_backup_interval_hours" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;background:#fff;cursor:pointer;">
+            <select id="github_backup_interval_hours" name="github_backup_interval_hours">
               <option value="0"  {% if github_backup_interval_hours == '0'  %}selected{% endif %}>Disabled (manual only)</option>
               <option value="0.5" {% if github_backup_interval_hours == '0.5' %}selected{% endif %}>Every 30 minutes</option>
               <option value="1" {% if github_backup_interval_hours == '1' %}selected{% endif %}>Every hour</option>
@@ -857,21 +955,21 @@
           </div>
           <div class="settings-field">
             <label for="github_backup_retention_days">Keep GitHub Backups For</label>
-            <select id="github_backup_retention_days" name="github_backup_retention_days" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;background:#fff;">
+            <select id="github_backup_retention_days" name="github_backup_retention_days">
               {% for days, label in [('7', '7 days'), ('14', '14 days'), ('30', '30 days'), ('90', '90 days'), ('0', 'Keep all backups')] %}
               <option value="{{ days }}" {% if github_backup_retention_days == days %}selected{% endif %}>{{ label }}</option>
               {% endfor %}
             </select>
             <div class="field-hint">Older backup files are removed after each successful backup. Uses UTC calendar days and always keeps the latest backup and newest dated backup. Git history still retains older copies.</div>
           </div>
-          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:4px;">
-            <button type="submit" class="btn-save">Save GitHub Backup Settings</button>
+          <div class="card-actions card-actions-left">
+            <button type="submit" class="btn-save">Save</button>
             {% if github_backup_repo and github_backup_token_set %}
-            <button type="button" id="gh-backup-run-btn" class="btn-secondary" style="display:flex;align-items:center;gap:6px;">
-              <span id="gh-backup-icon">☁️</span> Run Backup Now
+            <button type="button" id="gh-backup-run-btn" class="btn-secondary">
+              <span id="gh-backup-icon">☁️</span> Run backup now
             </button>
-            <button type="button" id="gh-cleanup-btn" class="btn-secondary">Clean Up Now</button>
-            <button type="button" id="gh-delete-all-btn" class="btn-secondary" style="color:#b91c1c;border-color:#fca5a5;">Delete All Backups</button>
+            <button type="button" id="gh-cleanup-btn" class="btn-secondary">Clean up now</button>
+            <button type="button" id="gh-delete-all-btn" class="btn-danger">Delete all backups</button>
             {% endif %}
           </div>
         </form>
@@ -879,10 +977,56 @@
         <div id="gh-backup-result" style="display:none;margin-top:14px;padding:10px 14px;border-radius:8px;font-size:13px;"></div>
 
         <div class="field-hint" style="margin-top:16px;">The selected schedule runs on this installation while the app is open or its service is running and the machine is online. Configure each machine separately; use separate backup repositories for separate data.</div>
+        </details>
+      </section>
+        </div>
       </div>
-
     </div>
 
+    <script>
+    // Settings tabs: show one section at a time. Without JavaScript every section shows.
+    (function () {
+      var layout = document.querySelector('.settings-layout');
+      if (!layout) return;
+      var tabs = Array.prototype.slice.call(layout.querySelectorAll('[data-tab]'));
+      var panels = Array.prototype.slice.call(layout.querySelectorAll('[data-panel]'));
+      var names = tabs.map(function (t) { return t.getAttribute('data-tab'); });
+      function panelFor(hash) {
+        var id = (hash || '').replace(/^#/, '');
+        if (!id) return null;
+        if (names.indexOf(id) !== -1) return { name: id };
+        var target = document.getElementById(id);
+        var panel = target && target.closest('[data-panel]');
+        return panel ? { name: panel.getAttribute('data-panel'), target: target } : null;
+      }
+      function show(name, target) {
+        tabs.forEach(function (t) { t.setAttribute('aria-selected', String(t.getAttribute('data-tab') === name)); });
+        panels.forEach(function (p) { p.classList.toggle('is-active', p.getAttribute('data-panel') === name); });
+        try { sessionStorage.setItem('settings-tab', name); } catch (e) {}
+        if (target) {
+          if (target.tagName === 'DETAILS') target.open = true;
+          target.scrollIntoView({ block: 'start' });
+        }
+      }
+      var saved = null;
+      try { saved = sessionStorage.getItem('settings-tab'); } catch (e) {}
+      var start = panelFor(location.hash) || { name: names.indexOf(saved) !== -1 ? saved : names[0] };
+      document.body.classList.add('tabs-ready');
+      show(start.name, start.target);
+      tabs.forEach(function (t) {
+        t.addEventListener('click', function (event) {
+          event.preventDefault();
+          show(t.getAttribute('data-tab'));
+          history.replaceState(null, '', '#' + t.getAttribute('data-tab'));
+          window.scrollTo(0, 0);
+        });
+      });
+      window.addEventListener('hashchange', function () {
+        var found = panelFor(location.hash);
+        if (found) show(found.name, found.target);
+      });
+    })();
+    </script>
     <script>
     var fxTestBtn = document.getElementById('fx-test-btn');
     var fxTestResult = document.getElementById('fx-test-result');
