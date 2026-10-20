@@ -4,6 +4,17 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.7
+
+**Removed**
+- GitHub backup is gone: the Settings card, the automatic schedule, its
+  buttons and scripts. Cloud Backup (Backblaze) replaces it.
+- When this version starts, it deletes the saved GitHub backup settings,
+  including the GitHub access token, from the app.
+
+Backups already in your GitHub repository are not touched; delete that
+repository on github.com yourself if you no longer want it.
+
 ## 5.2.6
 
 **Settings, redesigned**

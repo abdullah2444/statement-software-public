@@ -111,16 +111,16 @@ class SecurityFixTests(unittest.TestCase):
 
     # 3. Secrets never reach the activity log ---------------------------------
 
-    def test_github_token_is_hidden_in_activity_log(self):
-        secret = 'ghp_' + 'A' * 36
-        self.web(self.admin_id).post('/settings/github-backup/save', data={
-            'csrf_token': 'csrf', 'github_backup_repo': 'o/r', 'github_backup_token': secret,
-            'github_backup_interval_hours': '0',
+    def test_secret_keys_are_hidden_in_activity_log(self):
+        secret = 'sk-or-v1-' + 'A' * 40
+        self.web(self.admin_id).post('/settings', data={
+            'csrf_token': 'csrf', 'section': 'ai-settings', 'openrouter_api_key': secret,
         })
         with self.module.app.app_context():
             rows = [r[0] + (r[1] or '') for r in self.db().execute("select detail, undo_data from api_audit_log")]
         self.assertTrue(rows)
         self.assertFalse(any(secret in row for row in rows))
+        secret = 'ghp_' + 'A' * 36
         clean = self.module._sanitize_audit_value('detail', {'note': 'key is ' + secret, 'must_change_password': True})
         self.assertEqual(clean, {'note': 'key is [redacted]', 'must_change_password': True})
 
