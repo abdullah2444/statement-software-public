@@ -203,7 +203,6 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
   {% if update_notice.kind == 'available' %}<a href="{{ url_for('settings_page') }}#software-updates">Review the update</a>{% endif %}
 </div>
 {% endif %}
-{% set is_admin = (g.user.role == 'admin') if g.user else (session.get('role') == 'admin') %}
 {% set nav_user = g.user.username if g.user else session.get('username', '') %}
 {% set brand = app_brand_name() %}
 {% macro nav_link(section, endpoint, label) -%}
@@ -214,13 +213,8 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
   <a class="nav-brand" href="{{ url_for('index') }}">{{ brand }}</a>
   <span class="nav-account">{{ nav_user }}</span>
   {{ nav_link('dashboard', 'index', 'Dashboard') }}
-  {% if is_admin %}
-  {{ nav_link('users', 'admin_users', 'Users') }}
-  {{ nav_link('tokens', 'admin_tokens', 'API Tokens') }}
-  {{ nav_link('settings', 'settings_page', 'Settings') }}
-  {% endif %}
   {{ nav_link('expenses', 'expense_list', 'Expenses') }}
-  {{ nav_link('password', 'change_password', 'Password') }}
+  {{ nav_link('settings', 'settings_page', 'Settings') }}
   <form method="post" action="{{ url_for('logout') }}" class="nav-link-form">
     <button type="submit" class="nav-link-button">Logout</button>
   </form>
@@ -245,12 +239,7 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
       {{ nav_link('dashboard', 'index', 'Dashboard') }}
       {{ nav_link('quick_submit', 'quick_submit_page', 'Quick Submit') }}
       {{ nav_link('expenses', 'expense_list', 'Expenses') }}
-      {% if is_admin %}
-      {{ nav_link('users', 'admin_users', 'Users') }}
-      {{ nav_link('tokens', 'admin_tokens', 'API Tokens') }}
       {{ nav_link('settings', 'settings_page', 'Settings') }}
-      {% endif %}
-      {{ nav_link('password', 'change_password', 'Change Password') }}
       <form method="post" action="{{ url_for('logout') }}" class="nav-link-form mobile-drawer-logout">
         <button type="submit" class="nav-link-button">Logout</button>
       </form>

@@ -100,7 +100,7 @@ class SecurityFixTests(unittest.TestCase):
     def test_activity_detail_attribute_is_escaped(self):
         evil = '" onmouseover="alert(1)" x="'
         self.web(self.user_id).post('/clients/new', data={'csrf_token': 'csrf', 'name': evil})
-        html = self.web(self.admin_id).get('/admin/tokens').get_data(as_text=True)
+        html = self.web(self.admin_id).get('/settings').get_data(as_text=True)
         self.assertNotIn('onmouseover="alert(1)"', html)
 
     def test_pages_send_security_headers(self):

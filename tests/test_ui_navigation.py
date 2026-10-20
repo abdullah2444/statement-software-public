@@ -46,7 +46,7 @@ class NavigationTests(unittest.TestCase):
 
     def test_menu_highlights_the_current_page(self):
         for path, label in (('/', 'Dashboard'), ('/settings', 'Settings'), ('/expenses/', 'Expenses'),
-                            ('/admin/users', 'Users'), ('/quick-submit', 'Quick Submit')):
+                            ('/quick-submit', 'Quick Submit')):
             current = re.findall(r'aria-current="page">([^<]+)<', self.page(path))
             self.assertTrue(current, path)
             self.assertEqual(set(current), {label}, path)
@@ -66,12 +66,12 @@ class NavigationTests(unittest.TestCase):
     def test_settings_tabs_each_have_a_panel(self):
         html = self.page('/settings')
         tabs = re.findall(r'data-tab="([a-z]+)"', html)
-        self.assertEqual(tabs, ['updates', 'general', 'ai', 'backups'])
+        self.assertEqual(tabs, ['updates', 'general', 'ai', 'backups', 'users', 'tokens', 'activity', 'password'])
         for tab in tabs:
             self.assertIn(f'data-panel="{tab}"', html, tab)
         # Links elsewhere (banners, redirects) point at these sections; each must still exist.
         for section in ('software-updates', 'exchange-rate', 'login-screen', 'ai-settings', 'ai-features',
-                        'backup-restore', 'cloud-backup'):
+                        'backup-restore', 'cloud-backup', 'user-management', 'api-tokens', 'activity-log', 'change-password'):
             self.assertIn(f'id="{section}"', html, section)
 
     def test_each_settings_section_saves_on_its_own(self):
@@ -94,7 +94,8 @@ class NavigationTests(unittest.TestCase):
     def test_password_managers_are_not_offered_api_keys(self):
         html = self.page('/settings')
         password_boxes = re.findall(r'<input[^>]*type="password"[^>]*>', html)
-        self.assertTrue(all('name="current_password"' in box for box in password_boxes), password_boxes)
+        real_passwords = ('current_password', 'new_password', 'confirm_password', 'password')
+        self.assertTrue(all(re.search(r'name="(%s)"' % '|'.join(real_passwords), box) for box in password_boxes), password_boxes)
         for name in ('openrouter_api_key', 'cloud_backup_app_key'):
             box = re.search(rf'<input[^>]*name="{name}"[^>]*>', html).group(0)
             self.assertIn('secret-input', box)

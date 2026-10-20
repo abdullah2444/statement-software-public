@@ -1,0 +1,91 @@
+{# Settings → Users. Admins manage users and admins; only a super admin can touch super admins. #}
+        <div class="settings-card" id="user-management">
+          <div class="card-head">
+            <div>
+              <h2>Users</h2>
+              <div class="muted-line">{{ users|length }} account{{ '' if users|length == 1 else 's' }}</div>
+            </div>
+          </div>
+          <p>
+            <strong>Super admin</strong>: everything. <strong>Admin</strong>: users, backups, login screen and the activity log.
+            <strong>User</strong>: day-to-day work only.
+          </p>
+          <ul class="list">
+            {% for u in users %}
+            {% set can_manage = u.id != g.user.id and (super_admin or u.role != 'super_admin') %}
+            <li class="list-row list-row-stack">
+              <div class="list-row-top">
+                <div class="list-main">
+                  <div class="list-title">
+                    {{ u.username }}{% if u.id == g.user.id %} <span class="muted-inline">(you)</span>{% endif %}
+                    <span class="pill pill-{{ {'super_admin': 'info', 'admin': 'ok'}.get(u.role, 'muted') }}">{{ role_labels.get(u.role, u.role) }}</span>
+                    {% if not u.is_active %}<span class="pill pill-bad">Deactivated</span>{% endif %}
+                    {% if u.must_change_password %}<span class="pill pill-warn">Must change password</span>{% endif %}
+                  </div>
+                  <div class="list-sub">Last sign-in {{ u.last_login[:16].replace('T', ' ') if u.last_login else 'never' }}</div>
+                </div>
+              </div>
+              {% if can_manage %}
+              <details class="more manage">
+                <summary>Manage</summary>
+                <div class="manage-grid">
+                  <form method="POST" action="{{ url_for('admin_change_role', user_id=u.id) }}" class="inline-row">
+                    {{ csrf_input() }}
+                    <label class="sr-only" for="role-{{ u.id }}">Role</label>
+                    <select id="role-{{ u.id }}" name="role">
+                      {% for role in assignable_roles %}
+                      <option value="{{ role }}" {% if role == u.role %}selected{% endif %}>{{ role_labels[role] }}</option>
+                      {% endfor %}
+                    </select>
+                    <button type="submit" class="btn-secondary btn-sm">Change role</button>
+                  </form>
+                  <form method="POST" action="{{ url_for('admin_reset_password', user_id=u.id) }}" class="inline-row" autocomplete="off">
+                    {{ csrf_input() }}
+                    <label class="sr-only" for="pw-{{ u.id }}">New password</label>
+                    <input type="password" id="pw-{{ u.id }}" name="new_password" placeholder="New password" required minlength="8" autocomplete="new-password">
+                    <button type="submit" class="btn-secondary btn-sm">Reset password</button>
+                  </form>
+                  <div class="inline-row">
+                    <form method="POST" action="{{ url_for('admin_toggle_user', user_id=u.id) }}">
+                      {{ csrf_input() }}
+                      <button type="submit" class="btn-secondary btn-sm">{{ 'Activate' if not u.is_active else 'Deactivate' }}</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('admin_delete_user', user_id=u.id) }}" onsubmit="return confirm('Delete user {{ u.username }}?')">
+                      {{ csrf_input() }}
+                      <button type="submit" class="btn-danger btn-sm">Delete</button>
+                    </form>
+                  </div>
+                </div>
+              </details>
+              {% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+
+        <form method="POST" action="{{ url_for('admin_add_user') }}" class="settings-card" id="add-user" autocomplete="off">
+          {{ csrf_input() }}
+          <h2>Add a user</h2>
+          <p>They must choose their own password when they first sign in.</p>
+          <div class="field-row">
+            <div class="settings-field">
+              <label for="new-username">Username</label>
+              <input type="text" id="new-username" name="username" required autocomplete="off" data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other">
+            </div>
+            <div class="settings-field">
+              <label for="new-password">First password</label>
+              <input type="password" id="new-password" name="password" required minlength="8" autocomplete="new-password">
+            </div>
+            <div class="settings-field">
+              <label for="new-role">Role</label>
+              <select id="new-role" name="role">
+                {% for role in assignable_roles|reverse %}
+                <option value="{{ role }}">{{ role_labels[role] }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <div class="card-actions">
+            <button type="submit" class="btn-save">Add user</button>
+          </div>
+        </form>
