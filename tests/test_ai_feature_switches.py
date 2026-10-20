@@ -90,7 +90,7 @@ class AiFeatureSwitchTests(unittest.TestCase):
     def test_settings_page_shows_switch_state_and_api_reports_it(self):
         self.set_switches(parse=False, extract=True)
         page = self.web.get('/settings').get_data(as_text=True)
-        self.assertIn('AI Features', page)
+        self.assertIn('AI features', page)
         self.assertRegex(page, r'name="ai_parse_image_enabled" value="1"\s+style')
         self.assertRegex(page, r'name="ai_extract_text_enabled" value="1"\s+checked')
         settings = self.web.get('/api/v1/settings', headers={'Authorization': 'Bearer ffs_test'}).get_json()

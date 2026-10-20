@@ -63,12 +63,51 @@ class NavigationTests(unittest.TestCase):
             with self.module.app.app_context():
                 self.module.set_setting('login_title', '')
 
-    def test_settings_jump_buttons_point_at_real_sections(self):
+    def test_settings_tabs_each_have_a_panel(self):
         html = self.page('/settings')
-        targets = re.findall(r'<a href="#([a-z-]+)">', html.split('class="settings-sections"', 1)[1].split('</nav>', 1)[0])
-        self.assertGreaterEqual(len(targets), 7)
-        for target in targets:
-            self.assertIn(f'id="{target}"', html, target)
+        tabs = re.findall(r'data-tab="([a-z]+)"', html)
+        self.assertEqual(tabs, ['updates', 'general', 'ai', 'backups'])
+        for tab in tabs:
+            self.assertIn(f'data-panel="{tab}"', html, tab)
+        # Links elsewhere (banners, redirects) point at these sections; each must still exist.
+        for section in ('software-updates', 'exchange-rate', 'login-screen', 'ai-settings', 'ai-features',
+                        'backup-restore', 'cloud-backup', 'github-backup'):
+            self.assertIn(f'id="{section}"', html, section)
+
+    def test_each_settings_section_saves_on_its_own(self):
+        html = self.page('/settings')
+        for section in self.module.SETTINGS_FORM_SECTIONS:
+            form = html.split(f'id="{section}"', 1)[1].split('</form>', 1)[0]
+            self.assertIn(f'name="section" value="{section}"', form)
+            self.assertIn('type="submit"', form)
+
+    def test_saving_returns_to_the_same_section(self):
+        web = self.module.app.test_client()
+        with web.session_transaction() as sess:
+            sess['user_id'] = self.admin_id
+            sess['_csrf_token'] = 'csrf'
+        response = web.post('/settings', data={'csrf_token': 'csrf', 'section': 'exchange-rate', 'fx_rate_source': 'live'})
+        self.assertTrue(response.headers['Location'].endswith('/settings#exchange-rate'))
+        response = web.post('/settings', data={'csrf_token': 'csrf', 'section': '"><script>', 'fx_rate_source': 'live'})
+        self.assertTrue(response.headers['Location'].endswith('/settings'))
+
+    def test_password_managers_are_not_offered_api_keys(self):
+        html = self.page('/settings')
+        password_boxes = re.findall(r'<input[^>]*type="password"[^>]*>', html)
+        self.assertTrue(all('name="current_password"' in box for box in password_boxes), password_boxes)
+        for name in ('openrouter_api_key', 'github_backup_token'):
+            box = re.search(rf'<input[^>]*name="{name}"[^>]*>', html).group(0)
+            self.assertIn('secret-input', box)
+            self.assertIn('data-lpignore="true"', box)
+
+    def test_backup_reasons_read_like_words(self):
+        reason = self.module.backup_reason
+        self.assertEqual(reason('statement-full-backup-20261020-180352-before-update-to-5.2.4.tar.gz'), 'Before update to 5.2.4')
+        self.assertEqual(reason('statement-full-backup-20261018-100401-before-upload-statement-full-backup-latest-1-.tar.gz.tar.gz'), 'Before a restore')
+        self.assertEqual(reason('statement-full-backup-20261018-103209-before-cloud-ef018521.tar.gz'), 'Before a cloud restore')
+        self.assertEqual(reason('statement-full-backup-20261018-103209.tar.gz'), 'Backup')
+        self.assertEqual(reason('20261018T103209Z-before-restore-1a2b3c4d.db'), 'Before a restore')
+        self.assertEqual(reason('my-own-file.db'), 'Backup')
 
     def test_phones_can_zoom(self):
         for template in (ROOT / 'templates').glob('*.html'):

@@ -155,9 +155,8 @@ class SoftwareUpdateTests(unittest.TestCase):
         self.login(client)
         page = client.get("/settings").get_data(as_text=True)
         self.assertIn('id="software-updates"', page)
-        self.assertIn("Installed version", page)
-        self.assertIn("5.1.0", page)
-        self.assertIn("Update Now to 5.2.0", page)
+        self.assertIn('Version <strong id="upd-installed">5.1.0</strong>', page)
+        self.assertIn("Update now to 5.2.0", page)
         self.assertIn("Faster &lt;b&gt;exports&lt;/b&gt;", page)  # release notes are shown as text
         self.assertIn("Put back", page)
         self.assertIn("Version 5.2.0 of the software is available.", page)  # banner

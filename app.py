@@ -860,6 +860,25 @@ def format_file_size(num_bytes: int) -> str:
     return f"{num_bytes} B"
 
 
+def backup_reason(name: str) -> str:
+    """Plain words for why a backup was made, from the label in its file name."""
+    stem = re.sub(r"\.(tar\.gz|tgz|db|sqlite3?)$", "", name, flags=re.I)
+    label = re.sub(r"^(statement-full-backup-\d{8}-\d{6}|\d{8}T\d{6}Z)-?", "", stem)
+    label = re.sub(r"-[0-9a-f]{8}$", "", label)  # random id some labels end with
+    if not label or label == stem:
+        return "Backup"
+    match = re.match(r"before-update-to-(.+)$", label)
+    if match:
+        return f"Before update to {match.group(1)}"
+    if label.startswith(("before-upload", "before-restore")):
+        return "Before a restore"
+    if label.startswith("before-cloud"):
+        return "Before a cloud restore"
+    if label in ("auto", "scheduled"):
+        return "Automatic"
+    return label.replace("-", " ").capitalize()
+
+
 def database_file_info(path: Path) -> dict:
     stat = path.stat()
     created_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
@@ -868,6 +887,8 @@ def database_file_info(path: Path) -> dict:
         "size_bytes": stat.st_size,
         "size_label": format_file_size(stat.st_size),
         "created_at": created_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "when": f"{created_at.day} {created_at:%b %Y, %H:%M} UTC",
+        "reason": backup_reason(path.name),
         "kind": "Full backup" if is_full_backup_file(path) else "Database only",
     }
 
@@ -5372,7 +5393,13 @@ def settings_save():
             _remove_login_logo(db)
     db.commit()
     flash("Settings saved", "success")
-    return redirect(url_for("settings_page"))
+    # Each Settings section has its own form; go back to the section that was saved.
+    section = request.form.get("section", "")
+    anchor = f"#{section}" if section in SETTINGS_FORM_SECTIONS else ""
+    return redirect(url_for("settings_page") + anchor)
+
+
+SETTINGS_FORM_SECTIONS = {"exchange-rate", "login-screen", "ai-settings", "ai-features"}
 
 
 @app.route("/settings/database/download")

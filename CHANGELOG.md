@@ -4,6 +4,25 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.6
+
+**Settings, redesigned**
+- Settings is split into four tabs: Updates, General, AI and Backups. Only one
+  shows at a time, so the page no longer grows into a long scroll.
+- Updates shows your version and a Check button on one line, and only the
+  last 3 updates (with "Show all" for the rest).
+- Backups on this server are listed by date and reason ("Before update to
+  5.2.5"), newest 5 first, with "Show older" for the rest. Download and
+  Restore are always on screen, also on phones.
+- Every section has its own Save button in the same place, and all buttons
+  are the same size.
+- Cloud Backup's connection settings fold away once it's connected; the old
+  GitHub backup is folded away too.
+
+**Fixed**
+- Password managers no longer try to fill API keys, the company name or the
+  Backblaze key ID with your login.
+
 ## 5.2.5
 
 **Fixed**
