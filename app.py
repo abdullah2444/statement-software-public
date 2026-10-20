@@ -1151,6 +1151,9 @@ def replace_uploads_contents(source_dir: Path | None) -> None:
     clear_directory_contents(UPLOAD_DIR)
     if source_dir is None or not source_dir.exists():
         return
+    # The staged files are the app's own (just extracted or restored), so they can
+    # be made readable first; a receipt with no permissions could not even be copied.
+    make_readable(source_dir)
     for child in source_dir.iterdir():
         target = UPLOAD_DIR / child.name
         if child.is_dir() and not child.is_symlink():
