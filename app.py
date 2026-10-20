@@ -1351,7 +1351,6 @@ WEB_AUDIT_ACTIONS = {
     "api_link_transfer": ("link_transfer", "statement_entry"),
     "api_fx_refresh": ("refresh_fx_rate", "app_setting"),
     "settings_save": ("update_settings", "app_setting"),
-    "settings_github_backup_save": ("update_github_backup_settings", "app_setting"),
     "settings_updates_check": ("check_software_updates", "software_update"),
     "settings_updates_install": ("request_software_update", "software_update"),
     "settings_updates_resume": ("resume_saving_after_update", "software_update"),
@@ -2117,6 +2116,7 @@ def init_db() -> None:
             db.execute(ddl)
     db.execute("update api_audit_log set source = 'api' where source is null or source = ''")
     redact_existing_audit_log(db)
+    remove_github_backup_settings(db)
     backfill_exchange_links(db)
     db.commit()
     db.close()
@@ -2124,6 +2124,17 @@ def init_db() -> None:
 
 
 AUDIT_REDACTION_MARKER = "audit_log_redacted_v1"
+
+
+def remove_github_backup_settings(db: sqlite3.Connection) -> int:
+    """GitHub backups were removed in 5.2.7 (Cloud Backup replaces them): forget the
+    saved repository, access token, schedule and last-backup time."""
+    removed = db.execute(
+        "delete from app_settings where substr(key, 1, 14) = 'github_backup_' or key = 'github_last_backup'"
+    ).rowcount
+    if removed:
+        print(f"[settings] Removed {removed} old GitHub backup settings (including the saved token).")
+    return removed
 
 
 def redact_existing_audit_log(db: sqlite3.Connection) -> int:
@@ -5328,12 +5339,6 @@ def render_settings_page(revealed_recovery_key: str = ""):
         fx_rate_source=get_setting("fx_rate_source", "live"),
         fx_live_rate=get_setting("fx_live_rate", ""),
         fx_live_rate_updated_at=get_setting("fx_live_rate_updated_at", ""),
-        github_backup_repo=get_setting("github_backup_repo", ""),
-        github_backup_token_set=bool(get_setting("github_backup_token", "")),
-        github_backup_token_masked=(lambda t: t[:6] + "..." + t[-4:] if len(t) > 10 else "")(get_setting("github_backup_token", "")),
-        github_last_backup=get_setting("github_last_backup", ""),
-        github_backup_interval_hours=get_setting("github_backup_interval_hours", "0"),
-        github_backup_retention_days=get_setting("github_backup_retention_days", "7"),
         cloud=cloud_backup_status(),
         cloud_region=get_setting("cloud_backup_region", ""),
         cloud_bucket=get_setting("cloud_backup_bucket", ""),
@@ -5502,411 +5507,8 @@ def settings_restore_database_backup():
     return redirect(url_for("login_page"))
 
 
-# ── GitHub Backup ─────────────────────────────────────────────────────────────
-
-@app.route("/settings/github-backup/save", methods=["POST"])
-@admin_required
-def settings_github_backup_save():
-    """Save GitHub backup repo, token, and auto-backup interval to app_settings."""
-    repo = request.form.get("github_backup_repo", "").strip()
-    token = request.form.get("github_backup_token", "").strip()
-    interval = request.form.get("github_backup_interval_hours", "0").strip()
-    if interval not in {"0", "0.5", "1", "6", "12", "24", "48", "168"}:
-        flash("Choose a valid backup schedule.", "error")
-        return redirect(url_for("settings_page") + "#github-backup")
-    retention = request.form.get("github_backup_retention_days", get_setting("github_backup_retention_days", "7")).strip()
-    if retention not in {"0", "7", "14", "30", "90"}:
-        flash("Choose a valid backup retention period.", "error")
-        return redirect(url_for("settings_page") + "#github-backup")
-    db = get_db()
-    db.execute("insert or replace into app_settings(key, value) values (?, ?)", ("github_backup_retention_days", retention))
-    if repo:
-        db.execute("insert or replace into app_settings(key, value) values (?, ?)", ("github_backup_repo", repo))
-    if token:
-        db.execute("insert or replace into app_settings(key, value) values (?, ?)", ("github_backup_token", token))
-    db.execute("insert or replace into app_settings(key, value) values (?, ?)", ("github_backup_interval_hours", interval))
-    db.commit()
-    flash("GitHub backup settings saved.", "success")
-    return redirect(url_for("settings_page") + "#github-backup")
-
-
-_github_backup_operation_lock = threading.Lock()
-
-
-def _github_cleanup_candidates(entries: list[dict], days: int, now: datetime) -> list[dict]:
-    """Only dated full backups before the UTC calendar-day window are eligible."""
-    cutoff = (now.astimezone(timezone.utc).date() - timedelta(days=days - 1)).strftime("%Y%m%d")
-    dated = []
-    for entry in entries:
-        match = re.fullmatch(r"backups/statement-full-backup-(\d{8})-(\d{6})\.tar\.gz", entry.get("path", ""))
-        if entry.get("type") != "blob" or not match:
-            continue
-        try:
-            datetime.strptime(match[1] + match[2], "%Y%m%d%H%M%S")
-        except ValueError:
-            continue
-        dated.append((match[1] + match[2], entry))
-    # Always preserve the newest dated recovery point, even after a backup outage.
-    newest = max((stamp for stamp, _ in dated), default="")
-    return [entry for stamp, entry in dated if stamp[:8] < cutoff and stamp != newest]
-
-
-def _cleanup_github_backups(delete_all: bool = False) -> dict:
-    import urllib.request
-    import urllib.error
-    try:
-        days = 0 if delete_all else int(get_setting("github_backup_retention_days", "7"))
-        if days not in {0, 7, 14, 30, 90}:
-            raise ValueError("Invalid retention setting. Save a valid period in Settings.")
-        if days == 0 and not delete_all:
-            return {"ok": True, "deleted": 0, "disabled": True}
-        repo = get_setting("github_backup_repo", "").strip()
-        token = get_setting("github_backup_token", "").strip()
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) or not token:
-            raise ValueError("Configure the GitHub repository and token first.")
-        base = f"https://api.github.com/repos/{repo}"
-        headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
-                   "Content-Type": "application/json", "User-Agent": "Statement-Software-Backup/5.0"}
-        def api(path, method="GET", body=None):
-            req = urllib.request.Request(base + path, headers=headers, method=method,
-                                         data=json.dumps(body).encode() if body is not None else None)
-            try:
-                with urllib.request.urlopen(req, timeout=60) as response:
-                    return json.loads(response.read())
-            except urllib.error.HTTPError as exc:
-                try:
-                    message = json.loads(exc.read()).get("message", exc.reason)
-                except (ValueError, AttributeError):
-                    message = exc.reason
-                raise ValueError(f"{method} {path or '/'}: HTTP {exc.code} — {message}") from exc
-        from urllib.parse import quote
-        branch = quote(api("")["default_branch"], safe="/")
-        head = api(f"/git/ref/heads/{branch}")["object"]["sha"]
-        commit = api(f"/git/commits/{head}")
-        tree = api(f"/git/trees/{commit['tree']['sha']}?recursive=1")
-        if tree.get("truncated"):
-            raise ValueError("Repository listing is incomplete; cleanup stopped safely.")
-        if delete_all:
-            old = [entry for entry in tree["tree"] if entry.get("type") == "blob" and re.fullmatch(
-                r"backups/statement-full-backup-(?:latest|\d{8}-\d{6})\.tar\.gz", entry.get("path", ""))]
-        else:
-            old = _github_cleanup_candidates(tree["tree"], days, utc_now())
-        if not old:
-            return {"ok": True, "deleted": 0, "retention_days": days}
-        # GitHub rejects nested deletions that leave an empty directory. Build
-        # the resulting tree from surviving files instead of null-SHA deletes.
-        removed_paths = {entry["path"] for entry in old}
-        remaining = [{"path": entry["path"], "mode": entry["mode"], "type": entry["type"], "sha": entry["sha"]}
-                     for entry in tree["tree"] if entry["type"] != "tree" and entry["path"] not in removed_paths]
-        # GitHub's tree API also rejects an entirely empty tree. A non-backup
-        # marker lets us delete every backup without rewriting branch history.
-        if not remaining:
-            remaining = [{"path": ".gitkeep", "mode": "100644", "type": "blob", "content": ""}]
-        new_tree = api("/git/trees", "POST", {"tree": remaining})
-        new_commit = api("/git/commits", "POST", {
-            "message": "Delete all full backup files" if delete_all else f"Backup cleanup: keep latest {days} UTC calendar days",
-            "tree": new_tree["sha"], "parents": [head],
-        })
-        if api(f"/git/ref/heads/{branch}")["object"]["sha"] != head:
-            raise ValueError("Repository changed during cleanup. Please retry.")
-        api(f"/git/refs/heads/{branch}", "PATCH", {"sha": new_commit["sha"], "force": False})
-        return {"ok": True, "deleted": len(old), "retention_days": days}
-    except Exception as exc:
-        return {"ok": False, "error": f"GitHub cleanup failed: {exc}"}
-
-
-@app.route("/api/github-backup/cleanup", methods=["POST"])
-@admin_required
-def api_github_backup_cleanup():
-    if not _github_backup_operation_lock.acquire(blocking=False):
-        return jsonify({"ok": False, "error": "A backup or cleanup is already running. Try again shortly."}), 409
-    try:
-        result = _cleanup_github_backups()
-        return jsonify(result), 200 if result["ok"] else 400
-    finally:
-        _github_backup_operation_lock.release()
-
-
-@app.route("/api/github-backup/delete-all", methods=["POST"])
-@admin_required
-def api_github_backup_delete_all():
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict) or payload.get("confirmation") != "DELETE ALL":
-        return jsonify({"ok": False, "error": "Type DELETE ALL to confirm removal of every GitHub backup, including the latest."}), 400
-    if not _github_backup_operation_lock.acquire(blocking=False):
-        return jsonify({"ok": False, "error": "A backup or cleanup is already running. Try again shortly."}), 409
-    try:
-        result = _cleanup_github_backups(delete_all=True)
-        return jsonify(result), 200 if result["ok"] else 400
-    finally:
-        _github_backup_operation_lock.release()
-
-
-def _do_github_backup() -> dict:
-    if not _github_backup_operation_lock.acquire(blocking=False):
-        return {"ok": False, "error": "A backup or cleanup is already running. Try again shortly."}
-    try:
-        return _do_github_backup_unlocked()
-    finally:
-        _github_backup_operation_lock.release()
-
-
-def _do_github_backup_unlocked() -> dict:
-    """Core GitHub backup logic — shared by the API endpoint and the auto-scheduler.
-
-    Builds a full .tar.gz archive (manifest.json + DB + uploads) and commits it to
-    the configured GitHub repo.  Returns a dict with keys:
-        ok (bool), timestamp, archive_filename, archive_size_kb, results, warnings,
-        repo_url, error (only when ok is False).
-    """
-    import urllib.request
-    import urllib.error
-    import urllib.parse
-    import time as _time
-
-    repo = get_setting("github_backup_repo", "").strip()
-    token = get_setting("github_backup_token", "").strip()
-
-    if not repo or not token:
-        return {"ok": False, "error": "GitHub backup not configured. Set repository and token in Settings → GitHub Backup."}
-
-    now = utc_now()
-    timestamp = now.strftime("%Y%m%d-%H%M%S")
-
-    # Build a full .tar.gz backup in memory (same format as create_full_backup)
-    try:
-        archive_bytes = io.BytesIO()
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            db_copy = tmp_path / "firefly_statement.db"
-            manifest_path = tmp_path / "manifest.json"
-
-            snapshot_database(db_copy)
-
-            uploads_source = UPLOAD_DIR if UPLOAD_DIR.exists() else tmp_path / "uploads"
-            if not uploads_source.exists():
-                uploads_source.mkdir()
-
-            manifest = {
-                "format_version": BACKUP_FORMAT_VERSION,
-                "app_name": "Statement Software v5",
-                "created_at_utc": utc_timestamp(),
-                "database_file": "firefly_statement.db",
-                "uploads_dir": "uploads",
-                "upload_file_count": count_upload_files(uploads_source),
-                "notes": FULL_BACKUP_NOTES,
-            }
-            manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-
-            with tarfile.open(fileobj=archive_bytes, mode="w:gz") as tar:
-                tar.add(manifest_path, arcname="manifest.json")
-                tar.add(db_copy, arcname="firefly_statement.db")
-                tar.add(uploads_source, arcname="uploads")
-
-        archive_bytes.seek(0)
-        raw = archive_bytes.read()
-    except Exception as exc:
-        return {"ok": False, "error": f"Could not create backup archive: {exc}"}
-
-    if not raw:
-        return {"ok": False, "error": "Backup archive is empty — nothing to back up."}
-
-    archive_b64 = base64.b64encode(raw).decode()
-    archive_filename = f"statement-full-backup-{timestamp}.tar.gz"
-    commit_msg = f"Automated backup: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}"
-    api_base = f"https://api.github.com/repos/{repo}/contents"
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "Content-Type": "application/json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "Statement-Software-Backup/5.0",
-    }
-
-    def gh_get_sha(path: str) -> str | None:
-        req = urllib.request.Request(f"{api_base}/{path}", headers=headers, method="GET")
-        try:
-            with urllib.request.urlopen(req) as resp:
-                data = json.loads(resp.read())
-                return data.get("sha")
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                return None
-            raise
-
-    def gh_put_file(path: str, content_b64: str, message: str, sha: str | None = None) -> dict:
-        body: dict = {"message": message, "content": content_b64}
-        if sha:
-            body["sha"] = sha
-        payload = json.dumps(body).encode()
-
-        def _do_put(url: str) -> dict:
-            req = urllib.request.Request(url, data=payload, headers=headers, method="PUT")
-            try:
-                with urllib.request.urlopen(req) as resp:
-                    return {"ok": True, "status": resp.status}
-            except urllib.error.HTTPError as e:
-                err_body = e.read().decode()
-                return {"ok": False, "status": e.code, "error": err_body}
-
-        url = f"{api_base}/{path}"
-        result = _do_put(url)
-
-        # 409 — push protection: auto-bypass with placeholder IDs
-        if not result["ok"] and result["status"] == 409:
-            try:
-                err_data = json.loads(result["error"])
-                placeholders = (
-                    err_data.get("metadata", {})
-                    .get("secret_scanning", {})
-                    .get("bypass_placeholders", [])
-                )
-                bypass_ids = [p["placeholder_id"] for p in placeholders if "placeholder_id" in p]
-                if bypass_ids:
-                    qs = "&".join(
-                        f"push_protection_bypass_ids[]={urllib.parse.quote(bid)}"
-                        for bid in bypass_ids
-                    )
-                    result = _do_put(f"{url}?{qs}")
-            except Exception:
-                pass
-
-        # 403 "Timed out validating rule" — retry once after short delay
-        if not result["ok"] and result["status"] == 403:
-            try:
-                err_msg = json.loads(result["error"]).get("message", "")
-                if "timed out" in err_msg.lower():
-                    _time.sleep(3)
-                    result = _do_put(url)
-            except Exception:
-                pass
-
-        return result
-
-    results = []
-    errors = []
-
-    # 1 — timestamped archive
-    archive_path = f"backups/{archive_filename}"
-    try:
-        sha = gh_get_sha(archive_path)
-        r = gh_put_file(archive_path, archive_b64, commit_msg, sha)
-        if r["ok"]:
-            results.append(f"Archive saved: {archive_path}")
-        else:
-            errors.append(f"Archive upload failed (HTTP {r['status']}): {r.get('error', '')[:200]}")
-    except Exception as exc:
-        errors.append(f"Archive upload error: {exc}")
-
-    # 2 — always-current "latest" pointer
-    latest_path = "backups/statement-full-backup-latest.tar.gz"
-    try:
-        sha = gh_get_sha(latest_path)
-        r = gh_put_file(latest_path, archive_b64, f"Latest backup: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}", sha)
-        if r["ok"]:
-            results.append("Latest pointer updated")
-        else:
-            errors.append(f"Latest update failed (HTTP {r['status']}): {r.get('error', '')[:200]}")
-    except Exception as exc:
-        errors.append(f"Latest error: {exc}")
-
-    # Clean up only after both archive uploads have succeeded.
-    if not errors and len(results) == 2:
-        cleanup = _cleanup_github_backups()
-        if cleanup["ok"]:
-            results.append(f"Cleanup: removed {cleanup['deleted']} old backup(s)")
-        else:
-            errors.append(cleanup["error"])
-
-    # 3 — persist last-backup timestamp
-    if results:
-        try:
-            db_conn = sqlite3.connect(str(DB_PATH))
-            db_conn.execute(
-                "insert or replace into app_settings(key, value) values (?, ?)",
-                ("github_last_backup", now.isoformat()),
-            )
-            db_conn.commit()
-            db_conn.close()
-        except Exception:
-            pass
-
-    if errors and not results:
-        return {"ok": False, "error": "; ".join(errors)}
-
-    return {
-        "ok": True,
-        "timestamp": timestamp,
-        "archive_filename": archive_filename,
-        "archive_size_kb": round(len(raw) / 1024, 1),
-        "results": results,
-        "warnings": errors,
-        "repo_url": f"https://github.com/{repo}",
-    }
-
-
-# ── Auto-backup scheduler ──────────────────────────────────────────────────
-_scheduler_started = False
+# Shared by the cloud backup and software update schedulers.
 _scheduler_lock = threading.Lock()
-
-
-def _github_backup_scheduler() -> None:
-    """Background thread: runs _do_github_backup() whenever the configured
-    interval has elapsed.  Checks every minute; skips if disabled (interval=0).
-    """
-    import time as _time
-
-    while True:
-        _time.sleep(60)  # wake up every minute to check
-        with app.app_context():
-            try:
-                interval_h = float(get_setting("github_backup_interval_hours", "0") or 0)
-                if interval_h <= 0 or update_paused():
-                    continue  # auto-backup disabled, or paused for a software update
-
-                last_str = get_setting("github_last_backup", "")
-                if last_str:
-                    try:
-                        last_dt = datetime.fromisoformat(last_str)
-                        if last_dt.tzinfo is None:
-                            last_dt = last_dt.replace(tzinfo=timezone.utc)
-                        elapsed_h = (utc_now() - last_dt).total_seconds() / 3600
-                        if elapsed_h < interval_h:
-                            continue  # not time yet
-                    except Exception:
-                        pass  # can't parse last time — run backup anyway
-
-                print(f"[auto-backup] Interval {interval_h}h elapsed — running GitHub backup …")
-                result = _do_github_backup()
-                if result["ok"]:
-                    print(f"[auto-backup] ✅ Done: {result.get('archive_filename')} ({result.get('archive_size_kb')} KB)")
-                else:
-                    print(f"[auto-backup] ❌ Failed: {result.get('error')}")
-            except Exception as exc:
-                print(f"[auto-backup] Unexpected error: {exc}")
-
-
-def start_backup_scheduler() -> None:
-    """Start the background scheduler thread (idempotent — safe to call multiple times)."""
-    global _scheduler_started
-    with _scheduler_lock:
-        if _scheduler_started:
-            return
-        _scheduler_started = True
-    t = threading.Thread(target=_github_backup_scheduler, name="github-backup-scheduler", daemon=True)
-    t.start()
-    print("[auto-backup] Scheduler started (checks every minute).")
-
-
-@app.route("/api/github-backup/run", methods=["POST"])
-@admin_required
-def api_github_backup_run():
-    """Manually trigger a GitHub backup and return the result as JSON."""
-    result = _do_github_backup()
-    if not result["ok"]:
-        return jsonify({"error": result["error"]}), 500
-    return jsonify(result)
 
 
 # ── Cloud Backup (Backblaze B2) ──────────────────────────────────────────────
@@ -9587,7 +9189,7 @@ def start_app_services() -> None:
     """Prepare the database and start the background jobs, once per process.
 
     Called by `python app.py` and by wsgi.py under Gunicorn. Gunicorn runs a
-    single worker process, so the backup, cloud-backup and update jobs run
+    single worker process, so the cloud-backup and update jobs run
     exactly once (more workers would each start their own).
     """
     global _services_started
@@ -9598,7 +9200,6 @@ def start_app_services() -> None:
     init_db()
     ensure_seeded()
     resequence_all_clients()
-    start_backup_scheduler()
     start_cloud_backup_scheduler()
     start_update_threads()
 

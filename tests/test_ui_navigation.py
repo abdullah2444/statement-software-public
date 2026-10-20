@@ -71,7 +71,7 @@ class NavigationTests(unittest.TestCase):
             self.assertIn(f'data-panel="{tab}"', html, tab)
         # Links elsewhere (banners, redirects) point at these sections; each must still exist.
         for section in ('software-updates', 'exchange-rate', 'login-screen', 'ai-settings', 'ai-features',
-                        'backup-restore', 'cloud-backup', 'github-backup'):
+                        'backup-restore', 'cloud-backup'):
             self.assertIn(f'id="{section}"', html, section)
 
     def test_each_settings_section_saves_on_its_own(self):
@@ -95,10 +95,27 @@ class NavigationTests(unittest.TestCase):
         html = self.page('/settings')
         password_boxes = re.findall(r'<input[^>]*type="password"[^>]*>', html)
         self.assertTrue(all('name="current_password"' in box for box in password_boxes), password_boxes)
-        for name in ('openrouter_api_key', 'github_backup_token'):
+        for name in ('openrouter_api_key', 'cloud_backup_app_key'):
             box = re.search(rf'<input[^>]*name="{name}"[^>]*>', html).group(0)
             self.assertIn('secret-input', box)
             self.assertIn('data-lpignore="true"', box)
+
+    def test_github_backup_is_gone_and_its_settings_deleted(self):
+        with self.module.app.app_context():
+            db = self.module.get_db()
+            for key in ('github_backup_repo', 'github_backup_token', 'github_backup_interval_hours',
+                        'github_backup_retention_days', 'github_last_backup'):
+                db.execute("insert or replace into app_settings(key, value) values (?, 'x')", (key,))
+            db.execute("insert or replace into app_settings(key, value) values ('fx_rate_source', 'live')")
+            db.commit()
+            self.assertEqual(self.module.remove_github_backup_settings(db), 5)
+            db.commit()
+            left = [r[0] for r in db.execute("select key from app_settings where key like 'github%'")]
+            self.assertEqual(left, [])
+            self.assertIsNotNone(db.execute("select 1 from app_settings where key = 'fx_rate_source'").fetchone())
+        rules = {rule.rule for rule in self.module.app.url_map.iter_rules()}
+        self.assertFalse([r for r in rules if 'github' in r], 'no GitHub backup pages or API routes left')
+        self.assertNotIn('github', self.page('/settings').replace('View on GitHub', '').lower())
 
     def test_backup_reasons_read_like_words(self):
         reason = self.module.backup_reason

@@ -49,12 +49,12 @@ class ProductionServerTests(unittest.TestCase):
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             calls = []
-            for name in ('init_db', 'ensure_seeded', 'resequence_all_clients', 'start_backup_scheduler',
+            for name in ('init_db', 'ensure_seeded', 'resequence_all_clients',
                          'start_cloud_backup_scheduler', 'start_update_threads'):
                 setattr(module, name, lambda name=name: calls.append(name))
             module.start_app_services()
             module.start_app_services()
-        self.assertEqual(calls, ['init_db', 'ensure_seeded', 'resequence_all_clients', 'start_backup_scheduler',
+        self.assertEqual(calls, ['init_db', 'ensure_seeded', 'resequence_all_clients',
                                  'start_cloud_backup_scheduler', 'start_update_threads'])
 
     @unittest.skipIf(os.name == 'nt', 'Windows has no Unix file modes')

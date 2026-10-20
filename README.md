@@ -127,51 +127,7 @@ Open **Settings → Cloud Backup (Backblaze B2)**. The card walks you through cr
 Docker installs include restic. For Python installs, install it with `apt install restic` (or from restic.net).
 
 
-Open **Settings → GitHub Backup**, enter your private backup repository and token, choose **Every 30 minutes**, and save. This backs up the database and uploaded images together in a `.tar.gz` archive. The app checks once a minute and runs a backup when the selected interval has elapsed since the last successful backup.
-
-Configure this separately on each installation. Your local machine must be running the app and connected to the internet. Use separate private repositories for installations with different data. No cron setup is needed for this in-app schedule.
-
 After updating a Docker installation, run `docker compose up -d --build` to load the new code and settings UI. For Python installations, restart the application after updating.
-
-## Separate Database-Only GitHub Backup Script
-
-The optional script below backs up only the database and has its own cron schedule. It is separate from the full-backup settings in the app.
-
-Set up automatic backups every 30 minutes of your database to a private GitHub repository:
-
-```bash
-bash scripts/setup-github-backup.sh
-```
-
-**Features:**
-- 🔄 **Automatic backups every 30 minutes** via cron
-- 📦 **Version history** - every backup is a Git commit
-- 🔒 **Private repository** - your data stays secure
-- 🗄️ **Snapshot cleanup** - keeps the last 336 snapshots in the working tree (about 7 days); older snapshots remain in Git history
-- ⚡ **One-time setup** - wizard guides you through configuration
-
-**What you need:**
-1. A private GitHub repository (e.g., `username/statement-backups`)
-2. A GitHub Personal Access Token with `repo` scope
-
-**Update an existing installation’s schedule:**
-
-```bash
-git pull
-bash scripts/setup-github-backup.sh --schedule-only
-```
-
-Run this on each Linux machine that needs backups. Each installation with separate data should use its own private backup repository. The machine must be running and connected to the internet at backup time; cron does not catch up while it is powered off.
-
-**Manual backup:**
-```bash
-bash scripts/backup-to-github.sh
-```
-
-**View backup logs:**
-```bash
-tail -f data/backup-github.log
-```
 
 ## Install Examples
 
@@ -291,23 +247,3 @@ git pull
 ./setup.sh restart
 ```
 
-
-### GitHub backup retention
-
-In **Settings → GitHub Backup**, choose **Keep GitHub Backups For** and save.
-The default is 7 UTC calendar days (today plus the previous six days). Options
-include 14, 30, 90 days, or keeping all backups. After both the dated backup and
-latest backup upload successfully, the app removes older dated full-backup files
-in one cleanup commit. The latest file and newest dated backup are always kept.
-Use **Clean Up Now** to apply the saved period immediately; it asks for confirmation.
-Cleanup does not rewrite Git history or remove unrelated files, so historical
-repository storage can continue to grow. A failed cleanup appears as a backup
-warning; you can retry cleanup from Settings.
-
-Retention regression checks: `python -m unittest discover -s tests -v`.
-
-**Delete All Backups** in the same settings card removes all dated full-backup
-archives and the latest archive from the configured GitHub repository. Type
-`DELETE ALL` in the warning prompt to confirm. This leaves live financial data,
-local backups, unrelated repository files, and Git history intact. Scheduled
-backups remain enabled and will create new backups at the next scheduled run.
