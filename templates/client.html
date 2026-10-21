@@ -70,7 +70,10 @@
         const defaultProfitAccountId = {{ default_profit_account_id|tojson }};
         const setValue = (name, value) => {
           const field = sharedForm.querySelector(`[name="${name}"]`);
-          if (field) field.value = value ?? '';
+          if (!field) return;
+          field.value = value ?? '';
+          // A value the list doesn't offer leaves the drop-down on "Choose a category"
+          if (field.tagName === 'SELECT' && field.selectedIndex < 0) field.value = '';
         };
         const setCommissionValue = (name, value) => {
           const field = sharedCommissionForm?.querySelector(`[name="${name}"]`);
@@ -1240,7 +1243,8 @@
                   </label>
                   <label>
                     <span>Category</span>
-                    <select name="category_hint">
+                    <select name="category_hint" required>
+                      <option value="" disabled hidden>Choose a category</option>
                       {% for value, label in category_options %}
                       <option value="{{ value }}">{{ label }}</option>
                       {% endfor %}

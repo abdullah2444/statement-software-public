@@ -4,6 +4,21 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.17
+
+**Only real categories, and no more "Bad Request" when editing**
+- Some entries added by bots had categories that aren't in the Category list
+  ("accommodation", "transport", "travel", "deposit"). Editing them, for example
+  changing the date, showed a "Bad Request" page.
+- When you update, those entries are moved once into proper categories: hotels,
+  taxis, trains and flights become **Travel**; the "deposit" becomes **Client
+  Receipt**. Anything else unknown would become Uncategorized.
+- The app now only accepts categories from the list, whether an entry comes from
+  the form, a file import or the API. A bot that sends another category gets a
+  clear error listing the allowed ones (see docs/API.md).
+- If an entry's category is ever missing, the edit form shows "Choose a category"
+  instead of failing.
+
 ## 5.2.16
 
 **Redesigned dashboard and statement page** (same colours, cleaner layout)

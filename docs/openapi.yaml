@@ -373,7 +373,7 @@ components:
         direction: {type: string, enum: [IN, OUT]}
         amount: {type: number}
         kind: {type: string, enum: [movement, transfer]}
-        category_hint: {type: string}
+        category_hint: {type: string, enum: [uncategorized, client_receipt, factory_payment, commission, shipping_expense, travel_expense, internal_transfer, fx_transfer]}
         transfer_group: {type: string}
     Error:
       type: object

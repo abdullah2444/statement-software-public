@@ -2281,6 +2281,7 @@ def init_db() -> None:
     convert_admins_to_super_admins(db)
     settle_cloud_backup_owner(db)
     backfill_exchange_links(db)
+    move_old_categories(db)
     db.commit()
     db.close()
     ensure_runtime_dirs()
@@ -3185,7 +3186,7 @@ def import_client_csv_rows(client_id: int, rows: list[dict[str, str]]) -> None:
         direction = (row.get("direction") or "").strip().upper()
         amount_raw = (row.get("amount") or "").strip()
         kind = (row.get("kind") or "movement").strip().lower() or "movement"
-        category_hint = (row.get("category_hint") or UNCATEGORIZED).strip() or UNCATEGORIZED
+        category_hint = checked_category((row.get("category_hint") or UNCATEGORIZED).strip() or UNCATEGORIZED)
         transfer_group = (row.get("transfer_group") or "").strip() or None
         exchange_rate_raw = (row.get("exchange_rate") or "").strip()
         source_no_raw = (row.get("source_no") or "").strip()
@@ -3516,6 +3517,43 @@ CATEGORY_OPTIONS = [
     ("internal_transfer", "Internal Transfer"),
     ("fx_transfer", "Currency Exchange"),
 ]
+CATEGORY_VALUES = {value for value, _ in CATEGORY_OPTIONS}
+
+# Categories that bots once saved although the app never offered them, and where they belong.
+OLD_CATEGORY_MOVES = {
+    "accommodation": "travel_expense",
+    "hotel": "travel_expense",
+    "transport": "travel_expense",
+    "transportation": "travel_expense",
+    "travel": "travel_expense",
+    "flight": "travel_expense",
+    "deposit": "client_receipt",
+    "shipping": "shipping_expense",
+}
+
+
+def checked_category(value) -> str:
+    """The category as saved, or ValueError when it isn't one of CATEGORY_OPTIONS."""
+    value = (value or "").strip()
+    if value not in CATEGORY_VALUES:
+        allowed = ", ".join(v for v, _ in CATEGORY_OPTIONS)
+        shown = f'"{value}"' if value else "(none)"
+        raise ValueError(f"Unknown category {shown}. Use one of: {allowed}.")
+    return value
+
+
+def move_old_categories(db: sqlite3.Connection) -> int:
+    """Put entries with a category the app doesn't offer into one it does (others become Uncategorized)."""
+    placeholders = ", ".join("?" for _ in CATEGORY_VALUES)
+    rows = db.execute(
+        f"select id, category_hint from statement_entries where category_hint not in ({placeholders})",
+        tuple(CATEGORY_VALUES),
+    ).fetchall()
+    for entry_id, old in rows:
+        new = OLD_CATEGORY_MOVES.get((old or "").strip().lower(), UNCATEGORIZED)
+        db.execute("update statement_entries set category_hint = ? where id = ?", (new, entry_id))
+        print(f"[entries] Entry {entry_id}: category {old!r} is now {new!r}.")
+    return len(rows)
 
 
 ALL_EXPENSE_CURRENCIES = ["USD", "CNY", "EGP"]
@@ -4236,11 +4274,12 @@ def add_entry(client_id: int):
     direction = request.form["direction"]
     amount = money(request.form["amount"])
     kind = request.form["kind"]
-    category_hint = request.form["category_hint"]
+    category_hint = request.form.get("category_hint", "")
     transfer_group = request.form.get("transfer_group", "").strip() or None
     add_to_company_profit = request.form.get("add_to_company_profit") == "1"
     profit_expense_account_id = request.form.get("profit_expense_account_id", type=int)
     try:
+        category_hint = checked_category(category_hint)
         validate_profit_expense_selection(
             db,
             enabled=add_to_company_profit,
@@ -4476,10 +4515,10 @@ def save_entry(entry_id: int):
     new_entry_date = request.form["entry_date"]
     new_description = request.form["description"].strip()
     new_amount = money(request.form["amount"])
-    new_currency = request.form["currency"]
-    new_direction = request.form["direction"]
-    new_kind = request.form["kind"]
-    new_category_hint = request.form["category_hint"]
+    new_currency = request.form.get("currency") or entry["currency"]
+    new_direction = request.form.get("direction") or entry["direction"]
+    new_kind = request.form.get("kind") or entry["kind"]
+    new_category_hint = request.form.get("category_hint", "")
     new_transfer_group = request.form.get("transfer_group", "").strip() or None
     add_to_company_profit = request.form.get("add_to_company_profit") == "1"
     profit_expense_account_id = request.form.get("profit_expense_account_id", type=int)
@@ -4494,6 +4533,7 @@ def save_entry(entry_id: int):
         new_category_hint = "commission"
         new_transfer_group = None
     try:
+        new_category_hint = checked_category(new_category_hint)
         validate_profit_expense_selection(
             db,
             enabled=add_to_company_profit,
@@ -9067,9 +9107,10 @@ def api_add_entry(client_id):
     kind = data.get("kind", "movement")
     if kind not in ("movement", "transfer"):
         kind = "movement"
-    category_hint = data.get("category_hint", UNCATEGORIZED)
+    category_hint = data.get("category_hint") or UNCATEGORIZED
     add_to_company_profit = parse_bool_flag(data.get("add_to_company_profit"))
     try:
+        category_hint = checked_category(category_hint)
         profit_expense_account_id = parse_optional_int(
             data.get("profit_expense_account_id"),
             "profit_expense_account_id",
@@ -9162,6 +9203,7 @@ def api_update_entry(entry_id):
             profit_expense_account_id = entry["profit_expense_account_id"]
         if category_hint != "commission":
             profit_expense_account_id = None
+        category_hint = checked_category(category_hint)
         validate_profit_expense_selection(
             db,
             enabled=add_to_company_profit,
