@@ -734,8 +734,32 @@
         <div class="cloud-box cloud-box-warn">{{ cloud.last_warning }}</div>
         {% endif %}
 
+        {% if not cloud.owned_here %}
+        <div class="cloud-box cloud-box-warn inline-alert" id="cloud-paused">
+          <span>
+            <strong>Cloud backups are paused on this server.</strong>
+            {% if cloud.paused_reason == 'taken_over' %}
+            Another server started doing the cloud backups, so this one stopped to avoid two servers backing up at once.
+            {% else %}
+            This data was restored from another server's backup. That server keeps doing the cloud backups; this one only restores from them.
+            {% endif %}
+            You can still look at and restore cloud backups here.
+          </span>
+          {% if super_admin %}
+          <form method="POST" action="{{ url_for('settings_cloud_backup_take_over') }}" onsubmit="return confirm('Make this server do the cloud backups? The other server stops at its next backup.');">
+            {{ csrf_input() }}
+            <button type="submit" class="btn-secondary">Use this server for cloud backups</button>
+          </form>
+          {% else %}
+          <span class="field-hint">A super admin can switch backups to this server.</span>
+          {% endif %}
+        </div>
+        {% endif %}
+
         <div class="card-actions card-actions-left">
+          {% if cloud.owned_here %}
           <button type="button" class="btn-save" id="cloud-run-btn">Back up now</button>
+          {% endif %}
           <button type="button" class="btn-secondary" id="cloud-verify-btn">Test restore</button>
           <button type="button" class="btn-secondary" id="cloud-list-btn">Show backups</button>
         </div>
@@ -1060,9 +1084,9 @@
       });
     }
     (function() {
-      var runBtn = document.getElementById('cloud-run-btn');
-      if (!runBtn) return;
+      var runBtn = document.getElementById('cloud-run-btn');  // missing while backups are paused here
       var verifyBtn = document.getElementById('cloud-verify-btn');
+      if (!verifyBtn) return;
       var listBtn = document.getElementById('cloud-list-btn');
       var jobBox = document.getElementById('cloud-job');
       var csrf = document.querySelector('#cloud-backup input[name="csrf_token"]').value;
@@ -1073,7 +1097,7 @@
         jobBox.textContent = text;  // plain text: never render server messages as HTML
         jobBox.style.display = 'block';
       }
-      function setBusy(busy) { runBtn.disabled = busy; verifyBtn.disabled = busy; }
+      function setBusy(busy) { if (runBtn) runBtn.disabled = busy; verifyBtn.disabled = busy; }
 
       function refresh() {
         fetch('/api/cloud-backup/status', {headers: {'X-Requested-With': 'XMLHttpRequest'}})
@@ -1108,7 +1132,7 @@
           })
           .catch(function(err) { setBusy(false); show('error', 'Network error: ' + err.message); });
       }
-      runBtn.addEventListener('click', function() { start('/api/cloud-backup/run', 'Backing up…'); });
+      if (runBtn) runBtn.addEventListener('click', function() { start('/api/cloud-backup/run', 'Backing up…'); });
       verifyBtn.addEventListener('click', function() { start('/api/cloud-backup/verify', 'Checking backups…'); });
 
       listBtn.addEventListener('click', function() {

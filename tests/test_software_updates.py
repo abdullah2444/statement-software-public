@@ -330,6 +330,7 @@ class SoftwareUpdateTests(unittest.TestCase):
         with self.app.app_context():
             for key, value in settings.items():
                 self.module.set_setting(key, value)
+            self.module.set_setting("cloud_backup_instance", self.module.this_instance_id())
             restic = self.module.make_restic(self.module.load_cloud_backup_config())
             if not restic.exists():
                 restic.init()
@@ -347,7 +348,7 @@ class SoftwareUpdateTests(unittest.TestCase):
     def test_recovery_backup_fails_when_cloud_backup_fails(self):
         helper = importlib.import_module("update_helper")
         before = set(self.module.BACKUP_DIR.glob("*"))
-        with patch.object(self.module, "cloud_backup_configured", return_value=True), \
+        with patch.object(self.module, "cloud_backup_active", return_value=True), \
                 patch.object(self.module, "run_cloud_backup", return_value={"ok": False, "error": "Backblaze refused the key."}):
             self.assertEqual(helper.main(["update_helper.py", "backup", "x"]), 1)
         self.assertEqual(set(self.module.BACKUP_DIR.glob("*")), before)
