@@ -16,6 +16,11 @@ so write them for the people using the app.
   Commission, Shipping) or the exchange rate. The extra words "Regular",
   "Has Commission" and "Commission entry … already exists" are gone.
 - **Export**, **History** and **Undo** are now icon buttons at the top right.
+- **Undo now asks first.** It shows what the last change was (the entry, and
+  for an edit the old and new values) and what undoing it will do. Nothing
+  changes until you press **Yes, undo it**. If someone else made a newer
+  change in the meantime, nothing is undone and the page shows you the newer
+  change instead.
 - The **Back** button is gone. Use the **Dashboard** link above the client name.
 - The calculator and **Newest** buttons are the same size and have a softer
   shadow. On iPhone they now stay clear of the bottom edge.

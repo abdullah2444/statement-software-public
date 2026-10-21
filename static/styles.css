@@ -861,6 +861,58 @@ input:disabled {
   width: min(220px, 82vw);
 }
 
+/* Undo asks first: what the last change was, and what undoing it does. */
+.undo-popover {
+  width: min(380px, calc(100vw - 32px));
+  text-align: left;
+}
+
+.undo-popover p {
+  margin: 0 0 8px;
+  font-size: 0.88rem;
+}
+
+.undo-popover .undo-entry {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--soft);
+  overflow-wrap: anywhere;
+}
+
+.undo-popover .undo-effect {
+  color: var(--muted);
+}
+
+.undo-changes {
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+.undo-changes li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.undo-changes li > span {
+  display: inline-block;
+  min-width: 92px;
+  color: var(--muted);
+}
+
+.undo-changes s {
+  color: var(--muted);
+}
+
+.undo-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
 .history-dropdown.is-open .history-popover {
   display: block;
 }

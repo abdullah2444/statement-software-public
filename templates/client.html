@@ -438,6 +438,23 @@
           });
         }
 
+        const undoDropdown = document.querySelector('[data-undo-dropdown]');
+        const undoToggle = undoDropdown?.querySelector('[data-undo-toggle]');
+        if (undoDropdown && undoToggle) {
+          const closeUndo = () => {
+            undoDropdown.classList.remove('is-open');
+            undoToggle.setAttribute('aria-expanded', 'false');
+          };
+          undoToggle.addEventListener('click', (event) => openDropdown(undoDropdown, undoToggle, event));
+          undoDropdown.querySelector('[data-undo-cancel]')?.addEventListener('click', closeUndo);
+          document.addEventListener('click', (event) => {
+            if (!undoDropdown.contains(event.target)) closeUndo();
+          });
+          document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') closeUndo();
+          });
+        }
+
         if (exportToggle && exportDropdown) {
           exportToggle.addEventListener('click', (event) => {
             openDropdown(exportDropdown, exportToggle, event);
@@ -975,11 +992,32 @@
               {% endif %}
             </div>
           </div>
-          {% if latest_event %}
-          <form method="post" action="{{ url_for('undo_last_change', client_id=client.id) }}" class="inline-delete">
-            <input type="hidden" name="return_per_page" value="{{ rows|length }}" data-return-shown>
-            <button class="icon-action is-tool" type="submit" data-tip="Undo last change" aria-label="Undo last change">{{ icon_label('undo', 'Undo') }}</button>
-          </form>
+          {% if undo_info %}
+          {#- Undo first shows what the last change was and asks to confirm. -#}
+          <div class="history-dropdown" data-undo-dropdown>
+            <a class="icon-action is-tool" href="#" data-undo-toggle aria-expanded="false" data-tip="Undo last change" aria-label="Undo last change">{{ icon_label('undo', 'Undo') }}</a>
+            <div class="history-popover undo-popover" role="dialog" aria-label="Undo last change">
+              <div class="history-popover-head">Undo last change?</div>
+              <p class="undo-title"><strong>{{ undo_info.title }}</strong> <small><span data-utc-timestamp="{{ undo_info.created_at }}">{{ undo_info.created_at }}</span></small></p>
+              {% for line in undo_info.entries %}
+              <p class="undo-entry">{{ line }}</p>
+              {% endfor %}
+              <p class="undo-effect">{{ undo_info.effect }}</p>
+              {% if undo_info.changes %}
+              <ul class="undo-changes">
+                {% for change in undo_info.changes %}
+                <li><span>{{ change.label }}</span> <s>{{ change.now }}</s> &rarr; <strong>{{ change.back_to }}</strong></li>
+                {% endfor %}
+              </ul>
+              {% endif %}
+              <form method="post" action="{{ url_for('undo_last_change', client_id=client.id) }}" class="undo-actions">
+                <input type="hidden" name="event_id" value="{{ undo_info.id }}">
+                <input type="hidden" name="return_per_page" value="{{ rows|length }}" data-return-shown>
+                <button class="button ghost" type="button" data-undo-cancel>Cancel</button>
+                <button class="button danger" type="submit">Yes, undo it</button>
+              </form>
+            </div>
+          </div>
           {% endif %}
         </div>
       </section>

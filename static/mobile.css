@@ -1175,6 +1175,7 @@
     display: flex !important;
     align-items: center;
   }
+  .undo-actions .button { flex: 1; min-height: 46px; }
 
   /* The floating calculator button sat on top of pop-ups, the menu and Save/Cancel buttons */
   body.modal-open #calc-tab,
