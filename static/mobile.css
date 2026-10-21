@@ -89,10 +89,17 @@
     background: rgba(0,0,0,0.4);
   }
 
-  .mobile-drawer.is-open .mobile-drawer-overlay { animation: drawer-fade 0.2s ease-out; }
-  .mobile-drawer.is-open .mobile-drawer-panel { animation: drawer-slide 0.22s ease-out; }
-  @keyframes drawer-fade { from { opacity: 0; } }
-  @keyframes drawer-slide { from { transform: translateX(-100%); } }
+  /* The menu slides in from the left and slides back out the same way.
+     _nav.html adds is-closing and removes is-open when the slide-out ends. */
+  .mobile-drawer.is-open .mobile-drawer-overlay { animation: drawer-fade-in 0.24s ease-out; }
+  .mobile-drawer.is-open .mobile-drawer-panel { animation: drawer-slide-in 0.28s cubic-bezier(0.22, 0.8, 0.3, 1); }
+  .mobile-drawer.is-closing { pointer-events: none; }
+  .mobile-drawer.is-closing .mobile-drawer-overlay { animation: drawer-fade-out 0.22s ease-in forwards; }
+  .mobile-drawer.is-closing .mobile-drawer-panel { animation: drawer-slide-out 0.22s cubic-bezier(0.4, 0, 0.7, 0.2) forwards; }
+  @keyframes drawer-fade-in { from { opacity: 0; } }
+  @keyframes drawer-fade-out { to { opacity: 0; } }
+  @keyframes drawer-slide-in { from { transform: translateX(-100%); } }
+  @keyframes drawer-slide-out { to { transform: translateX(-100%); } }
 
   .mobile-drawer-panel {
     position: absolute;
@@ -497,25 +504,45 @@
   .client-subtitle {
     font-size: 0.8rem;
   }
+  /* Statement header on phones, like an app toolbar: back arrow on the left and
+     Export / History / Undo on the right, then the client name full width below. */
   .client-page .client-hero {
     flex-direction: row !important;
-    flex-wrap: nowrap;
-    align-items: flex-start !important;
+    flex-wrap: wrap;
+    gap: 12px !important;
+    align-items: center !important;
   }
   .client-page .client-title-block {
-    flex: 1;
-    width: auto;
+    order: 2;
+    flex: 1 1 100%;
+    width: 100%;
   }
   .client-page .hero-actions {
+    order: 1;
     display: flex;
     flex: none;
     gap: 4px;
+    width: auto;
+    margin-left: auto;
   }
   .client-page .hero-actions > .history-dropdown { width: auto; }
-  /* The way back to the dashboard: "‹ Dashboard" above the client name */
-  .client-page .crumb-rest { display: none; }
-  .client-page .crumb-link { display: inline-flex; align-items: center; min-height: 28px; font-weight: 600; }
-  .client-page .crumb-link::before { content: "\2039"; margin-right: 5px; font-size: 1.3em; line-height: 1; }
+  /* Back to the dashboard: a round arrow button left of the client name */
+  .client-page .crumb-link,
+  .client-page .crumb-sep { display: none; }
+  .client-page .hero-back {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 46px;
+    height: 46px;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    background: #fff;
+    color: var(--accent);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .client-page .hero-back svg { width: 20px; height: 20px; }
+  .client-page .hero-back:active { background: var(--soft); transform: scale(0.96); }
   .client-page .hero-actions .icon-action.is-tool {
     min-width: 46px;
     min-height: 46px;

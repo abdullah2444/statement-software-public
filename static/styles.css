@@ -167,6 +167,10 @@ small {
   display: block;
 }
 
+.hero-back {
+  display: none;
+}
+
 .crumb-link {
   color: inherit;
   text-decoration: none;

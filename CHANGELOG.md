@@ -21,13 +21,17 @@ so write them for the people using the app.
   changes until you press **Yes, undo it**. If someone else made a newer
   change in the meantime, nothing is undone and the page shows you the newer
   change instead.
-- The **Back** button is gone. Use the **Dashboard** link above the client name.
+- The big **Back** button is gone. On a computer, use the **Dashboard** link
+  above the client name. On a phone, a round **←** button sits at the top left
+  of the statement, next to Export, History and Undo, and the client name gets
+  the full width below them.
 - The calculator and **Newest** buttons are the same size and have a softer
   shadow. On iPhone they now stay clear of the bottom edge.
 
 **New phone menu**
 - The side menu has icons, a clear highlight on the page you're on, a round
-  close button, and **Log out** at the bottom.
+  close button, and **Log out** at the bottom. It slides in when you open it
+  and slides back out smoothly when you close it.
 
 ## 5.2.13
 

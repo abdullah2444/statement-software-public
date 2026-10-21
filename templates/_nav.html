@@ -276,7 +276,16 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
   var closeBtn = document.getElementById('mobile-drawer-close');
   if (!menuButton || !drawer) return;
   var previousOverflow = '';
+  var panel = drawer.querySelector('.mobile-drawer-panel');
+  var closeTimer = null;
+  // Closing plays the slide-out (mobile.css, is-closing) before the menu is hidden.
+  function finishClose() {
+    window.clearTimeout(closeTimer);
+    drawer.classList.remove('is-open', 'is-closing');
+  }
   function open() {
+    if (drawer.classList.contains('is-closing')) finishClose();
+    if (drawer.classList.contains('is-open')) return;
     previousOverflow = document.body.style.overflow;
     drawer.classList.add('is-open');
     document.body.style.overflow = 'hidden';
@@ -284,11 +293,18 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
     if (closeBtn) closeBtn.focus();
   }
   function close() {
-    if (!drawer.classList.contains('is-open')) return;
-    drawer.classList.remove('is-open');
+    if (!drawer.classList.contains('is-open') || drawer.classList.contains('is-closing')) return;
+    drawer.classList.add('is-closing');
+    // Backup in case the animation never reports its end (hidden tab, no animations).
+    closeTimer = window.setTimeout(finishClose, 350);
     document.body.style.overflow = previousOverflow;
     menuButton.setAttribute('aria-expanded', 'false');
     menuButton.focus();
+  }
+  if (panel) {
+    panel.addEventListener('animationend', function(event) {
+      if (event.target === panel && drawer.classList.contains('is-closing')) finishClose();
+    });
   }
   menuButton.addEventListener('click', open);
   if (overlay) overlay.addEventListener('click', close);
@@ -297,7 +313,7 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
     item.addEventListener('click', close);
   });
   document.addEventListener('keydown', function(event) {
-    if (!drawer.classList.contains('is-open')) return;
+    if (!drawer.classList.contains('is-open') || drawer.classList.contains('is-closing')) return;
     if (event.key === 'Escape') { event.preventDefault(); close(); }
     if (event.key === 'Tab') {
       // Keep keyboard focus inside the open menu.

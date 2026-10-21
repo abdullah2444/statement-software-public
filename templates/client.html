@@ -945,7 +945,7 @@
     {% if g.user %}
     {% include '_nav.html' %}
     {% import '_statement_rows.html' as ledger with context %}
-    {% from '_icons.html' import icon_label %}
+    {% from '_icons.html' import icon, icon_label %}
     {% endif %}
     <main class="shell client-page">
       {% with messages = get_flashed_messages(with_categories=true) %}
@@ -956,8 +956,10 @@
       {% endif %}
       {% endwith %}
       <section class="hero client-hero">
+        {#- Phones: a round back button left of the client name. Computers use the Dashboard link above it. -#}
+        <a class="hero-back" href="{{ url_for('index') }}" aria-label="Back to the dashboard">{{ icon('back') }}</a>
         <div class="client-title-block">
-          <p class="eyebrow"><a class="crumb-link" href="{{ url_for('index') }}">Dashboard</a><span class="crumb-rest"> / Client Statement</span></p>
+          <p class="eyebrow"><a class="crumb-link" href="{{ url_for('index') }}">Dashboard</a><span class="crumb-sep" aria-hidden="true"> / </span>Client Statement</p>
           <h1>{{ client.name }}</h1>
           <p class="client-subtitle">{{ total_rows }} entr{{ 'ies' if total_rows != 1 else 'y' }} · newest first</p>
         </div>
