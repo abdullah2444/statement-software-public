@@ -4,6 +4,30 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.13
+
+**Newest entries on top, older ones load as you scroll**
+- Client statements and expense accounts now open with the newest entry at
+  the top. The balance on the top row is the current balance.
+- Scroll down and older entries load by themselves, 30 at a time. No more
+  pages to click through. **Load older entries** and **Show all** are at the
+  bottom too.
+- At the bottom you see how many entries are showing, and a note when you
+  reach the very first entry.
+- An **↑ Newest** button takes you back to the top.
+- After you save, delete or undo, the page comes back with the same entries
+  still loaded, and refreshing keeps your place.
+- When you edit an amount, the balances on the rows above update straight
+  away.
+- PDF, Excel, CSV and print still list entries oldest first, like a normal
+  statement.
+
+**Smaller row buttons**
+- Edit, Delete and Auto Commission are now small icons. Hover over one to
+  see what it does.
+- On phones each icon has a small word under it, and the buttons sit on the
+  same line as the entry type, so each card takes much less space.
+
 ## 5.2.12
 
 **Expenses look like the rest of the app**

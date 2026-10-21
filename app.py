@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from bisect import bisect_left
 import csv
 import io
 import json
@@ -3913,29 +3914,75 @@ def import_client_csv():
     return redirect(url_for("client_statement", client_id=client_id))
 
 
-@app.route("/clients/<int:client_id>")
-def client_statement(client_id: int):
-    db = get_db()
-    client = db.execute("select * from clients where id = ?", (client_id,)).fetchone()
-    if client is None:
-        abort(404)
-    commission_expense_accounts = expense_account_options(db)
-    default_profit_account_id = default_profit_expense_account_id(commission_expense_accounts)
+LEDGER_CHUNK = 30
+LEDGER_MAX_ROWS = 5000
 
-    filters = {
-        "q": request.args.get("q", "").strip(),
-        "currency": request.args.get("currency", "").strip(),
-        "category": request.args.get("category", "").strip(),
-        "date_from": request.args.get("date_from", "").strip(),
-        "date_to": request.args.get("date_to", "").strip(),
+
+def ledger_shown_count(raw: str | None, page: int | None = None) -> int | None:
+    """How many of the newest rows a scrolling ledger shows when it opens; None means all.
+    Older ?per_page=&page= links still open with the rows they pointed at."""
+    raw = (raw or "").strip().lower()
+    if raw == "all":
+        return None
+    try:
+        count = int(raw)
+    except ValueError:
+        count = LEDGER_CHUNK
+    count *= max(page or 1, 1)
+    return min(max(count, 1), LEDGER_MAX_ROWS)
+
+
+def ledger_cursor(args) -> tuple[str, int] | None:
+    """The (entry_date, id) of the oldest row already on screen, sent when loading more."""
+    before_date = (args.get("before_date") or "").strip()
+    before_id = args.get("before_id", type=int)
+    if not before_date or before_id is None:
+        return None
+    return before_date, before_id
+
+
+def newest_first_chunk(rows: list, count: int | None, before: tuple[str, int] | None = None) -> tuple[list, bool]:
+    """The next rows of a scrolling ledger, newest first.
+
+    rows are oldest first (entry_date, id order). The chunk holds up to count rows just
+    older than before, or the newest rows when before is None. A cursor instead of an
+    offset means rows added or deleted meanwhile never repeat or skip a row.
+    Returns the chunk and whether still older rows remain."""
+    end = len(rows)
+    if before is not None:
+        end = bisect_left([(row["entry_date"], row["id"]) for row in rows], before)
+    start = 0 if count is None else max(end - count, 0)
+    return list(reversed(rows[start:end])), start > 0
+
+
+def ledger_chunk_payload(rows: list, has_more: bool, total: int, **html) -> dict:
+    oldest = rows[-1] if rows else None
+    return {
+        "ok": True,
+        **html,
+        "count": len(rows),
+        "has_more": has_more,
+        "total": total,
+        "before_date": oldest["entry_date"] if oldest else None,
+        "before_id": oldest["id"] if oldest else None,
     }
-    view_mode = request.args.get("view", "combined").strip() or "combined"
+
+
+def statement_filters_from_args(args) -> tuple[dict, str]:
+    filters = {
+        "q": args.get("q", "").strip(),
+        "currency": args.get("currency", "").strip(),
+        "category": args.get("category", "").strip(),
+        "date_from": args.get("date_from", "").strip(),
+        "date_to": args.get("date_to", "").strip(),
+    }
+    view_mode = args.get("view", "combined").strip() or "combined"
     if view_mode not in {"combined", "split"}:
         view_mode = "combined"
-    page_arg = request.args.get("page", type=int)
-    page = max(page_arg or 1, 1)
-    per_page_raw = request.args.get("per_page", "10").strip() or "10"
-    per_page = "all" if per_page_raw == "all" else max(int(per_page_raw), 1)
+    return filters, view_mode
+
+
+def statement_filtered_entries(db: sqlite3.Connection, client_id: int, filters: dict) -> list[sqlite3.Row]:
     clauses = ["client_id = ?"]
     params: list[object] = [client_id]
     if filters["q"]:
@@ -3954,37 +4001,25 @@ def client_statement(client_id: int):
     if filters["date_to"]:
         clauses.append("entry_date <= ?")
         params.append(filters["date_to"])
-
     where_sql = " and ".join(clauses)
-    query = f"""
-        select *
-        from statement_entries
-        where {where_sql}
-        order by entry_date, id
-    """
-    all_entries = db.execute(query, params).fetchall()
+    return db.execute(
+        f"select * from statement_entries where {where_sql} order by entry_date, id", params
+    ).fetchall()
+
+
+@app.route("/clients/<int:client_id>")
+def client_statement(client_id: int):
+    db = get_db()
+    client = db.execute("select * from clients where id = ?", (client_id,)).fetchone()
+    if client is None:
+        abort(404)
+    commission_expense_accounts = expense_account_options(db)
+    default_profit_account_id = default_profit_expense_account_id(commission_expense_accounts)
+
+    filters, view_mode = statement_filters_from_args(request.args)
+    shown = ledger_shown_count(request.args.get("per_page"), request.args.get("page", type=int))
+    all_entries = statement_filtered_entries(db, client_id, filters)
     total_rows = len(all_entries)
-    if per_page == "all":
-        total_pages = 1
-        page = 1
-        entries = all_entries
-    else:
-        total_pages = max((total_rows + per_page - 1) // per_page, 1)
-        if page > total_pages:
-            page = total_pages
-        pages: list[list[sqlite3.Row]] = []
-        remainder = total_rows % per_page
-        first_chunk = remainder if remainder else per_page
-        start_index = 0
-        if total_rows > 0:
-            pages.append(all_entries[:first_chunk])
-            start_index = first_chunk
-        while start_index < total_rows:
-            pages.append(all_entries[start_index:start_index + per_page])
-            start_index += per_page
-        if pages:
-            pages = list(reversed(pages))
-        entries = pages[page - 1] if pages else []
 
     rows = statement_rows_with_commission_state(db, client_id, all_entries)
     current_usd_balance = rows[-1]["running_usd"] if rows else 0.0
@@ -3993,20 +4028,7 @@ def client_statement(client_id: int):
     approx_total_rmb = None
     if fx_summary.get("display_rate") is not None:
         approx_total_rmb = current_usd_balance * fx_summary["display_rate"] + current_cny_balance
-    if per_page != "all":
-        pages: list[list[dict]] = []
-        remainder = total_rows % per_page
-        first_chunk = remainder if remainder else per_page
-        start_index = 0
-        if total_rows > 0:
-            pages.append(rows[:first_chunk])
-            start_index = first_chunk
-        while start_index < total_rows:
-            pages.append(rows[start_index:start_index + per_page])
-            start_index += per_page
-        if pages:
-            pages = list(reversed(pages))
-        rows = pages[page - 1] if pages else []
+    rows, has_more = newest_first_chunk(rows, shown)
     return render_template(
         "client.html",
         client=client,
@@ -4020,11 +4042,9 @@ def client_statement(client_id: int):
         recent_events=recent_events(client_id),
         filters=filters,
         view_mode=view_mode,
-        page=page,
-        per_page=per_page,
-        per_page_raw=per_page_raw,
         total_rows=total_rows,
-        total_pages=total_pages,
+        has_more=has_more,
+        ledger_chunk=LEDGER_CHUNK,
         default_date=local_today().isoformat(),
         type_options=TYPE_OPTIONS,
         category_options=CATEGORY_OPTIONS,
@@ -4033,6 +4053,39 @@ def client_statement(client_id: int):
         quick_submit_id=request.args.get("quick_submit_id", type=int),
         quick_submit=_get_quick_submit(request.args.get("quick_submit_id", type=int)),
     )
+
+
+@app.route("/clients/<int:client_id>/rows")
+def client_statement_rows(client_id: int):
+    """The next, older rows of a client statement, for loading while scrolling."""
+    db = get_db()
+    if db.execute("select 1 from clients where id = ?", (client_id,)).fetchone() is None:
+        abort(404)
+    filters, view_mode = statement_filters_from_args(request.args)
+    all_entries = statement_filtered_entries(db, client_id, filters)
+    rows = statement_rows_with_commission_state(db, client_id, all_entries)
+    limit = ledger_shown_count(request.args.get("limit"))
+    chunk, has_more = newest_first_chunk(rows, limit, ledger_cursor(request.args))
+    context = dict(rows=chunk, view_mode=view_mode, type_options=TYPE_OPTIONS, category_options=CATEGORY_OPTIONS)
+    return jsonify(ledger_chunk_payload(
+        chunk, has_more, len(rows),
+        rows_html=render_template("_statement_rows.html", chunk_part="table", **context),
+        cards_html=render_template("_statement_rows.html", chunk_part="cards", **context),
+    ))
+
+
+@app.route("/clients/<int:client_id>/balances")
+def client_statement_balances(client_id: int):
+    """Running balances of every row the current filters show, after an in-place edit."""
+    db = get_db()
+    if db.execute("select 1 from clients where id = ?", (client_id,)).fetchone() is None:
+        abort(404)
+    filters, _ = statement_filters_from_args(request.args)
+    rows = running_balances(statement_filtered_entries(db, client_id, filters))
+    return jsonify({
+        "ok": True,
+        "balances": {str(row["id"]): {"usd": row["running_usd"], "cny": row["running_cny"]} for row in rows},
+    })
 
 
 def _get_quick_submit(qs_id: int | None) -> dict | None:
@@ -6862,19 +6915,34 @@ def expense_account_new():
     return redirect(url_for("expense_account_view", account_id=account["id"]))
 
 
-EXPENSE_PER_PAGE_OPTIONS = ("10", "25", "50", "all")
+def expense_filters_from_args(args) -> dict:
+    return {
+        "q": args.get("q", "").strip(),
+        "category": args.get("category", "").strip(),
+        "date_from": args.get("date_from", "").strip(),
+        "date_to": args.get("date_to", "").strip(),
+    }
 
 
-def newest_first_page(items: list, per_page_raw: str, page: int) -> tuple[list, int, int]:
-    """One page of a date-ordered list, the way client statements page: page 1 holds
-    the newest rows, and rows inside a page stay oldest first."""
-    if per_page_raw == "all" or not items:
-        return items, 1, 1
-    per_page = int(per_page_raw)
-    total_pages = (len(items) + per_page - 1) // per_page
-    page = min(max(page, 1), total_pages)
-    end = len(items) - (page - 1) * per_page
-    return items[max(end - per_page, 0):end], page, total_pages
+def expense_filtered_entries(db: sqlite3.Connection, account_id: int, filters: dict) -> list[sqlite3.Row]:
+    clauses = ["account_id = ?"]
+    params: list[object] = [account_id]
+    if filters["q"]:
+        clauses.append("description like ?")
+        params.append(f'%{filters["q"]}%')
+    if filters["category"]:
+        clauses.append("category = ?")
+        params.append(filters["category"])
+    if filters["date_from"]:
+        clauses.append("entry_date >= ?")
+        params.append(filters["date_from"])
+    if filters["date_to"]:
+        clauses.append("entry_date <= ?")
+        params.append(filters["date_to"])
+    where_sql = " and ".join(clauses)
+    return db.execute(
+        f"select * from expense_entries where {where_sql} order by entry_date, id", params
+    ).fetchall()
 
 
 def expense_account_totals(entries, currencies: list[str]) -> dict:
@@ -6900,40 +6968,11 @@ def expense_account_view(account_id):
     # Generate recurring entries
     generate_recurring_expenses(account_id)
 
-    # Filters
-    filters = {
-        "q": request.args.get("q", "").strip(),
-        "category": request.args.get("category", "").strip(),
-        "date_from": request.args.get("date_from", "").strip(),
-        "date_to": request.args.get("date_to", "").strip(),
-    }
-
-    clauses = ["account_id = ?"]
-    params = [account_id]
-    if filters["q"]:
-        clauses.append("description like ?")
-        params.append(f'%{filters["q"]}%')
-    if filters["category"]:
-        clauses.append("category = ?")
-        params.append(filters["category"])
-    if filters["date_from"]:
-        clauses.append("entry_date >= ?")
-        params.append(filters["date_from"])
-    if filters["date_to"]:
-        clauses.append("entry_date <= ?")
-        params.append(filters["date_to"])
-
-    where_sql = " and ".join(clauses)
-    all_entries = db.execute(
-        f"select * from expense_entries where {where_sql} order by entry_date, id",
-        params,
-    ).fetchall()
-
-    per_page_raw = (request.args.get("per_page") or "10").strip().lower()
-    if per_page_raw not in EXPENSE_PER_PAGE_OPTIONS:
-        per_page_raw = "10"
+    filters = expense_filters_from_args(request.args)
+    all_entries = expense_filtered_entries(db, account_id, filters)
     all_rows = expense_running_balances(all_entries, currencies)
-    page_rows, page, total_pages = newest_first_page(all_rows, per_page_raw, request.args.get("page", 1, type=int))
+    shown = ledger_shown_count(request.args.get("per_page"), request.args.get("page", type=int))
+    page_rows, has_more = newest_first_chunk(all_rows, shown)
     rows = annotate_expense_rows(db, page_rows)
 
     # Totals for the whole account, whatever the filters show
@@ -6962,9 +7001,8 @@ def expense_account_view(account_id):
         rows=rows,
         total_rows=len(all_rows),
         account_entry_count=len(account_entries),
-        page=page,
-        total_pages=total_pages,
-        per_page_raw=per_page_raw,
+        has_more=has_more,
+        ledger_chunk=LEDGER_CHUNK,
         totals=totals,
         latest_event=latest_event,
         templates=templates,
@@ -7165,6 +7203,26 @@ def expense_delete_entry(entry_id):
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         return jsonify({"ok": True, "deleted_id": entry_id})
     return redirect(url_for("expense_account_view", account_id=entry["account_id"]) + "#table-top")
+
+
+@app.route("/expenses/accounts/<int:account_id>/rows")
+def expense_account_rows(account_id):
+    """The next, older rows of an expense account, for loading while scrolling."""
+    db = get_db()
+    account = db.execute("select * from expense_accounts where id = ?", (account_id,)).fetchone()
+    if account is None:
+        abort(404)
+    currencies = [c.strip() for c in account["enabled_currencies"].split(",") if c.strip()]
+    all_rows = expense_running_balances(expense_filtered_entries(db, account_id, expense_filters_from_args(request.args)), currencies)
+    chunk, has_more = newest_first_chunk(all_rows, ledger_shown_count(request.args.get("limit")), ledger_cursor(request.args))
+    rows = annotate_expense_rows(db, chunk)
+    return jsonify(ledger_chunk_payload(
+        rows, has_more, len(all_rows),
+        rows_html=render_template(
+            "_expense_rows.html", chunk_part="table", rows=rows, currencies=currencies,
+            expense_categories=EXPENSE_CATEGORIES, currency_symbol=currency_symbol,
+        ),
+    ))
 
 
 @app.route("/expenses/accounts/<int:account_id>/balances")

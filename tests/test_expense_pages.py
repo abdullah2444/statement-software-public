@@ -1,4 +1,4 @@
-"""Expense entries are paged like the client statement: page 1 holds the newest rows."""
+"""Expense account totals (the newest-first scrolling is tested in test_scrolling_ledgers)."""
 import importlib.util
 import os
 from pathlib import Path
@@ -29,17 +29,6 @@ class ExpensePagingTests(unittest.TestCase):
     def tearDownClass(cls):
         sys.modules.pop('app', None)
         cls.tmp.cleanup()
-
-    def test_newest_rows_come_first(self):
-        page = self.module.newest_first_page
-        rows = list(range(1, 24))  # 23 rows, oldest first
-        self.assertEqual(page(rows, "10", 1), (list(range(14, 24)), 1, 3))
-        self.assertEqual(page(rows, "10", 2), (list(range(4, 14)), 2, 3))
-        self.assertEqual(page(rows, "10", 3), ([1, 2, 3], 3, 3))
-        self.assertEqual(page(rows, "10", 99)[1], 3)
-        self.assertEqual(page(rows, "10", 0)[1], 1)
-        self.assertEqual(page(rows, "all", 2), (rows, 1, 1))
-        self.assertEqual(page([], "10", 1), ([], 1, 1))
 
     def test_account_totals(self):
         entries = [
