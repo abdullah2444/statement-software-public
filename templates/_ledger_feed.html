@@ -1,0 +1,25 @@
+{#- Footer of a scrolling ledger (newest rows first; older rows load while scrolling).
+    Set feed_url, feed_shown, feed_total, feed_has_more and feed_before before including. -#}
+<section class="ledger-feed{% if not feed_has_more %} is-complete{% endif %}" data-ledger-feed
+  data-url="{{ feed_url }}" data-chunk="{{ ledger_chunk }}" data-total="{{ feed_total }}"
+  data-has-more="{{ 1 if feed_has_more else '' }}" data-before="{{ feed_before }}">
+  <div class="ledger-feed-sentinel" data-feed-sentinel aria-hidden="true"></div>
+  <p class="ledger-feed-status" aria-live="polite">
+    <span class="ledger-feed-spinner" aria-hidden="true"></span>
+    Showing <strong data-feed-shown>{{ feed_shown }}</strong> of <strong data-feed-total>{{ feed_total }}</strong>
+    entr{{ 'ies' if feed_total != 1 else 'y' }} &middot; newest first
+  </p>
+  <div class="ledger-feed-actions" data-feed-actions {% if not feed_has_more %}hidden{% endif %}>
+    <button class="button ghost" type="button" data-feed-more>Load older entries</button>
+    <button class="text-action" type="button" data-feed-all>Show all</button>
+  </div>
+  <p class="ledger-feed-end" data-feed-end {% if feed_has_more or not feed_total %}hidden{% endif %}>
+    That's everything &mdash; you've reached the first entry.
+  </p>
+  <p class="ledger-feed-error" data-feed-error hidden>
+    Couldn't load older entries.
+    <button class="text-action" type="button" data-feed-retry>Try again</button>
+  </p>
+</section>
+<button class="ledger-top" type="button" data-feed-top hidden aria-label="Back to the newest entries">&uarr; Newest</button>
+<script src="{{ url_for('static', filename='ledger_feed.js', v=asset_version) }}"></script>

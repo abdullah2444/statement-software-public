@@ -1,0 +1,165 @@
+{#- One statement row, as a table row (desktop) and as a card (phones). Used by the
+    statement page and by the rows endpoint that loads older rows while scrolling. -#}
+{% from '_icons.html' import icon_label %}
+
+{% macro table_row(row) %}
+<tr
+  id="entry-{{ row.id }}"
+  class="display-row"
+  data-entry-id="{{ row.id }}"
+  data-source-no="{{ row.source_no }}"
+  data-entry-date="{{ row.entry_date }}"
+  data-description="{{ row.description }}"
+  data-currency="{{ row.currency }}"
+  data-direction="{{ row.direction }}"
+  data-amount="{{ row.amount }}"
+  data-kind="{{ row.kind }}"
+  data-category-hint="{{ row.category_hint }}"
+  data-transfer-group="{{ row.transfer_group or '' }}"
+  data-commission-source-entry-id="{{ row.commission_source_entry_id or '' }}"
+  data-commission-child-id="{{ row.commission_child_id or '' }}"
+  data-profit-expense-entry-id="{{ row.profit_expense_entry_id or '' }}"
+  data-profit-expense-account-id="{{ row.profit_expense_account_id or '' }}"
+  data-image-path="{{ row.image_path or '' }}"
+>
+  <td>{{ row.entry_date }}</td>
+  <td>{{ row.source_no }}</td>
+  <td>
+    <div class="desc-with-image">
+      {{ row.description }}
+      {% if row.image_path %}
+      <span class="image-thumb-link" title="Click to enlarge" data-lightbox-src="{{ url_for('serve_upload', filename=row.image_path) }}">
+        <img src="{{ url_for('serve_upload', filename=row.image_path) }}" class="row-image-thumb" alt="proof">
+      </span>
+      {% endif %}
+    </div>
+    <div class="row-meta">
+      {% for value, label in category_options %}
+        {% if row.category_hint == value and value != 'uncategorized' %}
+        <small>{{ label }}</small>
+        {% endif %}
+      {% endfor %}
+      {% if row.commission_source_entry_id %}
+      <small class="linked-note">Commission from #{{ row.commission_source_source_no }}</small>
+      {% elif row.commission_child_id %}
+      <small class="linked-note">Commission entry #{{ row.commission_child_source_no }} already exists</small>
+      {% endif %}
+      {% if row.profit_expense_account_name %}
+      <small class="linked-note">Company profit &rarr; {{ row.profit_expense_account_name }}</small>
+      {% endif %}
+    </div>
+  </td>
+  {% if view_mode == 'split' %}
+  <td class="num money-in">{% if row.currency == 'USD' and row.direction == 'IN' %}{{ (row.amount, 'USD')|money_with_symbol }}{% endif %}</td>
+  <td class="num money-out">{% if row.currency == 'USD' and row.direction == 'OUT' %}{{ (row.amount, 'USD')|money_with_symbol }}{% endif %}</td>
+  <td class="num money-in">{% if row.currency == 'CNY' and row.direction == 'IN' %}{{ (row.amount, 'CNY')|money_with_symbol }}{% endif %}</td>
+  <td class="num money-out">{% if row.currency == 'CNY' and row.direction == 'OUT' %}{{ (row.amount, 'CNY')|money_with_symbol }}{% endif %}</td>
+  {% else %}
+  <td>{{ row.currency }}</td>
+  <td class="num money-in">{% if row.direction == 'IN' %}{{ (row.amount, row.currency)|money_with_symbol }}{% endif %}</td>
+  <td class="num money-out">{% if row.direction == 'OUT' %}{{ (row.amount, row.currency)|money_with_symbol }}{% endif %}</td>
+  {% endif %}
+  <td data-bal="USD" class="num {% if row.running_usd < 0 %}balance-negative{% elif row.running_usd == 0 %}balance-zero{% endif %}">{{ (row.running_usd, 'USD')|money_with_symbol }}</td>
+  <td data-bal="CNY" class="num {% if row.running_cny < 0 %}balance-negative{% elif row.running_cny == 0 %}balance-zero{% endif %}">{{ (row.running_cny, 'CNY')|money_with_symbol }}</td>
+  <td>
+    <div class="type-stack">
+      {% if row.exchange_rate %}
+      <span class="type-badge is-fx">FX @ {{ '%.4f'|format(row.exchange_rate) }}</span>
+      {% else %}
+        {% for value, label in type_options %}
+          {% if row.kind == value %}<span class="type-badge">{{ label }}</span>{% endif %}
+        {% endfor %}
+      {% endif %}
+      {% if row.commission_source_entry_id %}
+      <span class="type-badge is-commission">Commission</span>
+      {% elif row.commission_child_id %}
+      <span class="type-badge is-commission-source">Has Commission</span>
+      {% endif %}
+    </div>
+  </td>
+  <td class="actions-cell">
+    <div class="actions-wrap">
+      {% if row.can_auto_commission %}
+      <a href="#entry-{{ row.id }}" data-commission-open="{{ row.id }}" data-role="commission-action" class="icon-action" data-tip="Auto commission" aria-label="Auto commission">{{ icon_label('percent', 'Commission') }}</a>
+      {% elif row.commission_source_entry_id %}
+      <span class="icon-action is-status" data-role="commission-action" data-tip="This is a commission row" aria-label="This is a commission row" tabindex="0">{{ icon_label('percent', 'Comm. row') }}</span>
+      {% elif row.commission_child_id %}
+      <span class="icon-action is-status" data-role="commission-action" data-tip="Commission already added" aria-label="Commission already added" tabindex="0">{{ icon_label('check', 'Has comm.') }}</span>
+      {% endif %}
+      <a href="#entry-{{ row.id }}" data-edit-open="{{ row.id }}" class="icon-action" data-tip="Edit entry" aria-label="Edit entry">{{ icon_label('edit', 'Edit') }}</a>
+      <form method="post" action="{{ url_for('delete_entry', entry_id=row.id) }}" class="inline-delete" data-confirm-delete>
+        <input type="hidden" name="return_per_page" value="" data-return-shown>
+        <button type="submit" class="icon-action is-danger" data-tip="Delete entry" aria-label="Delete entry">{{ icon_label('trash', 'Delete') }}</button>
+      </form>
+    </div>
+  </td>
+</tr>
+{% endmacro %}
+
+{% macro mobile_card(row) %}
+<article class="mobile-entry-card" data-entry-id="{{ row.id }}">
+  <div class="mobile-entry-top">
+    <div>
+      <span class="mobile-entry-date">{{ row.entry_date }}</span>
+      <strong>#{{ row.source_no }}</strong>
+    </div>
+    <span class="mobile-entry-currency">{{ row.currency }}</span>
+  </div>
+  <div class="mobile-entry-desc">
+    <strong>{{ row.description }}</strong>
+    <div class="row-meta">
+      {% for value, label in category_options %}
+        {% if row.category_hint == value and value != 'uncategorized' %}
+        <small>{{ label }}</small>
+        {% endif %}
+      {% endfor %}
+      {% if row.commission_source_entry_id %}
+      <small class="linked-note">Commission from #{{ row.commission_source_source_no }}</small>
+      {% elif row.commission_child_id %}
+      <small class="linked-note">Commission entry #{{ row.commission_child_source_no }} already exists</small>
+      {% endif %}
+      {% if row.profit_expense_account_name %}
+      <small class="linked-note">Company profit &rarr; {{ row.profit_expense_account_name }}</small>
+      {% endif %}
+    </div>
+  </div>
+  <div class="mobile-entry-amounts">
+    <div>
+      <span>{{ row.direction }}</span>
+      <strong class="{% if row.direction == 'IN' %}money-in{% else %}money-out{% endif %}">{{ (row.amount, row.currency)|money_with_symbol }}</strong>
+    </div>
+  </div>
+  <div class="mobile-entry-type">
+    {% if row.exchange_rate %}
+    <span class="type-badge is-fx">FX @ {{ '%.4f'|format(row.exchange_rate) }}</span>
+    {% else %}
+      {% for value, label in type_options %}
+        {% if row.kind == value %}<span class="type-badge">{{ label }}</span>{% endif %}
+      {% endfor %}
+    {% endif %}
+    {% if row.commission_source_entry_id %}
+    <span class="type-badge is-commission">Commission</span>
+    {% elif row.commission_child_id %}
+    <span class="type-badge is-commission-source">Has Commission</span>
+    {% endif %}
+  </div>
+  <div class="mobile-entry-actions">
+    {% if row.can_auto_commission %}
+    <a href="#entry-{{ row.id }}" data-commission-open="{{ row.id }}" data-role="commission-action" class="icon-action" data-tip="Auto commission" aria-label="Auto commission">{{ icon_label('percent', 'Commission') }}</a>
+    {% elif row.commission_source_entry_id %}
+    <span class="icon-action is-status" data-role="commission-action" data-tip="This is a commission row" aria-label="This is a commission row" tabindex="0">{{ icon_label('percent', 'Comm. row') }}</span>
+    {% elif row.commission_child_id %}
+    <span class="icon-action is-status" data-role="commission-action" data-tip="Commission already added" aria-label="Commission already added" tabindex="0">{{ icon_label('check', 'Has comm.') }}</span>
+    {% endif %}
+    <a href="#entry-{{ row.id }}" data-edit-open="{{ row.id }}" class="icon-action" data-tip="Edit entry" aria-label="Edit entry">{{ icon_label('edit', 'Edit') }}</a>
+    <form method="post" action="{{ url_for('delete_entry', entry_id=row.id) }}" class="inline-delete" data-confirm-delete>
+      <input type="hidden" name="return_per_page" value="" data-return-shown>
+      <button type="submit" class="icon-action is-danger" data-tip="Delete entry" aria-label="Delete entry">{{ icon_label('trash', 'Delete') }}</button>
+    </form>
+  </div>
+</article>
+{% endmacro %}
+
+{%- if chunk_part == 'table' %}{% for row in rows %}{{ table_row(row) }}{% endfor %}
+{%- elif chunk_part == 'cards' %}{% for row in rows %}{{ mobile_card(row) }}{% endfor %}
+{%- endif %}

@@ -1208,3 +1208,53 @@
 
   table { min-width: 550px; }
 }
+
+/* Scrolling ledgers: the "Newest" button sits left on phones, clear of the calculator and row buttons */
+@media (max-width: 768px) {
+  .ledger-top { right: auto; left: 16px; bottom: 18px; }
+  .ledger-feed { padding-bottom: 72px; }
+}
+
+/* Row actions on phones: one compact row of icons, each with a small word under it
+   (phones cannot hover, so the word replaces the tooltip). */
+@media (max-width: 768px) {
+  .icon-action {
+    width: auto;
+    min-width: 54px;
+    height: auto;
+    min-height: 44px;
+    gap: 2px;
+    padding: 5px 6px;
+    border-color: var(--line);
+    background: #f7f9f9;
+  }
+  .icon-action.is-status { background: transparent; border-color: transparent; }
+  .icon-action-label {
+    display: block;
+    font-size: 0.66rem;
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: 0.01em;
+  }
+  .icon-action[data-tip]::after { display: none; }
+
+  /* Client statement cards: type badges and actions share one line. */
+  .mobile-entry-card { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  .mobile-entry-card > .mobile-entry-top,
+  .mobile-entry-card > .mobile-entry-desc,
+  .mobile-entry-card > .mobile-entry-amounts { grid-column: 1 / -1; }
+  .mobile-entry-card > .mobile-entry-type { flex-wrap: wrap; }
+  .mobile-entry-card > .mobile-entry-actions { flex-wrap: nowrap; gap: 6px; justify-content: flex-end; padding-top: 0; }
+  .mobile-entry-actions .icon-action,
+  .mobile-entry-actions .inline-delete { flex: none; }
+
+  /* Expense ledger cards: the icons sit on the right instead of two wide buttons. */
+  .expense-table tr.display-row td.stack-actions .actions-wrap { display: flex !important; justify-content: flex-end; gap: 6px; }
+  .expense-table tr.display-row td.stack-actions form { flex: none; }
+  .expense-table tr.display-row td.stack-actions button.icon-action {
+    width: auto;
+    min-height: 44px;
+    border-radius: 8px;
+    font-size: inherit !important;
+  }
+}

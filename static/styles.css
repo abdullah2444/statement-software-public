@@ -472,16 +472,104 @@ td small {
 
 .actions-cell {
   white-space: nowrap;
-  width: 168px;
+  width: 1%;
   text-align: right;
 }
 
 .actions-wrap {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(56px, auto));
-  gap: 6px;
+  display: flex;
+  gap: 2px;
   align-items: center;
-  justify-content: end;
+  justify-content: flex-end;
+}
+
+/* Row actions are icons. data-tip explains each one on hover or keyboard focus;
+   on phones a small word shows under the icon instead (mobile.css). */
+.icon-action {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent-2);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.icon-action svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
+}
+
+.icon-action:hover,
+.icon-action:focus-visible {
+  background: var(--soft);
+  border-color: var(--line);
+  color: var(--accent);
+  outline: none;
+}
+
+.icon-action.is-danger {
+  color: #b4646a;
+}
+
+.icon-action.is-danger:hover,
+.icon-action.is-danger:focus-visible {
+  background: var(--red-bg);
+  border-color: #f1c0c0;
+  color: var(--red);
+}
+
+.icon-action.is-status {
+  color: #9aabb0;
+  cursor: help;
+}
+
+.icon-action.is-status:hover {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.icon-action-label {
+  display: none;
+}
+
+.icon-action[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 30;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  box-shadow: 0 6px 16px rgba(16, 58, 70, 0.22);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 0.12s, transform 0.12s;
+}
+
+.icon-action[data-tip]:hover::after,
+.icon-action[data-tip]:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 0.15s;
 }
 
 .text-action {
@@ -519,35 +607,6 @@ td small {
   align-items: center;
 }
 
-.actions-wrap .inline-delete {
-  width: 100%;
-}
-
-.actions-wrap .inline-delete .text-action {
-  width: 100%;
-}
-
-.action-status {
-  grid-column: 1 / -1;
-  justify-self: end;
-  display: inline-flex;
-  align-items: center;
-  min-height: 26px;
-  max-width: 100%;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: #f3f6f7;
-  font-size: 0.78rem;
-  color: var(--muted);
-  line-height: 1.2;
-  white-space: normal;
-  text-align: right;
-}
-
-.actions-wrap [data-role="commission-action"].text-action {
-  grid-column: 1 / -1;
-  width: 100%;
-}
 
 .link-button {
   appearance: none;
@@ -913,6 +972,125 @@ input:disabled {
 .pager-jump input[type="number"] {
   width: 64px;
   padding: 8px 10px;
+}
+
+/* -- Scrolling ledger (newest first, older rows load below) -- */
+
+.ledger-feed {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 16px 12px 6px;
+  color: var(--muted);
+  font-size: 0.88rem;
+  text-align: center;
+}
+
+.ledger-feed-sentinel {
+  width: 100%;
+  height: 1px;
+}
+
+.ledger-feed-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.ledger-feed-status strong {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.ledger-feed-spinner {
+  display: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent-2);
+  border-radius: 50%;
+  animation: ledger-spin 0.8s linear infinite;
+}
+
+.ledger-feed.is-loading .ledger-feed-spinner {
+  display: inline-block;
+}
+
+.ledger-feed-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.ledger-feed-actions[hidden],
+.ledger-feed [hidden] {
+  display: none;
+}
+
+.ledger-feed-end {
+  margin: 0;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.ledger-feed-error {
+  margin: 0;
+  color: var(--red);
+}
+
+@keyframes ledger-spin {
+  to { transform: rotate(360deg); }
+}
+
+.ledger-top {
+  position: fixed;
+  right: 78px;
+  bottom: 22px;
+  z-index: 9980;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  box-shadow: 0 10px 24px rgba(16, 58, 70, 0.25);
+  cursor: pointer;
+}
+
+.ledger-top:hover {
+  background: var(--accent-2);
+}
+
+.ledger-top[hidden] {
+  display: none;
+}
+
+.ledger-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 9995;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 12px 18px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.9rem;
+  box-shadow: 0 12px 28px rgba(16, 58, 70, 0.28);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 12px);
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.ledger-toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 /* -- Workbench ------------------------------------------- */
@@ -1371,6 +1549,8 @@ body.modal-open {
   .balance-strip,
   .view-toggle,
   .pager,
+  .ledger-feed,
+  .ledger-top,
   .workbench {
     display: none !important;
   }

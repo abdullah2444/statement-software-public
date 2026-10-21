@@ -1,0 +1,60 @@
+{#- One expense ledger row. Used by the account page and by the rows endpoint that
+    loads older rows while scrolling. -#}
+{% from '_icons.html' import icon_label %}
+
+{% macro expense_row(row) %}
+{%- set cat_labels = dict(expense_categories) %}
+<tr class="display-row" id="entry-{{ row.id }}"
+  data-entry-id="{{ row.id }}"
+  data-entry-date="{{ row.entry_date }}"
+  data-description="{{ row.description }}"
+  data-currency="{{ row.currency }}"
+  data-direction="{{ row.direction }}"
+  data-amount="{{ row.amount }}"
+  data-category="{{ row.category }}"
+  data-seq-no="{{ row.seq_no }}"
+  data-recurring="{{ 1 if row.is_recurring else '' }}"
+  data-linked-statement-entry-id="{{ row.linked_statement_entry_id or '' }}"
+  data-linked-statement-client-name="{{ row.linked_statement_client_name or '' }}"
+  data-linked-statement-source-no="{{ row.linked_statement_source_no or '' }}">
+  <td class="exp-date">{{ row.entry_date }}</td>
+  <td class="no">{{ row.seq_no }}</td>
+  <td class="exp-desc">
+    <span class="desc-text">{{ row.description }}</span>
+    <div class="row-meta">
+      <small class="cat-label">{{ cat_labels.get(row.category, row.category) }}</small>
+      {% if row.is_recurring %}<span class="type-badge">Recurring</span>{% endif %}
+      {% if row.linked_statement_entry_id %}
+      <span class="type-badge is-commission">From statement</span>
+      <small class="linked-note">
+        {% if row.linked_statement_client_id and row.linked_statement_source_no %}
+        <a href="{{ url_for('client_statement', client_id=row.linked_statement_client_id) }}#entry-{{ row.linked_statement_entry_id }}">{{ row.linked_statement_client_name or 'Client' }} row #{{ row.linked_statement_source_no }}</a>
+        {% endif %}
+      </small>
+      {% endif %}
+    </div>
+  </td>
+  {% for cur in currencies %}
+  <td class="num amt money-in" data-label="{{ cur }} In" data-cell="in" data-cur="{{ cur }}">{% if row.currency == cur and row.direction == 'IN' %}{{ currency_symbol(cur) }}{{ "{:,.2f}".format(row.amount) }}{% endif %}</td>
+  <td class="num amt money-out" data-label="{{ cur }} Out" data-cell="out" data-cur="{{ cur }}">{% if row.currency == cur and row.direction == 'OUT' %}{{ currency_symbol(cur) }}{{ "{:,.2f}".format(row.amount) }}{% endif %}</td>
+  {% set rb = row.running_balances.get(cur, 0) %}
+  <td class="num bal {% if rb < -0.005 %}balance-negative{% elif rb|abs <= 0.005 %}balance-zero{% endif %}" data-label="{{ cur }} Balance" data-cell="bal" data-cur="{{ cur }}">{{ currency_symbol(cur) }}{{ "{:,.2f}".format(rb) }}</td>
+  {% endfor %}
+  <td class="actions-cell stack-actions">
+    {% if row.linked_statement_entry_id %}
+    <div class="actions-wrap">
+      <span class="icon-action is-status" data-tip="Comes from a client statement; edit it there" aria-label="Comes from a client statement; edit it there" tabindex="0">{{ icon_label('link', 'From statement') }}</span>
+    </div>
+    {% else %}
+    <div class="actions-wrap">
+      <button type="button" class="icon-action" data-edit-open="{{ row.id }}" data-tip="Edit entry" aria-label="Edit entry">{{ icon_label('edit', 'Edit') }}</button>
+      <form method="post" action="{{ url_for('expense_delete_entry', entry_id=row.id) }}" class="inline-delete" data-delete-form>
+        <button type="submit" class="icon-action is-danger" data-tip="Delete entry" aria-label="Delete entry">{{ icon_label('trash', 'Delete') }}</button>
+      </form>
+    </div>
+    {% endif %}
+  </td>
+</tr>
+{% endmacro %}
+
+{%- if chunk_part == 'table' %}{% for row in rows %}{{ expense_row(row) }}{% endfor %}{% endif %}

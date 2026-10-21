@@ -74,7 +74,7 @@
         .expense-page .statement-card .table-scroll-wrap { display: block !important; padding: 12px !important; }
         .expense-page .statement-card-actions { grid-template-columns: 1fr; }
         .empty-ledger { padding: 24px 12px; }
-        .expense-table tr.display-row td.stack-actions .actions-wrap { display: grid; grid-template-columns: 1fr 1fr; width: 100%; flex: 1 1 100%; }
+        .expense-table tr.display-row td.stack-actions .actions-wrap { width: 100%; flex: 1 1 100%; }
         .expense-table tr.display-row td.stack-actions { width: auto; }
         .expense-table tr.display-row td.stack-actions form { display: block !important; }
       }
@@ -82,6 +82,7 @@
   </head>
   <body>
     {% include '_nav.html' %}
+    {% import '_expense_rows.html' as ledger with context %}
     <main class="shell client-page expense-page">
       {% with messages = get_flashed_messages(with_categories=true) %}
       {% for cat, msg in messages %}
@@ -93,7 +94,7 @@
         <div class="client-title-block">
           <p class="eyebrow">Expense Account</p>
           <h1>{{ account.name }}</h1>
-          <p class="client-subtitle">{{ account_entry_count }} entr{{ 'ies' if account_entry_count != 1 else 'y' }} · {{ per_page_raw|upper }} rows view · {{ currencies|join(', ') }}</p>
+          <p class="client-subtitle">{{ account_entry_count }} entr{{ 'ies' if account_entry_count != 1 else 'y' }} · newest first · {{ currencies|join(', ') }}</p>
         </div>
         <div class="hero-actions">
           <a class="button ghost" href="{{ url_for('expense_list') }}">Back</a>
@@ -172,7 +173,6 @@
           </div>
         </div>
         <form method="get" action="{{ url_for('expense_account_view', account_id=account.id) }}" class="form-grid filters-grid">
-          <input type="hidden" name="per_page" value="{{ per_page_raw }}">
           <label>
             <span>Search</span>
             <input type="text" name="q" value="{{ filters.q }}" placeholder="Search descriptions...">
@@ -228,57 +228,7 @@
             </tr>
           </thead>
           <tbody>
-            {% for row in rows %}
-            <tr class="display-row" id="entry-{{ row.id }}"
-              data-entry-id="{{ row.id }}"
-              data-entry-date="{{ row.entry_date }}"
-              data-description="{{ row.description }}"
-              data-currency="{{ row.currency }}"
-              data-direction="{{ row.direction }}"
-              data-amount="{{ row.amount }}"
-              data-category="{{ row.category }}"
-              data-seq-no="{{ row.seq_no }}"
-              data-recurring="{{ 1 if row.is_recurring else '' }}"
-              data-linked-statement-entry-id="{{ row.linked_statement_entry_id or '' }}"
-              data-linked-statement-client-name="{{ row.linked_statement_client_name or '' }}"
-              data-linked-statement-source-no="{{ row.linked_statement_source_no or '' }}">
-              <td class="exp-date">{{ row.entry_date }}</td>
-              <td class="no">{{ row.seq_no }}</td>
-              <td class="exp-desc">
-                <span class="desc-text">{{ row.description }}</span>
-                <div class="row-meta">
-                  <small class="cat-label">{{ cat_labels.get(row.category, row.category) }}</small>
-                  {% if row.is_recurring %}<span class="type-badge">Recurring</span>{% endif %}
-                  {% if row.linked_statement_entry_id %}
-                  <span class="type-badge is-commission">From statement</span>
-                  <small class="linked-note">
-                    {% if row.linked_statement_client_id and row.linked_statement_source_no %}
-                    <a href="{{ url_for('client_statement', client_id=row.linked_statement_client_id) }}#entry-{{ row.linked_statement_entry_id }}">{{ row.linked_statement_client_name or 'Client' }} row #{{ row.linked_statement_source_no }}</a>
-                    {% endif %}
-                  </small>
-                  {% endif %}
-                </div>
-              </td>
-              {% for cur in currencies %}
-              <td class="num amt money-in" data-label="{{ cur }} In" data-cell="in" data-cur="{{ cur }}">{% if row.currency == cur and row.direction == 'IN' %}{{ currency_symbol(cur) }}{{ "{:,.2f}".format(row.amount) }}{% endif %}</td>
-              <td class="num amt money-out" data-label="{{ cur }} Out" data-cell="out" data-cur="{{ cur }}">{% if row.currency == cur and row.direction == 'OUT' %}{{ currency_symbol(cur) }}{{ "{:,.2f}".format(row.amount) }}{% endif %}</td>
-              {% set rb = row.running_balances.get(cur, 0) %}
-              <td class="num bal {% if rb < -0.005 %}balance-negative{% elif rb|abs <= 0.005 %}balance-zero{% endif %}" data-label="{{ cur }} Balance" data-cell="bal" data-cur="{{ cur }}">{{ currency_symbol(cur) }}{{ "{:,.2f}".format(rb) }}</td>
-              {% endfor %}
-              <td class="actions-cell stack-actions">
-                {% if row.linked_statement_entry_id %}
-                <span class="readonly-entry">Edit in statement</span>
-                {% else %}
-                <div class="actions-wrap">
-                  <button type="button" class="text-action" data-edit-open="{{ row.id }}">Edit</button>
-                  <form method="post" action="{{ url_for('expense_delete_entry', entry_id=row.id) }}" class="inline-delete" data-delete-form>
-                    <button type="submit" class="text-action delete-action">Del</button>
-                  </form>
-                </div>
-                {% endif %}
-              </td>
-            </tr>
-            {% endfor %}
+            {% for row in rows %}{{ ledger.expense_row(row) }}{% endfor %}
           </tbody>
         </table>
         </div>
@@ -289,40 +239,11 @@
         {% endif %}
       </section>
 
-      {% set page_args = dict(account_id=account.id, per_page=per_page_raw, q=filters.q, category=filters.category, date_from=filters.date_from, date_to=filters.date_to) %}
-      <section class="pager">
-        <div class="pager-info">
-          <span>Page {{ page }} / {{ total_pages }}</span>
-          <span>&middot;</span>
-          <span>{{ total_rows }} rows</span>
-        </div>
-        <div class="pager-actions">
-          {% if page > 1 %}
-          <a class="button ghost" href="{{ url_for('expense_account_view', page=page-1, **page_args) }}">Newer</a>
-          {% endif %}
-          <form method="get" class="pager-jump" data-per-page-form>
-            {% for key in ('q', 'category', 'date_from', 'date_to') %}<input type="hidden" name="{{ key }}" value="{{ filters[key] }}">{% endfor %}
-            <span>Lines</span>
-            <select name="per_page" style="width:auto;" data-per-page-select aria-label="Rows per page">
-              {% for value, label in [('10','10'), ('25','25'), ('50','50'), ('all','All')] %}
-              <option value="{{ value }}" {% if per_page_raw == value %}selected{% endif %}>{{ label }}</option>
-              {% endfor %}
-            </select>
-          </form>
-          {% if total_pages > 1 %}
-          <form method="get" class="pager-jump">
-            <input type="hidden" name="per_page" value="{{ per_page_raw }}">
-            {% for key in ('q', 'category', 'date_from', 'date_to') %}<input type="hidden" name="{{ key }}" value="{{ filters[key] }}">{% endfor %}
-            <span>Go to</span>
-            <input type="number" name="page" min="1" max="{{ total_pages }}" value="{{ page }}">
-            <button class="button ghost" type="submit">Go</button>
-          </form>
-          {% endif %}
-          {% if page < total_pages %}
-          <a class="button ghost" href="{{ url_for('expense_account_view', page=page+1, **page_args) }}">Previous Page</a>
-          {% endif %}
-        </div>
-      </section>
+      {% set feed_args = dict(account_id=account.id, q=filters.q, category=filters.category, date_from=filters.date_from, date_to=filters.date_to) %}
+      {% with feed_url=url_for('expense_account_rows', **feed_args), feed_shown=rows|length, feed_total=total_rows, feed_has_more=has_more,
+              feed_before=(rows[-1].entry_date ~ '|' ~ rows[-1].id) if rows else '' %}
+      {% include '_ledger_feed.html' %}
+      {% endwith %}
 
       <!-- Shared inline editor (moved under the row being edited) -->
       <table hidden>
@@ -534,8 +455,10 @@
           filtersToggle.textContent = isOpen ? 'Close Filters' : 'Open Filters';
         });
 
-        const perPageSelect = document.querySelector('[data-per-page-select]');
-        perPageSelect?.addEventListener('change', () => perPageSelect.form.submit());
+        // Newest rows first; older ones load while scrolling (static/ledger_feed.js)
+        const feed = window.initLedgerFeed?.({
+          append(data, fragment) { tbody.appendChild(fragment(data.rows_html, tbody)); },
+        });
 
         // -- Fold-out sections --
         document.querySelectorAll('[data-section-toggle]').forEach((toggle) => {
@@ -625,6 +548,19 @@
             });
         }
 
+        // Rows stay newest first: (date, then entry number) from top to bottom.
+        const isNewer = (a, b) => a.dataset.entryDate > b.dataset.entryDate
+          || (a.dataset.entryDate === b.dataset.entryDate && Number(a.dataset.entryId) > Number(b.dataset.entryId));
+        // Puts a row where its date belongs. Returns false when it is older than every row on
+        // screen while older rows are still to load: it then comes in with them.
+        function placeRow(row) {
+          const next = Array.from(tbody.querySelectorAll('.display-row')).find((other) => other !== row && isNewer(row, other));
+          if (next) { tbody.insertBefore(row, next); return true; }
+          if (feed?.hasMore) { row.remove(); return false; }
+          tbody.appendChild(row);
+          return true;
+        }
+
         const flashRow = (row) => {
           row.classList.add('row-just-saved');
           setTimeout(() => row.classList.remove('row-just-saved'), 2000);
@@ -663,6 +599,7 @@
               if (!data.ok) { if (data.error) { alert(data.error); return; } form.submit(); return; }
               if (row.classList.contains('is-editing')) closeEditor();
               row.remove();
+              feed?.adjust(-1);
               refreshBalances();
             })
             .catch(() => form.submit());
@@ -697,7 +634,12 @@
               if (!data.ok) { if (data.error) { alert(data.error); return; } sharedForm.submit(); return; }
               fillRow(row, data.entry);
               closeEditor();
-              flashRow(row);
+              if (placeRow(row)) {
+                flashRow(row);
+                row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+              } else {
+                feed?.notice('Saved. Its new date is older than the rows on screen, so it is further down the list.');
+              }
               refreshBalances();
             })
             .catch(() => sharedForm.submit());
@@ -737,9 +679,8 @@
           wrap.className = 'actions-wrap';
           const edit = document.createElement('button');
           edit.type = 'button';
-          edit.className = 'text-action';
           edit.dataset.editOpen = entry.id;
-          edit.textContent = 'Edit';
+          window.iconAction(edit, 'edit', 'Edit entry', 'Edit');
           const del = document.createElement('form');
           del.method = 'post';
           del.action = '/expenses/entries/' + encodeURIComponent(entry.id) + '/delete';
@@ -748,8 +689,8 @@
           if (window.appendCsrfToken) window.appendCsrfToken(del);
           const delBtn = document.createElement('button');
           delBtn.type = 'submit';
-          delBtn.className = 'text-action delete-action';
-          delBtn.textContent = 'Del';
+          delBtn.className = 'is-danger';
+          window.iconAction(delBtn, 'trash', 'Delete entry', 'Delete');
           del.appendChild(delBtn);
           wrap.append(edit, del);
           actions.appendChild(wrap);
@@ -764,15 +705,20 @@
             .then((data) => {
               if (!data.ok) { addForm.submit(); return; }
               const row = buildRow(data.entry);
-              tbody.appendChild(row);
+              const shownHere = placeRow(row);
+              feed?.adjust(1);
               document.querySelector('[data-empty-ledger]')?.remove();
               addForm.querySelector('[name="description"]').value = '';
               addForm.querySelector('[name="amount"]').value = '';
               addForm.querySelector('[name="image"]').value = '';
               closeAdd();
-              flashRow(row);
               refreshBalances();
-              row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+              if (shownHere) {
+                flashRow(row);
+                row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+              } else {
+                feed?.notice('Saved. Its date is older than the rows on screen, so it is further down the list.');
+              }
             })
             .catch(() => addForm.submit());
         });
