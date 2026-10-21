@@ -71,17 +71,9 @@
         const setValue = (name, value) => {
           const field = sharedForm.querySelector(`[name="${name}"]`);
           if (!field) return;
-          // An older value the list doesn't offer (e.g. category "accommodation") gets its own
-          // option, so the drop-down shows it and the save keeps it.
-          if (field.tagName === 'SELECT') {
-            field.querySelectorAll('option[data-kept-value]').forEach((option) => option.remove());
-            if (value && ![...field.options].some((option) => option.value === value)) {
-              const option = new Option(value.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()), value);
-              option.dataset.keptValue = '';
-              field.add(option);
-            }
-          }
           field.value = value ?? '';
+          // A value the list doesn't offer leaves the drop-down on "Choose a category"
+          if (field.tagName === 'SELECT' && field.selectedIndex < 0) field.value = '';
         };
         const setCommissionValue = (name, value) => {
           const field = sharedCommissionForm?.querySelector(`[name="${name}"]`);
@@ -1251,7 +1243,8 @@
                   </label>
                   <label>
                     <span>Category</span>
-                    <select name="category_hint">
+                    <select name="category_hint" required>
+                      <option value="" disabled hidden>Choose a category</option>
                       {% for value, label in category_options %}
                       <option value="{{ value }}">{{ label }}</option>
                       {% endfor %}

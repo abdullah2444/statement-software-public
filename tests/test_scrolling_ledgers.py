@@ -196,21 +196,58 @@ class ScrollingLedgerTests(unittest.TestCase):
         self.assertIn('Added an entry', page)
         self.assertIn('Undo deletes this entry again.', page)
 
-    def test_saving_an_entry_with_an_older_category_keeps_it(self):
-        # Imported entries can carry a category the edit form doesn't list ("accommodation"). The browser
-        # then sends no category at all, and the save used to fail with "Bad Request".
+    def test_only_listed_categories_are_saved(self):
+        # Bots once saved categories the app never offered ("accommodation"), and editing such an
+        # entry then failed with "Bad Request". Now every way in refuses them and a cleanup moves old ones.
         client_id = self.add_statement(0)
-        entry_id = self.db.execute(
-            "insert into statement_entries(client_id, source_no, entry_date, description, currency, direction,"
-            " amount, kind, category_hint) values (?, 1, '2023-05-15', 'Lifeng Hotel', 'CNY', 'OUT', 300,"
-            " 'movement', 'accommodation')", (client_id,)).lastrowid
+        insert = ("insert into statement_entries(client_id, source_no, entry_date, description, currency, direction,"
+                  " amount, kind, category_hint) values (?, ?, '2023-05-15', ?, 'CNY', 'OUT', 300, 'movement', ?)")
+        ids = {cat: self.db.execute(insert, (client_id, n, cat, cat)).lastrowid
+               for n, cat in enumerate(('accommodation', 'Transport', 'deposit', 'something odd'), start=1)}
         self.db.commit()
-        response = self.client.post(f'/entries/{entry_id}/save', data={
-            'csrf_token': 'csrf', 'entry_id': entry_id, 'entry_date': '2026-05-15', 'description': 'Lifeng Hotel',
-            'currency': 'CNY', 'direction': 'OUT', 'amount': '300', 'kind': 'movement'})
+        category = lambda entry_id: self.db.execute(
+            "select category_hint from statement_entries where id = ?", (entry_id,)).fetchone()['category_hint']
+
+        # The edit form sends no category for such an entry: a clear message, not a 400, and nothing changes.
+        form = {'csrf_token': 'csrf', 'entry_date': '2026-05-15', 'description': 'Lifeng Hotel',
+                'currency': 'CNY', 'direction': 'OUT', 'amount': '300', 'kind': 'movement'}
+        response = self.client.post(f"/entries/{ids['accommodation']}/save", data=form)
         self.assertEqual(response.status_code, 302)
-        row = self.db.execute("select entry_date, category_hint from statement_entries where id = ?", (entry_id,)).fetchone()
-        self.assertEqual((row['entry_date'], row['category_hint']), ('2026-05-15', 'accommodation'))
+        self.assertIn('Unknown category (none)', self.client.get(f'/clients/{client_id}').get_data(as_text=True))
+        self.assertEqual(category(ids['accommodation']), 'accommodation')
+        response = self.client.post(f"/entries/{ids['accommodation']}/save", data={**form, 'category_hint': 'travel_expense'})
+        self.assertEqual(response.status_code, 302)
+        row = self.db.execute("select entry_date, category_hint from statement_entries where id = ?",
+                              (ids['accommodation'],)).fetchone()
+        self.assertEqual((row['entry_date'], row['category_hint']), ('2026-05-15', 'travel_expense'))
+
+        # The cleanup that runs when the app starts.
+        self.assertEqual(self.module.move_old_categories(self.db), 3)
+        self.db.commit()
+        self.assertEqual(category(ids['Transport']), 'travel_expense')
+        self.assertEqual(category(ids['deposit']), 'client_receipt')
+        self.assertEqual(category(ids['something odd']), 'uncategorized')
+        self.assertEqual(self.module.move_old_categories(self.db), 0)
+
+        # The API refuses unknown categories and says which ones it takes.
+        from hashlib import sha256
+        raw = 'ffs_' + 'c' * 64
+        self.db.execute("insert into api_tokens(name, token_hash, token_prefix, access_level, created_at)"
+                        " values ('bot', ?, 'ffs_c', 'full_control', '2026')", (sha256(raw.encode()).hexdigest(),))
+        self.db.commit()
+        api = self.module.app.test_client()
+        auth = {'Authorization': f'Bearer {raw}'}
+        entry = {'entry_date': '2026-06-01', 'description': 'Hotel', 'currency': 'CNY', 'direction': 'OUT', 'amount': 200}
+        refused = api.post(f'/api/v1/clients/{client_id}/entries', headers=auth, json={**entry, 'category_hint': 'hotel'})
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn('travel_expense', refused.get_json()['error'])
+        made = api.post(f'/api/v1/clients/{client_id}/entries', headers=auth, json=entry)
+        self.assertEqual(made.status_code, 201)
+        self.assertEqual(made.get_json()['entry']['category_hint'], 'uncategorized')
+        entry_id = made.get_json()['entry']['id']
+        self.assertEqual(api.patch(f'/api/v1/entries/{entry_id}', headers=auth, json={'category_hint': 'transport'}).status_code, 400)
+        self.assertEqual(api.patch(f'/api/v1/entries/{entry_id}', headers=auth, json={'category_hint': 'travel_expense'}).status_code, 200)
+        self.assertEqual(category(entry_id), 'travel_expense')
 
     # --- Expense account ----------------------------------------------------------------
 

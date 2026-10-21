@@ -219,6 +219,20 @@ curl -X POST http://localhost:18451/api/v1/clients/1/entries \
   }'
 ```
 
+`category_hint` must be one of these, or the request is refused with 400
+(leave it out for `uncategorized`):
+
+| Value | Shown as |
+|---|---|
+| `uncategorized` | Uncategorized |
+| `client_receipt` | Client Receipt |
+| `factory_payment` | Factory Payment |
+| `commission` | Commission |
+| `shipping_expense` | Shipping |
+| `travel_expense` | Travel (hotels, flights, trains, taxis) |
+| `internal_transfer` | Internal Transfer |
+| `fx_transfer` | Currency Exchange |
+
 Upload an image:
 
 ```bash
