@@ -4,6 +4,13 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.15
+
+**New app icon**
+- The app now has its own icon in browser tabs and bookmarks: dark teal with
+  three statement lines and a small glowing firefly. On iPhone, **Add to Home
+  Screen** uses it too.
+
 ## 5.2.14
 
 **Tidier statement page**

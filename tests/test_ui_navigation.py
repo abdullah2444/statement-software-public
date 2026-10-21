@@ -52,6 +52,14 @@ class NavigationTests(unittest.TestCase):
             self.assertTrue(current, path)
             self.assertEqual(set(current), {label}, path)
 
+    def test_pages_have_the_app_icon(self):
+        self.assertIn('rel="icon" href="/static/icon.svg', self.page('/'))
+        web = self.module.app.test_client()
+        self.assertIn('rel="apple-touch-icon"', web.get('/login').get_data(as_text=True))
+        icon = web.get('/favicon.ico')
+        self.assertEqual(icon.status_code, 200)
+        self.assertEqual(icon.mimetype, 'image/vnd.microsoft.icon')
+
     def test_menu_shows_the_login_screen_company_name(self):
         self.assertIn('class="nav-brand" href="/">Firefly Statements<', self.page('/'))
         with self.module.app.app_context():

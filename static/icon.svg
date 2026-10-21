@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Statement lines with a firefly glowing at the end -->
+  <rect width="64" height="64" rx="15" fill="#103a46"/>
+  <g stroke="#fff" stroke-width="6" stroke-linecap="round">
+    <path d="M15 20h32"/>
+    <path d="M15 32h24"/>
+    <path d="M15 44h14"/>
+  </g>
+  <circle cx="44" cy="44" r="12" fill="#f6b93b" opacity=".22"/>
+  <circle cx="44" cy="44" r="6.5" fill="#f6b93b"/>
+</svg>
