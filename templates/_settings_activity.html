@@ -56,7 +56,7 @@
                 </div>
               </div>
               <div class="list-side">
-                {{ entry.created_at[:16].replace('T', ' ') }}<br>
+                {{ entry.created_at|local_time }}<br>
                 {% if entry.get('actor_type') == 'api_token' %}{{ entry.get('actor_name') or entry.get('api_token_name') or 'Unknown token' }} · token
                 {% elif entry.get('actor_type') == 'user' %}{{ entry.get('actor_name') or 'Unknown user' }}
                 {% else %}older entry{% endif %}

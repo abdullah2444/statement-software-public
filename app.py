@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
+import zoneinfo
 from zoneinfo import ZoneInfo
 
 import requests as http_requests
@@ -60,7 +61,8 @@ SOURCE_CSV = Path(os.environ.get("SOURCE_CSV_PATH") or "/root/ahmed_abdelmonem_s
 UNCATEGORIZED = "uncategorized"
 BACKUP_FORMAT_VERSION = 1
 FULL_BACKUP_NOTES = "Statement Software full backup. Includes SQLite database and uploads only."
-CHINA_TZ = ZoneInfo("Asia/Shanghai")
+# Used until a super admin picks another time zone in Settings → General.
+DEFAULT_TIME_ZONE = "Asia/Shanghai"
 ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic"}
 ALLOWED_DB_EXT = {".db", ".sqlite", ".sqlite3"}
 IMAGE_MIME_MAP = {
@@ -683,7 +685,35 @@ def pdf_url_allowed(url: str) -> bool:
         resolved = path.resolve()
     except OSError:
         return False
+    if resolved.is_file() and resolved == _uploaded_logo_path():
+        return True
     return resolved.is_file() and static in resolved.parents
+
+
+def _uploaded_logo_path() -> Path | None:
+    try:
+        filename = os.path.basename(get_setting("login_logo_file", ""))
+    except (RuntimeError, sqlite3.Error):  # no app context or database
+        return None
+    if not filename:
+        return None
+    try:
+        return (UPLOAD_DIR / filename).resolve()
+    except OSError:
+        return None
+
+
+def pdf_branding() -> dict:
+    """Company name and logo for PDFs, from Settings → Login screen. The built-in
+    logo is only used while the company name hasn't been changed."""
+    logo = _uploaded_logo_path()
+    if logo is not None and logo.is_file():
+        logo_url, on_dark = logo.as_uri(), logo_is_light(logo.name)
+    elif not get_setting("login_title", "").strip():
+        logo_url, on_dark = (BASE_DIR / "static" / "logo.png").resolve().as_uri(), False
+    else:
+        logo_url, on_dark = "", False
+    return {"name": app_brand_name(), "logo_url": logo_url, "logo_on_dark": on_dark}
 
 
 def _pdf_url_fetcher():
@@ -708,8 +738,48 @@ def render_pdf_bytes(html_string: str) -> bytes:
     return weasyprint.HTML(string=html_string, url_fetcher=fetcher).write_pdf()
 
 
-def china_today() -> date:
-    return utc_now().astimezone(CHINA_TZ).date()
+_time_zone_names: set[str] = set()
+
+
+def valid_time_zone(name: str) -> bool:
+    if not _time_zone_names:
+        _time_zone_names.update(zoneinfo.available_timezones())
+    return name in _time_zone_names
+
+
+def app_time_zone_name() -> str:
+    try:
+        name = get_setting("time_zone", "").strip()
+    except (RuntimeError, sqlite3.Error):  # no app context or database yet
+        name = ""
+    return name if valid_time_zone(name) else DEFAULT_TIME_ZONE
+
+
+def app_tz() -> ZoneInfo:
+    return ZoneInfo(app_time_zone_name())
+
+
+def local_now() -> datetime:
+    return utc_now().astimezone(app_tz())
+
+
+def local_today() -> date:
+    return local_now().date()
+
+
+@app.template_filter("local_time")
+def local_time(value, seconds: bool = False) -> str:
+    """A stored time (UTC or with its own offset) in the time zone from Settings."""
+    if not value:
+        return ""
+    text = str(value).strip()
+    try:
+        parsed = datetime.fromisoformat(re.sub(r"\.\d+", "", text).replace("Z", "+00:00"))
+    except ValueError:
+        return text[:16].replace("T", " ")
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(app_tz()).strftime("%Y-%m-%d %H:%M:%S" if seconds else "%Y-%m-%d %H:%M")
 
 
 def normalize_utc_timestamp(value: str | None) -> str:
@@ -901,13 +971,13 @@ def backup_reason(name: str) -> str:
 
 def database_file_info(path: Path) -> dict:
     stat = path.stat()
-    created_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+    created_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).astimezone(app_tz())
     return {
         "name": path.name,
         "size_bytes": stat.st_size,
         "size_label": format_file_size(stat.st_size),
-        "created_at": created_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
-        "when": f"{created_at.day} {created_at:%b %Y, %H:%M} UTC",
+        "created_at": created_at.strftime("%Y-%m-%d %H:%M:%S"),
+        "when": f"{created_at.day} {created_at:%b %Y, %H:%M}",
         "reason": backup_reason(path.name),
         "kind": "Full backup" if is_full_backup_file(path) else "Database only",
     }
@@ -2744,9 +2814,11 @@ def expense_account_options(db: sqlite3.Connection) -> list[dict]:
 
 
 def default_profit_expense_account_id(options: list[dict]) -> int | None:
-    for option in options:
-        if option["name"].strip().lower() == DEFAULT_PROFIT_EXPENSE_ACCOUNT_NAME.lower():
-            return int(option["id"])
+    """The account named after the company (Settings → Login screen), else the old default name."""
+    for wanted in (app_brand_name(), DEFAULT_PROFIT_EXPENSE_ACCOUNT_NAME):
+        for option in options:
+            if option["name"].strip().lower() == wanted.strip().lower():
+                return int(option["id"])
     return None
 
 
@@ -2970,7 +3042,7 @@ def _get_live_usd_cny_rate() -> float | None:
         if rate is not None:
             return float(rate)
 
-    ts = datetime.now(tz=CHINA_TZ).isoformat(timespec="seconds")
+    ts = local_now().isoformat(timespec="seconds")
 
     try:
         usd_rates = _fetch_moneyconvert()
@@ -3424,7 +3496,7 @@ def expense_entry_to_dict(row):
 def generate_recurring_expenses(account_id):
     """Auto-generate entries from active recurring templates up to today."""
     db = get_db()
-    today = china_today()
+    today = local_today()
     current_ym = today.strftime("%Y-%m")
 
     templates = db.execute(
@@ -3953,7 +4025,7 @@ def client_statement(client_id: int):
         per_page_raw=per_page_raw,
         total_rows=total_rows,
         total_pages=total_pages,
-        default_date=china_today().isoformat(),
+        default_date=local_today().isoformat(),
         type_options=TYPE_OPTIONS,
         category_options=CATEGORY_OPTIONS,
         commission_expense_accounts=commission_expense_accounts,
@@ -4521,9 +4593,10 @@ def _statement_pdf_response(client: sqlite3.Row, rows: list[dict]):
     final_cny = rows[-1]["running_cny"] if rows else 0.0
     html_string = render_template(
         "pdf.html",
+        brand=pdf_branding(),
         client=client,
         rows=rows,
-        generated_date=china_today().isoformat(),
+        generated_date=local_today().isoformat(),
         final_usd=final_usd,
         final_cny=final_cny,
     )
@@ -4819,11 +4892,12 @@ def _expense_pdf_response(
 ):
     html_string = render_template(
         "expense_pdf.html",
+        brand=pdf_branding(),
         account=account,
         currencies=currencies,
         rows=rows,
         totals=totals,
-        generated_date=china_today().isoformat(),
+        generated_date=local_today().isoformat(),
         expense_categories=EXPENSE_CATEGORIES,
         currency_symbol=currency_symbol,
     )
@@ -5338,7 +5412,7 @@ def api_fx_rate():
         to_cur = "CNY"
 
     if from_cur == to_cur:
-        ts = datetime.now(tz=CHINA_TZ).isoformat(timespec="seconds")
+        ts = local_now().isoformat(timespec="seconds")
         return jsonify({"rate": 1.0, "from": from_cur, "to": to_cur, "source": "identity", "timestamp": ts})
 
     now = time.time()
@@ -5350,7 +5424,7 @@ def api_fx_rate():
         if rate is not None:
             return jsonify({"rate": rate, "from": from_cur, "to": to_cur, "source": cached["source"], "timestamp": cached["timestamp"]})
 
-    ts = datetime.now(tz=CHINA_TZ).isoformat(timespec="seconds")
+    ts = local_now().isoformat(timespec="seconds")
 
     # 1) Try moneyconvert.net (hourly, USD-based)
     try:
@@ -5428,7 +5502,7 @@ def api_fx_refresh():
     rate = _get_live_usd_cny_rate()
     if rate is None:
         return jsonify({"error": "Unable to fetch live exchange rate"}), 503
-    ts = datetime.now(tz=CHINA_TZ).isoformat(timespec="seconds")
+    ts = local_now().isoformat(timespec="seconds")
     set_setting("fx_live_rate", str(rate))
     set_setting("fx_live_rate_updated_at", ts)
     # Determine source from cache
@@ -5499,6 +5573,10 @@ def render_settings_page(revealed_recovery_key: str = ""):
             models=_fetch_openrouter_models(api_key=raw_key, current_model=current_model),
             model_fetch_status=_openrouter_models_status(),
             ai_features=[(key, label, ai_feature_enabled(key)) for key, label in AI_FEATURES.items()],
+            time_zone=app_time_zone_name(),
+            time_zone_default=DEFAULT_TIME_ZONE,
+            time_zones=sorted(_time_zone_names or zoneinfo.available_timezones()),
+            time_zone_now=local_now().strftime("%Y-%m-%d %H:%M"),
             fx_rate_source=get_setting("fx_rate_source", "live"),
             fx_live_rate=get_setting("fx_live_rate", ""),
             fx_live_rate_updated_at=get_setting("fx_live_rate_updated_at", ""),
@@ -5550,7 +5628,7 @@ def render_settings_page(revealed_recovery_key: str = ""):
 def settings_save():
     if not is_super_admin() and (
         request.form.get("section") != "login-screen"
-        or any(request.form.get(key) for key in ("openrouter_api_key", "openrouter_model", "fx_rate_source", "ai_features_form"))
+        or any(request.form.get(key) for key in ("openrouter_api_key", "openrouter_model", "fx_rate_source", "ai_features_form", "time_zone"))
     ):
         abort(403)
     db = get_db()
@@ -5564,6 +5642,13 @@ def settings_save():
         db.execute("insert or replace into app_settings(key, value) values (?, ?)", ("openrouter_model", model))
     if fx_source in ("live", "average"):
         db.execute("insert or replace into app_settings(key, value) values (?, ?)", ("fx_rate_source", fx_source))
+    time_zone = request.form.get("time_zone", "").strip()
+    if time_zone:
+        if not valid_time_zone(time_zone):
+            db.rollback()
+            flash("Choose a time zone from the list. Nothing was saved.", "error")
+            return redirect(url_for("settings_page") + "#time-zone")
+        db.execute("insert or replace into app_settings(key, value) values ('time_zone', ?)", (time_zone,))
     # Unticked checkboxes are not sent, so only touch the switches when the form shows them.
     if request.form.get("ai_features_form") == "1":
         for key in AI_FEATURES:
@@ -5596,7 +5681,7 @@ def settings_save():
     return redirect(url_for("settings_page") + anchor)
 
 
-SETTINGS_FORM_SECTIONS = {"exchange-rate", "login-screen", "ai-settings", "ai-features"}
+SETTINGS_FORM_SECTIONS = {"exchange-rate", "time-zone", "login-screen", "ai-settings", "ai-features"}
 
 
 @app.route("/settings/database/download")
@@ -5904,7 +5989,7 @@ def _cloud_taken_over_by(restic: cloud_backup.Restic) -> dict | None:
     made_at = _parse_utc((newest.get("time") or "")[:19] + "Z")
     if made_at and since and made_at <= max(since):
         return None
-    return {"instance": instances[0], "time": (newest.get("time") or "")[:16].replace("T", " ")}
+    return {"instance": instances[0], "time": local_time(newest.get("time"))}
 
 
 def run_cloud_backup() -> dict:
@@ -5933,7 +6018,7 @@ def run_cloud_backup() -> dict:
             set_setting("cloud_backup_instance", CLOUD_TAKEN_OVER_PREFIX + taken_over["instance"])
             set_setting("cloud_backup_paused_reason", "taken_over")
             raise cloud_backup.CloudBackupError(
-                f"Another server took over cloud backups on {taken_over['time']} UTC, so this server stopped backing up."
+                f"Another server took over cloud backups on {taken_over['time']}, so this server stopped backing up."
             )
         shutil.rmtree(staging, ignore_errors=True)
         stage_consistent_snapshot(staging)
@@ -6153,7 +6238,7 @@ def cloud_backup_status() -> dict:
             wait = timedelta(hours=float(interval))
             if last_ok is None or last_ok < last_attempt:
                 wait = min(wait, timedelta(minutes=CLOUD_BACKUP_RETRY_MINUTES))
-            next_run = (last_attempt + wait).strftime("%Y-%m-%d %H:%M UTC")
+            next_run = local_time((last_attempt + wait).isoformat())
     storage = get_setting("cloud_backup_storage_bytes", "")
     last_error = get_setting("cloud_backup_last_error", "")
     error_at = _parse_utc(get_setting("cloud_backup_last_error_at", ""))
@@ -6166,6 +6251,7 @@ def cloud_backup_status() -> dict:
         "interval_hours": interval,
         "retention_days": get_setting("cloud_backup_retention_days", "7"),
         "last_success": last_success,
+        "last_success_local": local_time(last_success),
         "next_run": next_run,
         "last_error": last_error,
         "last_warning": get_setting("cloud_backup_last_warning", ""),
@@ -6353,7 +6439,7 @@ def api_cloud_backup_snapshots():
         return jsonify({"error": str(exc)}), 502
     return jsonify({
         "snapshots": [
-            {"id": snap["id"], "short_id": snap["id"][:8], "time": snap.get("time", "")[:19].replace("T", " ") + " UTC"}
+            {"id": snap["id"], "short_id": snap["id"][:8], "time": local_time(snap.get("time", ""), seconds=True)}
             for snap in snapshots
         ]
     })
@@ -6424,7 +6510,7 @@ def settings_cloud_backup_restore():
         shutil.rmtree(work_dir, ignore_errors=True)
     session.clear()
     flash(
-        f"Cloud backup from {snapshot.get('time', '')[:16].replace('T', ' ')} UTC restored. "
+        f"Cloud backup from {local_time(snapshot.get('time', ''))} restored. "
         f"Your previous data was saved as '{previous_backup.name}'. Sign in again.",
         "success",
     )
@@ -6852,7 +6938,7 @@ def expense_account_view(account_id):
         latest_event=latest_event,
         templates=templates,
         filters=filters,
-        default_date=china_today().isoformat(),
+        default_date=local_today().isoformat(),
         expense_categories=EXPENSE_CATEGORIES,
         currency_symbol=currency_symbol,
     )
@@ -7536,7 +7622,7 @@ def _client_statement_api_payload(client_id: int) -> tuple[dict | None, int]:
         "options": {
             "types": TYPE_OPTIONS,
             "categories": CATEGORY_OPTIONS,
-            "default_date": china_today().isoformat(),
+            "default_date": local_today().isoformat(),
         },
         "fx_summary": fx_summary,
     }, 200
@@ -7873,7 +7959,7 @@ def api_v1_fx_refresh():
     rate = _get_live_usd_cny_rate()
     if rate is None:
         return _api_error("Unable to fetch live exchange rate", 503)
-    ts = datetime.now(tz=CHINA_TZ).isoformat(timespec="seconds")
+    ts = local_now().isoformat(timespec="seconds")
     set_setting("fx_live_rate", str(rate))
     set_setting("fx_live_rate_updated_at", ts)
     cached = _fx_cache.get("USD")
@@ -7936,7 +8022,7 @@ def api_v1_fx_rate():
         to_cur = "CNY"
 
     if from_cur == to_cur:
-        ts = datetime.now(tz=CHINA_TZ).isoformat(timespec="seconds")
+        ts = local_now().isoformat(timespec="seconds")
         result = {"rate": 1.0, "from": from_cur, "to": to_cur, "source": "identity", "timestamp": ts}
         if amount:
             result["amount"] = float(amount)
@@ -7956,7 +8042,7 @@ def api_v1_fx_rate():
                 result["converted"] = round(float(amount) * rate, 2)
             return jsonify(result)
 
-    ts = datetime.now(tz=CHINA_TZ).isoformat(timespec="seconds")
+    ts = local_now().isoformat(timespec="seconds")
 
     # 1) Try moneyconvert.net
     try:
@@ -8934,7 +9020,7 @@ def api_create_commission(entry_id):
         return jsonify({"error": error}), 409
 
     data = request.get_json(silent=True) or {}
-    commission_date = (data.get("commission_date") or data.get("date") or china_today().isoformat()).strip()
+    commission_date = (data.get("commission_date") or data.get("date") or local_today().isoformat()).strip()
     if not commission_date:
         return jsonify({"error": "commission_date is required"}), 400
     percentage_raw = data.get("percentage")
@@ -9264,7 +9350,7 @@ def api_exchange(client_id):
     if client is None:
         return jsonify({"error": "Client not found"}), 404
     data = request.get_json(silent=True) or {}
-    exchange_date = data.get("exchange_date", china_today().isoformat())
+    exchange_date = data.get("exchange_date", local_today().isoformat())
     usd_amount = money(data.get("usd_amount", 0), label="USD amount")
     cny_amount = money(data.get("cny_amount", 0), label="CNY amount")
     exchange_rate = money(data["exchange_rate"], label="Exchange rate") if data.get("exchange_rate") else None

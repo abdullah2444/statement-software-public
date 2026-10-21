@@ -140,7 +140,7 @@
   </head>
   <body>
     <div class="header-left">
-      <img src="file:///app/static/logo.png" alt="Firefly Trading">
+      {% if brand.logo_url %}<img src="{{ brand.logo_url }}" alt="{{ brand.name }}"{% if brand.logo_on_dark %} style="background:#0f172a;padding:1.5mm 3mm;border-radius:1.5mm;"{% endif %}>{% endif %}
     </div>
     <div class="header-right-el">
       Expense Report<br>
@@ -205,7 +205,7 @@
 
     <div class="footer-line">
       <span>{{ account.name }} &mdash; Expense Report</span>
-      <span>Firefly Trading</span>
+      <span>{{ brand.name }}</span>
     </div>
   </body>
 </html>

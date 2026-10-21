@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Settings - Firefly Statements</title>
+    <title>Settings - {{ app_brand_name() }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=asset_version) }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css', v=asset_version) }}">
     <style>
@@ -438,7 +438,7 @@
                 {% elif updates.last_check and not updates.last_check_error %}<span class="pill pill-ok">Up to date</span>{% endif %}
               </div>
               <div class="muted-line">
-                Last checked {{ (updates.last_check[:16].replace('T', ' ') ~ ' UTC') if updates.last_check else 'never' }}
+                Last checked {{ updates.last_check|local_time if updates.last_check else 'never' }}
                 · Updater <span id="upd-service">{{ 'running' if updates.updater_online else ('not responding' if updates.updater_installed else 'not installed') }}</span>
               </div>
             </div>
@@ -501,7 +501,7 @@
               </div>
               {% if item.result != 'installed' %}<div class="list-sub">{{ item.message or '' }}</div>{% endif %}
             </div>
-            <div class="list-side">{{ (item.finished_at or item.started_at or '')[:16].replace('T', ' ') }}{% if item.requested_by %}<br>by {{ item.requested_by }}{% endif %}</div>
+            <div class="list-side">{{ (item.finished_at or item.started_at)|local_time }}{% if item.requested_by %}<br>by {{ item.requested_by }}{% endif %}</div>
           </li>
           {%- endmacro %}
           <h3 class="card-subhead">Recent updates</h3>
@@ -546,7 +546,7 @@
                 {% if fx_live_rate %}1 USD = {{ fx_live_rate }} CNY{% else %}Not fetched yet{% endif %}
               </span>
               {% if fx_live_rate_updated_at %}
-              <span style="font-size:12px;color:#9ca3af;">Updated {{ fx_live_rate_updated_at[:16].replace('T', ' ') }}</span>
+              <span style="font-size:12px;color:#9ca3af;">Updated {{ fx_live_rate_updated_at|local_time }}</span>
               {% endif %}
             </div>
           </div>
@@ -558,6 +558,25 @@
               <span id="fx-test-result" style="font-size:13px;color:#6b7280;"></span>
             </div>
             <div class="field-hint">Fetches a live USD/CNY rate to verify the API is reachable.</div>
+          </div>
+          <div class="card-actions">
+            <button type="submit" class="btn-save">Save</button>
+          </div>
+        </form>
+
+        <form method="POST" action="{{ url_for('settings_save') }}" class="settings-card" id="time-zone" autocomplete="off">
+          {{ csrf_input() }}
+          <input type="hidden" name="section" value="time-zone">
+          <h2>Time zone</h2>
+          <p>Used for today's date on new entries and for every time shown in the app, such as backups, the activity log and sign-ins.</p>
+          <div class="settings-field">
+            <label for="time_zone">Time zone</label>
+            <select id="time_zone" name="time_zone">
+              {% for zone in time_zones %}
+              <option value="{{ zone }}" {% if zone == time_zone %}selected{% endif %}>{{ zone.replace('_', ' ') }}</option>
+              {% endfor %}
+            </select>
+            <div class="field-hint">Time there now: {{ time_zone_now }}. Default: {{ time_zone_default.replace('_', ' ') }}.</div>
           </div>
           <div class="card-actions">
             <button type="submit" class="btn-save">Save</button>
@@ -723,7 +742,7 @@
         {% if cloud.configured %}
         <div class="db-meta">
           <div class="db-meta-item"><strong>Stored in</strong><span class="mono">{{ cloud.location }}</span></div>
-          <div class="db-meta-item"><strong>Last successful backup</strong><span id="cloud-last-success">{{ (cloud.last_success[:16].replace('T', ' ') ~ ' UTC') if cloud.last_success else 'None yet' }}</span></div>
+          <div class="db-meta-item"><strong>Last successful backup</strong><span id="cloud-last-success">{{ cloud.last_success|local_time if cloud.last_success else 'None yet' }}</span></div>
           <div class="db-meta-item"><strong>Next backup</strong><span id="cloud-next-run">{{ cloud.next_run or 'Automatic backups off' }}</span></div>
           <div class="db-meta-item"><strong>Space used in Backblaze</strong><span id="cloud-storage">{{ cloud.storage_label or 'Not measured yet' }}</span></div>
         </div>
@@ -1118,7 +1137,7 @@
             setBusy(false);
             if (job.state === 'done') show('ok', job.message || 'Finished.');
             else if (job.state === 'failed') show('error', job.message || 'Failed.');
-            document.getElementById('cloud-last-success').textContent = st.last_success ? st.last_success.slice(0, 16).replace('T', ' ') + ' UTC' : 'None yet';
+            document.getElementById('cloud-last-success').textContent = st.last_success_local || 'None yet';
             document.getElementById('cloud-next-run').textContent = st.next_run || 'Automatic backups off';
             document.getElementById('cloud-storage').textContent = st.storage_label || 'Not measured yet';
           })
