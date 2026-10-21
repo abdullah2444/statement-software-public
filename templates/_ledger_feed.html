@@ -21,5 +21,8 @@
     <button class="text-action" type="button" data-feed-retry>Try again</button>
   </p>
 </section>
-<button class="ledger-top" type="button" data-feed-top hidden aria-label="Back to the newest entries">&uarr; Newest</button>
+<button class="ledger-top" type="button" data-feed-top hidden aria-label="Back to the newest entries">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+  Newest
+</button>
 <script src="{{ url_for('static', filename='ledger_feed.js', v=asset_version) }}"></script>

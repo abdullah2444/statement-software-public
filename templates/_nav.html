@@ -79,15 +79,6 @@
   .mobile-drawer .nav-link-form {
     display: block;
   }
-  .mobile-drawer .mobile-drawer-logout {
-    margin-top: auto;
-  }
-  .mobile-drawer .nav-link-button {
-    display: block;
-    padding: 14px 18px;
-    text-align: left;
-    width: 100%;
-  }
   .backup-alert {
     background: #fef3c7;
     border-bottom: 1px solid #fcd34d;
@@ -205,6 +196,10 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
 {% endif %}
 {% set nav_user = g.user.username if g.user else session.get('username', '') %}
 {% set brand = app_brand_name() %}
+{% from '_icons.html' import icon %}
+{% macro drawer_link(section, endpoint, label, icon_name) -%}
+<a href="{{ url_for(endpoint) }}"{% if nav_section == section %} aria-current="page"{% endif %}>{{ icon(icon_name) }}<span>{{ label }}</span></a>
+{%- endmacro %}
 {% macro nav_link(section, endpoint, label) -%}
 <a href="{{ url_for(endpoint) }}"{% if nav_section == section %} aria-current="page"{% endif %}>{{ label }}</a>
 {%- endmacro %}
@@ -233,15 +228,23 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
     <div class="mobile-drawer-overlay" id="mobile-drawer-overlay"></div>
     <nav class="mobile-drawer-panel" role="dialog" aria-modal="true" aria-label="Main menu">
       <div class="mobile-drawer-header">
-        <span>{{ nav_user }}</span>
-        <button id="mobile-drawer-close" aria-label="Close menu">&times;</button>
+        <div class="mobile-drawer-who">
+          <span class="mobile-drawer-avatar" aria-hidden="true">{{ (nav_user or '?')[:1]|upper }}</span>
+          <span class="mobile-drawer-names">
+            <strong>{{ brand }}</strong>
+            <small>{{ nav_user }}</small>
+          </span>
+        </div>
+        <button id="mobile-drawer-close" type="button" aria-label="Close menu">{{ icon('close') }}</button>
       </div>
-      {{ nav_link('dashboard', 'index', 'Dashboard') }}
-      {{ nav_link('quick_submit', 'quick_submit_page', 'Quick Submit') }}
-      {{ nav_link('expenses', 'expense_list', 'Expenses') }}
-      {{ nav_link('settings', 'settings_page', 'Settings') }}
+      <div class="mobile-drawer-links">
+        {{ drawer_link('dashboard', 'index', 'Dashboard', 'home') }}
+        {{ drawer_link('quick_submit', 'quick_submit_page', 'Quick Submit', 'bolt') }}
+        {{ drawer_link('expenses', 'expense_list', 'Expenses', 'wallet') }}
+        {{ drawer_link('settings', 'settings_page', 'Settings', 'settings') }}
+      </div>
       <form method="post" action="{{ url_for('logout') }}" class="nav-link-form mobile-drawer-logout">
-        <button type="submit" class="nav-link-button">Logout</button>
+        <button type="submit" class="nav-link-button">{{ icon('logout') }}<span>Log out</span></button>
       </form>
     </nav>
   </div>
@@ -273,7 +276,16 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
   var closeBtn = document.getElementById('mobile-drawer-close');
   if (!menuButton || !drawer) return;
   var previousOverflow = '';
+  var panel = drawer.querySelector('.mobile-drawer-panel');
+  var closeTimer = null;
+  // Closing plays the slide-out (mobile.css, is-closing) before the menu is hidden.
+  function finishClose() {
+    window.clearTimeout(closeTimer);
+    drawer.classList.remove('is-open', 'is-closing');
+  }
   function open() {
+    if (drawer.classList.contains('is-closing')) finishClose();
+    if (drawer.classList.contains('is-open')) return;
     previousOverflow = document.body.style.overflow;
     drawer.classList.add('is-open');
     document.body.style.overflow = 'hidden';
@@ -281,11 +293,18 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
     if (closeBtn) closeBtn.focus();
   }
   function close() {
-    if (!drawer.classList.contains('is-open')) return;
-    drawer.classList.remove('is-open');
+    if (!drawer.classList.contains('is-open') || drawer.classList.contains('is-closing')) return;
+    drawer.classList.add('is-closing');
+    // Backup in case the animation never reports its end (hidden tab, no animations).
+    closeTimer = window.setTimeout(finishClose, 350);
     document.body.style.overflow = previousOverflow;
     menuButton.setAttribute('aria-expanded', 'false');
     menuButton.focus();
+  }
+  if (panel) {
+    panel.addEventListener('animationend', function(event) {
+      if (event.target === panel && drawer.classList.contains('is-closing')) finishClose();
+    });
   }
   menuButton.addEventListener('click', open);
   if (overlay) overlay.addEventListener('click', close);
@@ -294,7 +313,7 @@ window.fireflyCsrfToken = {{ csrf_token()|tojson }};
     item.addEventListener('click', close);
   });
   document.addEventListener('keydown', function(event) {
-    if (!drawer.classList.contains('is-open')) return;
+    if (!drawer.classList.contains('is-open') || drawer.classList.contains('is-closing')) return;
     if (event.key === 'Escape') { event.preventDefault(); close(); }
     if (event.key === 'Tab') {
       // Keep keyboard focus inside the open menu.

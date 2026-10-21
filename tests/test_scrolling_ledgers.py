@@ -143,6 +143,59 @@ class ScrollingLedgerTests(unittest.TestCase):
         self.assertEqual(sorted(v['usd'] for v in data['balances'].values()), [10.0, 20.0, 30.0])
         self.assertEqual(self.client.get('/clients/999999/rows').status_code, 404)
 
+    def test_commission_rows_show_company_status_instead_of_commission_button(self):
+        client_id = self.add_statement(0)
+        account_id = self.db.execute("insert into expense_accounts(name, enabled_currencies) values ('Office', 'USD')").lastrowid
+        rows = {}
+        for name, category, profit in (('Factory', 'factory_payment', None), ('Fee in', 'commission', account_id), ('Fee out', 'commission', None)):
+            rows[name] = self.db.execute(
+                "insert into statement_entries(client_id, source_no, entry_date, description, currency, direction,"
+                " amount, kind, category_hint, profit_expense_account_id) values (?, 0, '2026-05-01', ?, 'USD', 'OUT', 10, 'movement', ?, ?)",
+                (client_id, name, category, profit),
+            ).lastrowid
+        self.db.commit()
+        page = self.client.get(f'/clients/{client_id}').get_data(as_text=True)
+
+        def row_html(entry_id):
+            return page.split(f'id="entry-{entry_id}"')[1].split('</tr>')[0]
+
+        self.assertIn('data-commission-open', row_html(rows['Factory']))
+        self.assertNotIn('data-commission-open', row_html(rows['Fee in']))
+        self.assertIn('Added to company profit (Office)', row_html(rows['Fee in']))
+        self.assertNotIn('data-commission-open', row_html(rows['Fee out']))
+        self.assertIn('Not added to company profit', row_html(rows['Fee out']))
+        response = self.client.post(f'/clients/{client_id}/commission', data={
+            'csrf_token': 'csrf', 'source_entry_id': rows['Fee out'], 'commission_date': '2026-05-02', 'percentage': '5'})
+        self.assertEqual(response.status_code, 302)
+        self.assertIsNone(self.db.execute(
+            "select id from statement_entries where commission_source_entry_id = ?", (rows['Fee out'],)).fetchone())
+
+    def test_undo_says_what_it_undoes_and_needs_the_confirmed_change(self):
+        client_id = self.add_statement(0)
+        self.client.post(f'/clients/{client_id}/entries', data={
+            'csrf_token': 'csrf', 'entry_date': '2026-06-01', 'description': 'Freight', 'currency': 'USD',
+            'direction': 'OUT', 'amount': '120', 'kind': 'movement', 'category_hint': 'shipping_expense'})
+        entry_id = self.db.execute("select id from statement_entries where client_id = ?", (client_id,)).fetchone()['id']
+        self.client.post(f'/entries/{entry_id}/save', data={
+            'csrf_token': 'csrf', 'entry_id': entry_id, 'entry_date': '2026-06-01', 'description': 'Freight',
+            'currency': 'USD', 'direction': 'OUT', 'amount': '150', 'kind': 'movement', 'category_hint': 'shipping_expense'})
+        page = self.client.get(f'/clients/{client_id}').get_data(as_text=True)
+        self.assertIn('Edited an entry', page)
+        self.assertIn('<s>$150.00</s> &rarr; <strong>$120.00</strong>', page)
+        event_id = int(page.split('name="event_id" value="')[1].split('"')[0])
+
+        # A stale or missing confirmation undoes nothing.
+        self.client.post(f'/clients/{client_id}/undo', data={'csrf_token': 'csrf', 'event_id': event_id - 1})
+        self.client.post(f'/clients/{client_id}/undo', data={'csrf_token': 'csrf'})
+        amount = lambda: self.db.execute("select amount from statement_entries where id = ?", (entry_id,)).fetchone()['amount']
+        self.assertEqual(amount(), 150)
+
+        self.client.post(f'/clients/{client_id}/undo', data={'csrf_token': 'csrf', 'event_id': event_id})
+        self.assertEqual(amount(), 120)
+        page = self.client.get(f'/clients/{client_id}').get_data(as_text=True)
+        self.assertIn('Added an entry', page)
+        self.assertIn('Undo deletes this entry again.', page)
+
     # --- Expense account ----------------------------------------------------------------
 
     def test_expense_account_scrolls_the_same_way(self):

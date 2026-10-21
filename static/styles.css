@@ -155,8 +155,9 @@ small {
 }
 
 .client-page .hero-actions {
-  display: grid;
-  grid-template-columns: repeat(4, auto);
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
   align-items: center;
   justify-content: flex-end;
 }
@@ -166,8 +167,18 @@ small {
   display: block;
 }
 
-.client-page .hero-actions > form .button {
-  width: 100%;
+.hero-back {
+  display: none;
+}
+
+.crumb-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.crumb-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
 .client-page .history-popover {
@@ -540,6 +551,41 @@ td small {
   color: var(--muted);
 }
 
+/* Done: commission made, or commission counted in the company profit. */
+.icon-action.is-status.is-ok,
+.icon-action.is-status.is-ok:hover {
+  color: #1f8a5b;
+}
+
+/* Header tools (Export, History, Undo): framed icons; their tip opens below. */
+.icon-action.is-tool {
+  width: 40px;
+  height: 40px;
+  border-color: var(--line);
+  background: var(--panel);
+  color: var(--accent);
+}
+
+.icon-action.is-tool svg {
+  width: 19px;
+  height: 19px;
+}
+
+.icon-action.is-tool[aria-expanded="true"] {
+  background: var(--soft);
+  border-color: var(--accent-2);
+}
+
+.icon-action.is-tool[data-tip]::after {
+  top: calc(100% + 6px);
+  bottom: auto;
+  transform: translateY(-4px);
+}
+
+.icon-action.is-tool[aria-expanded="true"]::after {
+  display: none;
+}
+
 .icon-action-label {
   display: none;
 }
@@ -819,6 +865,58 @@ input:disabled {
   width: min(220px, 82vw);
 }
 
+/* Undo asks first: what the last change was, and what undoing it does. */
+.undo-popover {
+  width: min(380px, calc(100vw - 32px));
+  text-align: left;
+}
+
+.undo-popover p {
+  margin: 0 0 8px;
+  font-size: 0.88rem;
+}
+
+.undo-popover .undo-entry {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--soft);
+  overflow-wrap: anywhere;
+}
+
+.undo-popover .undo-effect {
+  color: var(--muted);
+}
+
+.undo-changes {
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+.undo-changes li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.undo-changes li > span {
+  display: inline-block;
+  min-width: 92px;
+  color: var(--muted);
+}
+
+.undo-changes s {
+  color: var(--muted);
+}
+
+.undo-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
 .history-dropdown.is-open .history-popover {
   display: block;
 }
@@ -1045,21 +1143,39 @@ input:disabled {
   to { transform: rotate(360deg); }
 }
 
+/* Same size, height and shadow as the calculator button beside it. appearance: none
+   stops Safari from adding its own button look. */
 .ledger-top {
   position: fixed;
   right: 78px;
-  bottom: 22px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   z-index: 9980;
-  padding: 10px 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 48px;
+  margin: 0;
+  padding: 0 16px 0 13px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 14px;
   background: var(--accent);
   color: #fff;
   font: inherit;
   font-size: 0.85rem;
   font-weight: 600;
-  box-shadow: 0 10px 24px rgba(16, 58, 70, 0.25);
+  line-height: 1;
+  white-space: nowrap;
+  -webkit-appearance: none;
+  appearance: none;
+  box-shadow: 0 4px 12px rgba(16, 58, 70, 0.18);
+  -webkit-tap-highlight-color: transparent;
   cursor: pointer;
+}
+
+.ledger-top svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
 }
 
 .ledger-top:hover {
@@ -1124,6 +1240,7 @@ input:disabled {
 
 .type-badge {
   display: inline-block;
+  white-space: nowrap;
   padding: 3px 8px;
   border-radius: 4px;
   font-size: 0.78rem;
@@ -1142,10 +1259,6 @@ input:disabled {
   color: #9a5c00;
 }
 
-.type-badge.is-commission-source {
-  background: #e7f6ec;
-  color: #1f6b49;
-}
 
 .type-stack {
   display: flex;

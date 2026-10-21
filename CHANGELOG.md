@@ -4,6 +4,35 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.14
+
+**Tidier statement page**
+- Commission entries no longer offer **Auto commission** (a commission can't
+  have its own commission). Instead a small company icon shows whether the
+  commission is counted in the company profit: green means added, grey means
+  not added. Hover it (or read the word under it on a phone) for details.
+- An entry whose commission was already made shows a green check.
+- The Type column shows one short label: the category (for example
+  Commission, Shipping) or the exchange rate. The extra words "Regular",
+  "Has Commission" and "Commission entry … already exists" are gone.
+- **Export**, **History** and **Undo** are now icon buttons at the top right.
+- **Undo now asks first.** It shows what the last change was (the entry, and
+  for an edit the old and new values) and what undoing it will do. Nothing
+  changes until you press **Yes, undo it**. If someone else made a newer
+  change in the meantime, nothing is undone and the page shows you the newer
+  change instead.
+- The big **Back** button is gone. On a computer, use the **Dashboard** link
+  above the client name. On a phone, a round **←** button sits at the top left
+  of the statement, next to Export, History and Undo, and the client name gets
+  the full width below them.
+- The calculator and **Newest** buttons are the same size and have a softer
+  shadow. On iPhone they now stay clear of the bottom edge.
+
+**New phone menu**
+- The side menu has icons, a clear highlight on the page you're on, a round
+  close button, and **Log out** at the bottom. It slides in when you open it
+  and slides back out smoothly when you close it.
+
 ## 5.2.13
 
 **Newest entries on top, older ones load as you scroll**

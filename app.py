@@ -2653,6 +2653,7 @@ def annotate_commission_rows(
         row_data["can_auto_commission"] = (
             row_data.get("direction") == "OUT"
             and not row_data.get("commission_source_entry_id")
+            and row_data.get("category_hint") != "commission"
             and not child
         )
         annotated.append(row_data)
@@ -2693,6 +2694,8 @@ def commission_error_message(
         return "Source entry does not belong to this client."
     if source_entry["commission_source_entry_id"]:
         return "Auto commission cannot start from a generated commission row."
+    if source_entry["category_hint"] == "commission":
+        return "Auto commission cannot start from a commission entry."
     if source_entry["direction"] != "OUT":
         return "Auto commission is only available for outgoing entries."
     if commission_child_entry(db, source_entry["id"]) is not None:
@@ -3364,6 +3367,98 @@ def latest_undo_event(client_id: int) -> sqlite3.Row | None:
     ).fetchone()
 
 
+UNDO_FIELD_LABELS = (
+    ("entry_date", "Date"),
+    ("description", "Description"),
+    ("currency", "Currency"),
+    ("direction", "In / Out"),
+    ("amount", "Amount"),
+    ("kind", "Type"),
+    ("category_hint", "Category"),
+    ("exchange_rate", "Exchange rate"),
+)
+
+
+def _undo_entry_line(entry: dict) -> str:
+    """One entry in plain words: "#12 · 2026-10-08 · Shipping container · OUT $3,200.00"."""
+    parts = []
+    if entry.get("source_no"):
+        parts.append(f"#{entry['source_no']}")
+    parts.append(str(entry.get("entry_date") or ""))
+    parts.append(entry.get("description") or "(no description)")
+    if entry.get("amount") is not None:
+        parts.append(f"{entry.get('direction', '')} {money_with_symbol_filter((entry['amount'], entry.get('currency') or 'USD'))}".strip())
+    return " · ".join(part for part in parts if part)
+
+
+def _undo_field_value(field: str, entry: dict) -> str:
+    value = entry.get(field)
+    if value in (None, ""):
+        return "(empty)"
+    if field == "amount":
+        return money_with_symbol_filter((value, entry.get("currency") or "USD"))
+    if field == "category_hint":
+        return dict(CATEGORY_OPTIONS).get(value, value)
+    if field == "kind":
+        return dict(TYPE_OPTIONS).get(value, value)
+    return str(value)
+
+
+def undo_preview(event: sqlite3.Row | None) -> dict | None:
+    """What Undo will do to the latest change, in words for the confirmation box."""
+    if event is None:
+        return None
+    payload = json.loads(event["payload"])
+    action = event["action"]
+    preview = {
+        "id": event["id"],
+        "created_at": normalize_utc_timestamp(event["created_at"]),
+        "entries": [],
+        "changes": [],
+    }
+    if action == "add":
+        preview["title"] = "Added an entry"
+        preview["effect"] = "Undo deletes this entry again."
+        preview["entries"] = [_undo_entry_line(payload.get("entry", {}))]
+    elif action == "delete":
+        preview["title"] = "Deleted an entry"
+        preview["effect"] = "Undo brings this entry back."
+        preview["entries"] = [_undo_entry_line(payload.get("entry", {}))]
+    elif action == "commission":
+        preview["title"] = "Added an auto commission"
+        source = payload.get("source_entry") or {}
+        preview["effect"] = (
+            f"Undo deletes this commission entry"
+            + (f" (made from #{source['source_no']})" if source.get("source_no") else "")
+            + ". Any amount it added to the company profit is removed too."
+        )
+        preview["entries"] = [_undo_entry_line(payload.get("entry", {}))]
+    elif action == "exchange":
+        preview["title"] = "Made a currency exchange"
+        preview["effect"] = "Undo deletes both sides of this exchange."
+        preview["entries"] = [_undo_entry_line(entry) for entry in payload.get("entries", [])]
+    elif action == "edit":
+        before, after = payload.get("before", {}), payload.get("after", {})
+        preview["title"] = "Edited an entry"
+        preview["effect"] = "Undo puts back the old values:"
+        preview["entries"] = [_undo_entry_line(after or before)]
+        for field, label in UNDO_FIELD_LABELS:
+            if before.get(field) != after.get(field):
+                preview["changes"].append({
+                    "label": label,
+                    "now": _undo_field_value(field, after),
+                    "back_to": _undo_field_value(field, before),
+                })
+        if before.get("image_path") != after.get("image_path"):
+            preview["changes"].append({"label": "Photo", "now": "changed", "back_to": "the old photo"})
+        if not preview["changes"]:
+            preview["effect"] = "Undo puts back the old values (only details like the company profit link changed)."
+    else:
+        preview["title"] = "Last change"
+        preview["effect"] = "Undo reverses it."
+    return preview
+
+
 def recent_events(client_id: int, limit: int = 8) -> list[dict]:
     db = get_db()
     rows = db.execute(
@@ -4029,6 +4124,7 @@ def client_statement(client_id: int):
     if fx_summary.get("display_rate") is not None:
         approx_total_rmb = current_usd_balance * fx_summary["display_rate"] + current_cny_balance
     rows, has_more = newest_first_chunk(rows, shown)
+    latest_event = latest_undo_event(client_id)
     return render_template(
         "client.html",
         client=client,
@@ -4038,7 +4134,8 @@ def client_statement(client_id: int):
         current_cny_balance=current_cny_balance,
         approx_total_rmb=approx_total_rmb,
         fx_summary=fx_summary,
-        latest_event=latest_undo_event(client_id),
+        latest_event=latest_event,
+        undo_info=undo_preview(latest_event),
         recent_events=recent_events(client_id),
         filters=filters,
         view_mode=view_mode,
@@ -4505,6 +4602,12 @@ def undo_last_change(client_id: int):
     event = latest_undo_event(client_id)
     if event is None:
         return redirect(url_for("client_statement", client_id=client_id))
+    # Only undo the change the person confirmed. If someone made another change
+    # since the page loaded, show the page again so they can see the new one.
+    confirmed_id = request.form.get("event_id", type=int)
+    if confirmed_id != event["id"]:
+        flash("Nothing was undone: the latest change is different from the one you confirmed. Check it and try again.", "error")
+        return redirect(_return_url(client_id))
 
     payload = json.loads(event["payload"])
     affected_expense_accounts: set[int] = set()
