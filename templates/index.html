@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Firefly Statements</title>
+    <title>{{ app_brand_name() }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=asset_version) }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css', v=asset_version) }}">
     <style>
@@ -879,7 +879,7 @@
         <div class="hero-layout">
           <div class="hero-main">
             <div>
-            <p class="eyebrow">Firefly Control Room</p>
+            <p class="eyebrow">{{ app_brand_name() }}</p>
             <h1>Client Statements</h1>
             <p class="hero-copy">Manage client statements, track balances, and record payments in one place.</p>
             </div>
@@ -929,7 +929,7 @@
                   {% endif %}
                 </p>
                 <p class="company-net-note">
-                  {% if fx_summary.live_rate_date %}Updated {{ fx_summary.live_rate_date[:16].replace('T', ' ') }}{% else %}Not fetched yet{% endif %}
+                  {% if fx_summary.live_rate_date %}Updated {{ fx_summary.live_rate_date|local_time }}{% else %}Not fetched yet{% endif %}
                   &middot; <a href="#" id="fx-refresh-btn" style="color:#1d4ed8;text-decoration:none;font-weight:600;">Refresh</a>
                 </p>
               </div>

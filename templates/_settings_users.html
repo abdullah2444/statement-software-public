@@ -22,7 +22,7 @@
                     {% if not u.is_active %}<span class="pill pill-bad">Deactivated</span>{% endif %}
                     {% if u.must_change_password %}<span class="pill pill-warn">Must change password</span>{% endif %}
                   </div>
-                  <div class="list-sub">Last sign-in {{ u.last_login[:16].replace('T', ' ') if u.last_login else 'never' }}</div>
+                  <div class="list-sub">Last sign-in {{ u.last_login|local_time if u.last_login else 'never' }}</div>
                 </div>
               </div>
               {% if can_manage %}

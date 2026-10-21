@@ -4,6 +4,23 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.11
+
+**Your company name everywhere**
+- The company name from Settings → General → Login screen now also shows in
+  page titles, page headings and on statement and expense PDFs, instead of
+  "Firefly".
+- PDFs use the logo you uploaded for the login screen. A white logo gets a
+  dark backdrop so it stays visible.
+- The default account for commission profit entries is the expense account
+  with your company name.
+
+**New: time zone**
+- Super admins can pick the time zone in Settings → General. It is used for
+  today's date on new entries and for every time shown in the app (backups,
+  cloud backups, activity log, sign-ins, updates).
+- Until you change it, the time zone stays Asia/Shanghai, as before.
+
 ## 5.2.10
 
 **Backups on this server**

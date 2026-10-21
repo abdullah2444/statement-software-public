@@ -49,7 +49,7 @@
                 </div>
                 <div class="list-sub">
                   <span class="mono">{{ t.token_prefix }}</span> · {{ (t.access_level or 'full_control').replace('_', ' ').capitalize() }}{% if t.client_name %} · {{ t.client_name }}{% endif %}
-                  · last used {{ t.last_used_at[:16].replace('T', ' ') if t.last_used_at else 'never' }}
+                  · last used {{ t.last_used_at|local_time if t.last_used_at else 'never' }}
                 </div>
               </div>
               <div class="list-actions">
