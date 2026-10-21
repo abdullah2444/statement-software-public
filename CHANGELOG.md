@@ -4,6 +4,25 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.9
+
+**Only one server does cloud backups**
+- If you restore a backup onto another machine, that machine no longer starts
+  backing up to the cloud by itself. Its Backups tab says cloud backup is paused.
+- To move cloud backups to that machine, a super admin clicks
+  **Use this server for cloud backups**. The old server notices at its next
+  backup and stops.
+- Servers that already back up keep doing so after this update.
+
+**Installing**
+- `setup.sh` now also installs the updater, so Update Now works right after a
+  fresh install.
+
+**Password reset**
+- `./setup.sh reset-admin-password` works again. It changes the password inside the
+  running app, makes the account a super admin, lifts the wrong-password pause,
+  and needs no restart.
+
 ## 5.2.8
 
 **New: super admin**

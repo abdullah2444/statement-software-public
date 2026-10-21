@@ -316,10 +316,28 @@ def _recent_failures(key: tuple, now: float) -> list[float]:
     return times
 
 
+# `./setup.sh reset-admin-password` touches this file; the running app then
+# forgets earlier wrong-password attempts, so the new password works at once.
+LOGIN_UNLOCK_FILE = DATA_DIR / "login-unlock"
+_login_unlock_seen = 0.0
+
+
+def _apply_login_unlock() -> None:
+    global _login_unlock_seen
+    try:
+        stamp = LOGIN_UNLOCK_FILE.stat().st_mtime
+    except OSError:
+        return
+    if stamp > _login_unlock_seen:
+        _login_unlock_seen = stamp
+        _login_failures.clear()
+
+
 def login_blocked(username: str) -> bool:
     ip = _client_ip_for_limits()
     now = time.time()
     with _login_failures_lock:
+        _apply_login_unlock()
         return (
             len(_recent_failures(("user", username.lower(), ip), now)) >= LOGIN_FAILURE_LIMIT
             or len(_recent_failures(("ip", ip), now)) >= LOGIN_ADDRESS_LIMIT
@@ -1205,6 +1223,7 @@ def activate_restore_candidate(candidate_path: Path, label: str, staged_uploads:
 
 def _activate_restore_candidate_locked(candidate_path: Path, label: str, staged_uploads: Path | None) -> Path:
     backup_path = create_full_backup_file(f"before-{label}")
+    active_before = cloud_backup_active()
     close_active_db()
     with tempfile.TemporaryDirectory(dir=DATA_DIR) as tmp:
         tmp_path = Path(tmp)
@@ -1214,10 +1233,12 @@ def _activate_restore_candidate_locked(candidate_path: Path, label: str, staged_
         if staged_uploads is not None and UPLOAD_DIR.exists():
             shutil.copytree(UPLOAD_DIR, rollback_uploads)
         try:
+            restored_owner = _restored_cloud_owner(candidate_path)
             copy_database_contents(candidate_path, DB_PATH)
             if staged_uploads is not None:
                 replace_uploads_contents(staged_uploads)
             init_db()
+            pause_cloud_backup_after_restore(restored_owner, active_before)
         except Exception:
             copy_database_contents(rollback_db, DB_PATH)
             if staged_uploads is not None:
@@ -2184,6 +2205,7 @@ def init_db() -> None:
     redact_existing_audit_log(db)
     remove_github_backup_settings(db)
     convert_admins_to_super_admins(db)
+    settle_cloud_backup_owner(db)
     backfill_exchange_links(db)
     db.commit()
     db.close()
@@ -5731,6 +5753,78 @@ def generate_recovery_key() -> str:
     return "-".join(raw[i:i + 4] for i in range(0, len(raw), 4))
 
 
+# Each installation has its own id, kept next to the database but never inside a
+# backup. Cloud backup runs only on the server whose id is saved in the settings,
+# so restoring a backup onto another machine doesn't start a second server
+# backing up into the same bucket.
+INSTANCE_ID_FILE = DATA_DIR / "instance-id"
+CLOUD_OWNER_MARKER = "cloud_backup_owner_v1"
+CLOUD_TAKEN_OVER_PREFIX = "other:"
+
+
+def this_instance_id() -> str:
+    try:
+        value = INSTANCE_ID_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        value = ""
+    if not re.fullmatch(r"[0-9a-f]{12}", value):
+        value = uuid.uuid4().hex[:12]
+        INSTANCE_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
+        INSTANCE_ID_FILE.write_text(value, encoding="utf-8")
+    return value
+
+
+def cloud_backup_owned_here() -> bool:
+    return get_setting("cloud_backup_instance", "") == this_instance_id()
+
+
+def cloud_backup_active() -> bool:
+    """Set up, and this server is the one that backs up."""
+    return cloud_backup_configured() and cloud_backup_owned_here()
+
+
+def settle_cloud_backup_owner(db: sqlite3.Connection) -> None:
+    """First start of 5.2.9 on an existing server: it keeps backing up as before."""
+    if db.execute("select 1 from app_settings where key = ?", (CLOUD_OWNER_MARKER,)).fetchone():
+        return
+    db.execute("insert or replace into app_settings(key, value) values (?, ?)", (CLOUD_OWNER_MARKER, utc_timestamp()))
+    configured = db.execute(
+        "select count(*) from app_settings where key in ('cloud_backup_key_id', 'cloud_backup_app_key') and value != ''"
+    ).fetchone()[0] == 2
+    if configured and not db.execute("select 1 from app_settings where key = 'cloud_backup_instance'").fetchone():
+        db.execute("insert or replace into app_settings(key, value) values ('cloud_backup_instance', ?)", (this_instance_id(),))
+        db.execute("insert or replace into app_settings(key, value) values ('cloud_backup_owner_since', ?)", (utc_timestamp(),))
+
+
+def _restored_cloud_owner(candidate_path: Path) -> str:
+    try:
+        conn = sqlite3.connect(f"file:{candidate_path}?mode=ro", uri=True)
+        try:
+            row = conn.execute("select value from app_settings where key = 'cloud_backup_instance'").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return ""
+    return row[0] if row else ""
+
+
+def pause_cloud_backup_after_restore(restored_owner: str, active_before: bool) -> None:
+    """After a restore: a backup from another server must not make this one start backing up."""
+    if restored_owner == this_instance_id():
+        return
+    db = get_db()
+    if not restored_owner and active_before:
+        # An older backup of this same server (made before servers had ids): keep going.
+        for key, value in ((CLOUD_OWNER_MARKER, utc_timestamp()), ("cloud_backup_instance", this_instance_id())):
+            db.execute("insert or replace into app_settings(key, value) values (?, ?)", (key, value))
+        db.commit()
+        return
+    for key, value in ((CLOUD_OWNER_MARKER, utc_timestamp()), ("cloud_backup_instance", ""),
+                       ("cloud_backup_paused_reason", "restored")):
+        db.execute("insert or replace into app_settings(key, value) values (?, ?)", (key, value))
+    db.commit()
+
+
 def cloud_backup_configured() -> bool:
     return all(get_setting(key, "") for key in CLOUD_BACKUP_CONFIG_KEYS)
 
@@ -5775,6 +5869,26 @@ def _record_cloud_failure(message: str) -> None:
     set_setting("cloud_backup_last_error_at", utc_timestamp())
 
 
+def _cloud_taken_over_by(restic: cloud_backup.Restic) -> dict | None:
+    """The other server, if the newest backup in the bucket came from a different
+    server after this one's last successful backup (someone chose "Use this server")."""
+    snapshots = restic.snapshots()
+    if not snapshots:
+        return None
+    newest = max(snapshots, key=lambda snap: snap.get("time", ""))
+    instances = [t[len("instance-"):] for t in newest.get("tags") or [] if t.startswith("instance-")]
+    if not instances or instances[0] == this_instance_id():
+        return None
+    # Only backups made after this server last backed up, and after it became
+    # the backup server, count as another server taking over.
+    since = [t for t in (_parse_utc(get_setting("cloud_backup_last_success", "")),
+                         _parse_utc(get_setting("cloud_backup_owner_since", ""))) if t]
+    made_at = _parse_utc((newest.get("time") or "")[:19] + "Z")
+    if made_at and since and made_at <= max(since):
+        return None
+    return {"instance": instances[0], "time": (newest.get("time") or "")[:16].replace("T", " ")}
+
+
 def run_cloud_backup() -> dict:
     """Take a consistent snapshot, upload it encrypted, then apply retention.
 
@@ -5794,10 +5908,19 @@ def run_cloud_backup() -> dict:
             raise cloud_backup.CloudBackupError(
                 f"Not enough free disk space for a backup ({format_file_size(free)} free)."
             )
+        if not cloud_backup_owned_here():
+            raise cloud_backup.CloudBackupError("Cloud backup is paused on this server: another server does the backups.")
+        taken_over = _cloud_taken_over_by(restic)
+        if taken_over:
+            set_setting("cloud_backup_instance", CLOUD_TAKEN_OVER_PREFIX + taken_over["instance"])
+            set_setting("cloud_backup_paused_reason", "taken_over")
+            raise cloud_backup.CloudBackupError(
+                f"Another server took over cloud backups on {taken_over['time']} UTC, so this server stopped backing up."
+            )
         shutil.rmtree(staging, ignore_errors=True)
         stage_consistent_snapshot(staging)
         restic.unlock()
-        summary = restic.backup(staging)
+        summary = restic.backup(staging, tags=[f"instance-{this_instance_id()}"])
         # Older restic versions report a short ID here; the listing has the full one.
         saved = next((snap for snap in restic.snapshots() if snap.get("id", "").startswith(summary["snapshot_id"])), None)
         if saved is None:
@@ -5901,7 +6024,7 @@ def start_cloud_job(kind: str) -> bool:
 
 
 def cloud_backup_due(now: datetime | None = None) -> bool:
-    if not cloud_backup_configured():
+    if not cloud_backup_active():
         return False
     interval_h = float(get_setting("cloud_backup_interval_hours", "0.5") or 0)
     if interval_h <= 0:
@@ -5965,6 +6088,8 @@ def cloud_backup_alert() -> str:
     """A short warning for admins when backups need attention, or "" when all is well."""
     if not cloud_backup_configured():
         return ""
+    if not cloud_backup_owned_here():
+        return "Cloud backups are paused on this server because another server does them. Check Settings → Backups."
     if get_setting("cloud_backup_recovery_key_confirmed", "") != "1":
         return "Save your backup recovery key. Without it nobody can open your backups."
     interval_h = float(get_setting("cloud_backup_interval_hours", "0.5") or 0)
@@ -6029,6 +6154,8 @@ def cloud_backup_status() -> dict:
         "storage_bytes": int(storage) if storage.isdigit() else None,
         "storage_label": format_file_size(int(storage)) if storage.isdigit() else "",
         "recovery_key_confirmed": get_setting("cloud_backup_recovery_key_confirmed", "") == "1",
+        "owned_here": cloud_backup_owned_here(),
+        "paused_reason": get_setting("cloud_backup_paused_reason", ""),
         "job": _get_cloud_job(),
         "job_running": _cloud_job_lock.locked(),
         "alert": cloud_backup_alert(),
@@ -6106,6 +6233,9 @@ def settings_cloud_backup_save():
     }
     if not get_setting("cloud_backup_configured_at", ""):
         values["cloud_backup_configured_at"] = utc_timestamp()
+    values["cloud_backup_instance"] = this_instance_id()
+    values["cloud_backup_owner_since"] = utc_timestamp()
+    values["cloud_backup_paused_reason"] = ""
     if config.recovery_key != previous_key:
         # A key the admin typed in is one they already have; a generated one must be saved first.
         values["cloud_backup_recovery_key_confirmed"] = "1" if entered_recovery_key else ""
@@ -6138,6 +6268,20 @@ def settings_cloud_backup_reveal_key():
     return render_settings_page(revealed_recovery_key=get_setting("cloud_backup_recovery_key", ""))
 
 
+@app.route("/settings/cloud-backup/take-over", methods=["POST"])
+@super_admin_required
+def settings_cloud_backup_take_over():
+    """Make this server the one that does cloud backups. The other one stops at its next backup."""
+    if not cloud_backup_configured():
+        flash("Cloud backup isn't set up on this server.", "error")
+        return _cloud_settings_redirect()
+    set_setting("cloud_backup_instance", this_instance_id())
+    set_setting("cloud_backup_owner_since", utc_timestamp())
+    set_setting("cloud_backup_paused_reason", "")
+    flash("This server now does the cloud backups. The other server stops at its next backup.", "success")
+    return _cloud_settings_redirect()
+
+
 @app.route("/settings/cloud-backup/disconnect", methods=["POST"])
 @super_admin_required
 def settings_cloud_backup_disconnect():
@@ -6156,6 +6300,9 @@ def settings_cloud_backup_disconnect():
 @app.route("/api/cloud-backup/run", methods=["POST"])
 @admin_required
 def api_cloud_backup_run():
+    if cloud_backup_configured() and not cloud_backup_owned_here():
+        return jsonify({"error": "Cloud backup is paused on this server because another server does the backups. "
+                                 "A super admin can switch it to this server in Settings → Backups."}), 409
     if not cloud_backup_configured():
         return jsonify({"error": "Cloud backup is not set up yet."}), 400
     if not start_cloud_job("backup"):

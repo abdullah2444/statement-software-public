@@ -84,6 +84,7 @@ class CloudBackupTests(unittest.TestCase):
         with self.app.app_context():
             for key, value in {**CONFIG, **overrides}.items():
                 self.module.set_setting(key, value)
+            self.module.set_setting("cloud_backup_instance", self.module.this_instance_id())
             restic = self.module.make_restic(self.module.load_cloud_backup_config())
             if not restic.exists():
                 restic.init()
@@ -380,6 +381,7 @@ class CloudBackupTests(unittest.TestCase):
         with self.app.app_context():
             for key, value in CONFIG.items():
                 self.module.set_setting(key, value)
+            self.module.set_setting("cloud_backup_instance", self.module.this_instance_id())
             with patch.object(cloud_backup.Restic, "unlock"), \
                  patch.object(cloud_backup.Restic, "backup", side_effect=cloud_backup.CloudBackupError("upload cut off")), \
                  patch.object(cloud_backup.Restic, "forget") as forget:
@@ -391,6 +393,7 @@ class CloudBackupTests(unittest.TestCase):
         with self.app.app_context():
             for key, value in CONFIG.items():
                 self.module.set_setting(key, value)
+            self.module.set_setting("cloud_backup_instance", self.module.this_instance_id())
             summary = {"snapshot_id": "abcdef0123456789", "data_added": 10}
             with patch.object(cloud_backup.Restic, "unlock"), \
                  patch.object(cloud_backup.Restic, "backup", return_value=summary), \
@@ -408,6 +411,7 @@ class CloudBackupTests(unittest.TestCase):
         with self.app.app_context():
             for key, value in CONFIG.items():
                 self.module.set_setting(key, value)
+            self.module.set_setting("cloud_backup_instance", self.module.this_instance_id())
             with patch.object(cloud_backup.Restic, "unlock"), \
                  patch.object(cloud_backup.Restic, "backup", return_value={"snapshot_id": "abcdef0123456789"}), \
                  patch.object(cloud_backup.Restic, "snapshots", return_value=[]), \
@@ -423,6 +427,7 @@ class CloudBackupTests(unittest.TestCase):
         with self.app.app_context():
             for key, value in CONFIG.items():
                 self.module.set_setting(key, value)
+            self.module.set_setting("cloud_backup_instance", self.module.this_instance_id())
             self.module.set_setting("cloud_backup_interval_hours", "0.5")
             now = self.module.utc_now()
             self.assertTrue(self.module.cloud_backup_due(now))
@@ -437,6 +442,7 @@ class CloudBackupTests(unittest.TestCase):
         with self.app.app_context():
             for key, value in CONFIG.items():
                 self.module.set_setting(key, value)
+            self.module.set_setting("cloud_backup_instance", self.module.this_instance_id())
             self.module.set_setting("cloud_backup_last_success", self.module.utc_timestamp())
             self.assertEqual(self.module.cloud_backup_alert(), "")
             self.module.set_setting("cloud_backup_last_success", (self.module.utc_now() - timedelta(hours=7)).isoformat())
@@ -526,6 +532,7 @@ class CloudBackupTests(unittest.TestCase):
         with self.app.app_context():
             for key, value in CONFIG.items():
                 self.module.set_setting(key, value)
+            self.module.set_setting("cloud_backup_instance", self.module.this_instance_id())
         client = self.app.test_client()
         csrf = self.login(client)
         client.post("/settings/cloud-backup/disconnect", data={"csrf_token": csrf})

@@ -194,17 +194,62 @@ start_docker_service() {
 }
 
 compose_cmd() {
+  local base
   if have_cmd docker && docker compose version >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    printf 'docker compose'
+    base='docker compose'
   elif have_cmd sudo && have_cmd docker && sudo docker info >/dev/null 2>&1 && sudo docker compose version >/dev/null 2>&1; then
-    printf 'sudo docker compose'
+    base='sudo docker compose'
   elif have_cmd docker-compose && docker info >/dev/null 2>&1; then
-    printf 'docker-compose'
+    base='docker-compose'
   elif have_cmd sudo && sudo docker info >/dev/null 2>&1 && sudo docker-compose version >/dev/null 2>&1; then
-    printf 'sudo docker-compose'
+    base='sudo docker-compose'
   else
     return 1
   fi
+  # Once the updater is installed it adds its own settings file (shared folder,
+  # memory limit, image name); every compose command must include it, or a
+  # restart would quietly drop those settings.
+  if [[ -f docker-compose.updater.yml ]]; then
+    base="$base -f docker-compose.yml -f docker-compose.updater.yml"
+  fi
+  printf '%s' "$base"
+}
+
+docker_cmd() {
+  if have_cmd docker && docker info >/dev/null 2>&1; then
+    printf 'docker'
+  else
+    printf 'sudo docker'
+  fi
+}
+
+# Install the updater service (Settings → Software Updates) next to a Docker
+# install. Safe to run again: it does nothing when the updater is already there.
+setup_updater() {
+  [[ "$METHOD" == "docker" ]] || return 0
+  if [[ -f /etc/statement-updater.env ]]; then
+    return 0
+  fi
+  if ! have_cmd systemctl || [[ ! -d /run/systemd/system ]]; then
+    warn "This machine has no systemd, so updates can't be installed from Settings here."
+    return 0
+  fi
+  info "Setting up the updater so new versions can be installed from Settings"
+  if ! run_as_root bash scripts/install-updater.sh --container "$SERVICE_NAME"; then
+    warn "The updater could not be set up. You can try again with: sudo bash scripts/install-updater.sh"
+    return 0
+  fi
+  if [[ -f docker-compose.updater.yml ]]; then
+    # The updater runs the app from an image called statement-software:current.
+    local docker image_id compose
+    docker="$(docker_cmd)"
+    image_id="$($docker inspect -f '{{.Image}}' "$SERVICE_NAME" 2>/dev/null || true)"
+    [[ -n "$image_id" ]] && $docker tag "$image_id" statement-software:current
+    compose="$(compose_cmd)" || return 0
+    info "Restarting the app with the updater's settings"
+    $compose up -d --no-build --force-recreate "$SERVICE_NAME" >/dev/null
+  fi
+  ok "Updater installed. New versions appear in Settings → Software Updates."
 }
 
 python_cmd() {
@@ -570,7 +615,7 @@ if existing:
     db.execute(
         """
         update users
-        set password_hash = ?, role = 'admin', is_active = 1, must_change_password = 0
+        set password_hash = ?, role = 'super_admin', is_active = 1, must_change_password = 0
         where username = ?
         """,
         (password_hash, username),
@@ -580,7 +625,7 @@ else:
     db.execute(
         """
         insert into users(username, password_hash, role, is_active, must_change_password, created_at)
-        values (?, ?, 'admin', 1, 0, ?)
+        values (?, ?, 'super_admin', 1, 0, ?)
         """,
         (username, password_hash, datetime.now(timezone.utc).isoformat()),
     )
@@ -600,58 +645,34 @@ reset_admin_password() {
   [[ -n "$ADMIN_PASSWORD" ]] || die "--admin-password is required in non-interactive mode."
 
   if [[ "$METHOD" == "docker" ]]; then
-    local compose
-    compose="$(compose_cmd)" || die "Docker Compose is required for Docker mode."
-    $compose run --rm -T \
-      -e RESET_ADMIN_USERNAME="$ADMIN_USER" \
-      -e RESET_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
-      "$SERVICE_NAME" python - <<'PY'
-import os
-import sqlite3
-from datetime import datetime, timezone
-
-from werkzeug.security import generate_password_hash
-
-import app
-
-username = (os.environ.get("RESET_ADMIN_USERNAME") or "admin").strip()
-password = os.environ.get("RESET_ADMIN_PASSWORD") or ""
-if not username or not password:
-    raise SystemExit("RESET_ADMIN_USERNAME and RESET_ADMIN_PASSWORD are required")
-
-app.init_db()
-db = sqlite3.connect(app.DB_PATH)
-existing = db.execute("select id from users where username = ?", (username,)).fetchone()
-password_hash = generate_password_hash(password)
-if existing:
-    db.execute(
-        """
-        update users
-        set password_hash = ?, role = 'admin', is_active = 1, must_change_password = 0
-        where username = ?
-        """,
-        (password_hash, username),
-    )
-    print(f"[setup] admin password reset for '{username}'.")
-else:
-    db.execute(
-        """
-        insert into users(username, password_hash, role, is_active, must_change_password, created_at)
-        values (?, ?, 'admin', 1, 0, ?)
-        """,
-        (username, password_hash, datetime.now(timezone.utc).isoformat()),
-    )
-    print(f"[setup] admin user '{username}' created.")
-db.commit()
-db.close()
-PY
+    local docker compose output
+    docker="$(docker_cmd)"
+    if [[ "$($docker inspect -f '{{.State.Running}}' "$SERVICE_NAME" 2>/dev/null)" == "true" ]]; then
+      # Run inside the app that is already running, so the code and data are
+      # exactly what people sign in to (older versions started a separate copy
+      # from a stale image).
+      output="$($docker exec -i -e RESET_ADMIN_PASSWORD="$ADMIN_PASSWORD" "$SERVICE_NAME" \
+        python update_helper.py reset-password "$ADMIN_USER" 2>&1 || true)"
+    else
+      compose="$(compose_cmd)" || die "Docker Compose is required for Docker mode."
+      output="$($compose run --rm -T --no-deps -e RESET_ADMIN_PASSWORD="$ADMIN_PASSWORD" "$SERVICE_NAME" \
+        python update_helper.py reset-password "$ADMIN_USER" 2>&1 || true)"
+    fi
+    case "$output" in
+      *'"ok": true'*) ;;
+      *'"error"'*)
+        die "Password not changed: $(printf '%s\n' "$output" | grep -o '"error": "[^"]*"' | tail -1 | cut -d'"' -f4)" ;;
+      *)
+        die "Password not changed. Output: $(printf '%s\n' "$output" | tail -3)" ;;
+    esac
   else
     [[ -x .venv/bin/python ]] || die ".venv is missing. Run ./setup.sh install --method python first."
     reset_admin_password_python ".venv/bin/python"
+    # Tell the running app to forget earlier wrong-password attempts.
+    touch "$DATA_DIR/login-unlock" 2>/dev/null || true
   fi
 
-  ok "Admin password is ready for username '$ADMIN_USER'"
-  info "Restart with: ./setup.sh restart"
+  ok "Password changed. Sign in as '$ADMIN_USER' (super admin) now; no restart needed."
 }
 
 install_app() {
@@ -735,6 +756,7 @@ start_app() {
   fi
   if wait_for_app "http://127.0.0.1:$PORT" 30; then
     ok "Started $APP_NAME"
+    setup_updater
   else
     warn "Started $APP_NAME, but it is not responding yet on port $PORT."
     warn "Check logs with: ./setup.sh status (and $DATA_DIR/app.err.log in Python mode)."

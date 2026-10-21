@@ -3,6 +3,7 @@
     python update_helper.py backup <label>   make and verify the recovery backup
     python update_helper.py checkpoint -       write everything into the database file before a stop
     python update_helper.py health <version> check the running app and its database
+    python update_helper.py reset-password <username>   new password from RESET_ADMIN_PASSWORD
 
 Each command prints one JSON object and exits 0 on success, 1 on failure.
 It reuses the app's own backup code, so the recovery backup is an ordinary
@@ -113,7 +114,7 @@ def _wait_for_cloud_job() -> None:
 def backup(label: str) -> dict:
     with statement_app.app.app_context():
         result = {"cloud_snapshot": ""}
-        if statement_app.cloud_backup_configured():
+        if statement_app.cloud_backup_active():
             # The cloud backup goes first, so the local backup also holds its "last backup" time.
             _wait_for_cloud_job()
             cloud = statement_app.run_cloud_backup()
@@ -154,10 +155,50 @@ def checkpoint(_unused: str) -> dict:
     return {}
 
 
+def reset_password(username: str) -> dict:
+    """Used by `./setup.sh reset-admin-password`: give username full access with a new password.
+
+    The password comes from RESET_ADMIN_PASSWORD (never the command line, where
+    other users of the server could see it). The account becomes an active
+    super admin, sessions elsewhere are signed out, and the app is asked to
+    forget earlier wrong-password attempts so the new password works at once.
+    """
+    username = (username or "").strip() or "admin"
+    password = os.environ.get("RESET_ADMIN_PASSWORD", "")
+    problem = statement_app.password_problem(password, username)
+    if problem:
+        raise ValueError(problem)
+    statement_app.init_db()
+    db = sqlite3.connect(str(statement_app.DB_PATH), timeout=30)
+    try:
+        password_hash = statement_app.generate_password_hash(password)
+        existing = db.execute("select id from users where username = ?", (username,)).fetchone()
+        if existing:
+            db.execute(
+                """update users set password_hash = ?, role = 'super_admin', is_active = 1,
+                must_change_password = 0, session_version = session_version + 1 where id = ?""",
+                (password_hash, existing[0]),
+            )
+            created = False
+        else:
+            db.execute(
+                """insert into users(username, password_hash, role, is_active, must_change_password, created_at)
+                values (?, ?, 'super_admin', 1, 0, ?)""",
+                (username, password_hash, statement_app.utc_timestamp()),
+            )
+            created = True
+        db.commit()
+    finally:
+        db.close()
+    statement_app.LOGIN_UNLOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    statement_app.LOGIN_UNLOCK_FILE.write_text(statement_app.utc_timestamp(), encoding="utf-8")
+    return {"username": username, "created": created}
+
+
 def main(argv: list[str]) -> int:
-    commands = {"backup": backup, "checkpoint": checkpoint, "health": health}
+    commands = {"backup": backup, "checkpoint": checkpoint, "health": health, "reset-password": reset_password}
     if len(argv) != 3 or argv[1] not in commands:
-        print(json.dumps({"ok": False, "error": "usage: update_helper.py backup <label> | checkpoint - | health <version>"}))
+        print(json.dumps({"ok": False, "error": "usage: update_helper.py backup <label> | checkpoint - | health <version> | reset-password <username>"}))
         return 1
     try:
         result = commands[argv[1]](argv[2])
