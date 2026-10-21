@@ -1,0 +1,194 @@
+/* Client statement: one header card (name, tools, balances), a one-line filter bar and the ledger. */
+
+.client-page {
+  --card-radius: 14px;
+  --card-shadow: 0 1px 2px rgba(19, 32, 40, 0.04), 0 8px 24px rgba(19, 32, 40, 0.05);
+  padding-top: 28px;
+}
+
+.client-page .button {
+  gap: 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.client-page .button svg { width: 16px; height: 16px; flex: none; }
+.client-page .button.ghost { background: #fff; color: var(--accent); }
+.client-page .button.ghost:hover { background: var(--soft); }
+
+/* -- Header card: name and tools on top, balances underneath -- */
+
+.client-page .client-hero {
+  margin-bottom: 0;
+  padding: 22px 24px 18px;
+  border-radius: var(--card-radius) var(--card-radius) 0 0;
+  border-bottom: 0;
+  background: #fff;
+  box-shadow: none;
+}
+.client-page .client-hero .eyebrow { font-size: 0.78rem; font-weight: 600; letter-spacing: 0.06em; }
+.client-page .crumb-link { color: var(--accent-2); }
+.client-page .client-hero h1 {
+  margin-top: 4px;
+  font-size: clamp(1.5rem, 2.2vw, 1.95rem);
+  letter-spacing: -0.02em;
+  color: var(--accent);
+}
+.client-page .client-subtitle { margin-top: 4px; font-size: 0.86rem; }
+
+.client-page .client-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-top: 1px solid #e8eef0;
+  border-radius: 0 0 var(--card-radius) var(--card-radius);
+  background: #f9fbfb;
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+}
+.client-page .client-metrics .balance-card {
+  padding: 14px 24px 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.client-page .client-metrics .balance-card + .balance-card { border-left: 1px solid #e8eef0; }
+.client-page .client-metrics .balance-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.client-page .client-metrics .balance-value {
+  font-size: 1.45rem;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* -- Filters: one line above the ledger --------------------- */
+
+.client-page .client-filters {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: var(--card-radius);
+  background: #fff;
+  box-shadow: var(--card-shadow);
+}
+.client-page .client-filters .filters-head h2 { display: none; }
+.client-page .client-filters .filters-head-actions:empty { display: none; }
+.client-page .client-filters .filters-head:not(:has(.status-pill)) { display: none; }
+.client-page .client-filters .filters-grid {
+  grid-template-columns: minmax(220px, 2.2fr) repeat(2, minmax(110px, 1fr)) repeat(2, minmax(130px, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+  margin-top: 0;
+}
+.client-page .client-filters .filters-head + .filters-grid { margin-top: 10px; }
+.client-page .client-filters label span {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.client-page .client-filters input,
+.client-page .client-filters select {
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+}
+.client-page .client-filters .filter-actions { flex-wrap: nowrap; }
+
+/* -- Ledger ------------------------------------------------- */
+
+.client-page .statement-card {
+  border-radius: var(--card-radius);
+  background: #fff;
+  box-shadow: var(--card-shadow);
+  overflow: visible;
+}
+.client-page .statement-card-head {
+  padding: 14px 16px 14px 20px;
+  border-radius: var(--card-radius) var(--card-radius) 0 0;
+  background: #fff;
+}
+.client-page .statement-card-head h2 { margin: 0; font-size: 1.1rem; font-weight: 700; }
+.client-page thead th {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  background: #f7fafa;
+}
+.client-page td,
+.client-page thead th { padding: 10px 12px; }
+.client-page tbody tr.display-row:nth-child(even) { background: #fff; }
+.client-page tbody tr.display-row td { border-bottom-color: #eef2f3; }
+.client-page tbody tr.display-row:hover { background: #f5f9f8; }
+.client-page td.num { font-variant-numeric: tabular-nums; }
+
+/* -- Phones ------------------------------------------------- */
+
+@media (max-width: 768px) {
+  .client-page { padding-top: 12px !important; }
+
+  .client-page .client-hero { padding: 14px !important; }
+  .client-page .client-metrics {
+    grid-template-columns: 1fr !important;
+    gap: 0 !important;
+    margin-bottom: 12px;
+  }
+  .client-page .client-metrics .balance-card {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 14px !important;
+  }
+  .client-page .client-metrics .balance-card + .balance-card { border-left: 0; border-top: 1px solid #e8eef0; }
+  .client-page .client-metrics .balance-label { margin: 0; }
+  .client-page .client-metrics .balance-value { font-size: 1.1rem !important; }
+
+  .client-page .client-filters { padding: 10px !important; margin-bottom: 12px; }
+  .client-page .client-filters .filters-head { display: flex !important; }
+  .client-page .client-filters .filters-grid { grid-template-columns: 1fr; }
+  .client-page .client-filters .filters-head + .filters-grid { margin-top: 10px; }
+  .client-page .client-filters input,
+  .client-page .client-filters select { min-height: 44px; font-size: 16px !important; }
+
+  .client-page .statement-card-head { border-radius: var(--card-radius) var(--card-radius) 0 0; }
+  .client-page .statement-card-head h2 { display: none; }
+
+  /* Entry cards: description and amount on one line, date and type under it. */
+  .client-page .mobile-statement-list { gap: 0 !important; padding: 0 !important; }
+  .client-page .mobile-entry-card {
+    gap: 8px;
+    padding: 12px 14px;
+    border: 0;
+    border-top: 1px solid #eef2f3;
+    border-radius: 0;
+  }
+  .client-page .mobile-entry-card:first-child { border-top: 0; }
+  .client-page .mobile-entry-card { gap: 4px; }
+  .mobile-entry-main,
+  .mobile-entry-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .mobile-entry-main { align-items: flex-start; }
+  .mobile-entry-foot .mobile-entry-meta { flex: 1; min-width: 0; }
+  .client-page .mobile-entry-foot .mobile-entry-actions { flex: none; flex-wrap: nowrap; }
+  .mobile-entry-desc { font-size: 0.95rem; line-height: 1.3; overflow-wrap: anywhere; }
+  .mobile-entry-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .mobile-entry-meta .type-badge { margin-left: 2px; }
+  .mobile-entry-amount { font-size: 1rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .client-page .mobile-entry-actions { justify-content: flex-end; gap: 6px; padding-top: 0; }
+  .client-page .mobile-entry-actions .icon-action,
+  .client-page .mobile-entry-actions .inline-delete { flex: 0 0 auto; }
+  .client-page .mobile-entry-actions [data-commission-open] { flex-basis: auto; }
+}

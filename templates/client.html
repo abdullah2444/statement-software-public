@@ -7,6 +7,7 @@
     <title>{{ client.name }} Statement</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=asset_version) }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css', v=asset_version) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='statement.css', v=asset_version) }}">
     <style>
       @keyframes row-saved {
         0% { background: #d4edda; }
@@ -276,7 +277,7 @@
                   const node = balanceCell(row, cur);
                   if (!node) return;
                   const val = info[key];
-                  node.textContent = sym + val.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                  node.textContent = (val < 0 ? '-' : '') + sym + Math.abs(val).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
                   node.className = 'num' + (val < 0 ? ' balance-negative' : val === 0 ? ' balance-zero' : '');
                 });
               });
@@ -1035,14 +1036,10 @@
           <p class="balance-value {% if current_cny_balance < 0 %}is-negative{% elif current_cny_balance == 0 %}is-zero{% endif %}">{{ (current_cny_balance, 'CNY')|money_with_symbol }}</p>
         </div>
         <div class="balance-card">
-          <p class="balance-label">Total Entries</p>
-          <p class="balance-value">{{ total_rows }}</p>
-        </div>
-        <div class="balance-card">
-          <p class="balance-label">Approx Total RMB</p>
+          <p class="balance-label">&#8776; Total in RMB</p>
           <p class="balance-value {% if approx_total_rmb is not none and approx_total_rmb < 0 %}is-negative{% elif approx_total_rmb == 0 %}is-zero{% endif %}">
             {% if approx_total_rmb is not none %}
-            ≈ {{ "+" if approx_total_rmb >= 0 else "-" }}¥{{ "{:,.2f}".format(approx_total_rmb|abs) }}
+            {{ "-" if approx_total_rmb < 0 }}¥{{ "{:,.2f}".format(approx_total_rmb|abs) }}
             {% else %}
             —
             {% endif %}
@@ -1064,7 +1061,7 @@
           <input type="hidden" name="view" value="{{ view_mode }}">
           <label>
             <span>Search</span>
-            <input type="text" name="q" value="{{ filters.q }}" placeholder="Search all fields...">
+            <input type="search" name="q" value="{{ filters.q }}" placeholder="Description, amount, date…">
           </label>
           <label>
             <span>Currency</span>
@@ -1085,15 +1082,15 @@
             </select>
           </label>
           <label>
-            <span>Date From</span>
+            <span>From</span>
             <input type="date" name="date_from" value="{{ filters.date_from }}">
           </label>
           <label>
-            <span>Date To</span>
+            <span>To</span>
             <input type="date" name="date_to" value="{{ filters.date_to }}">
           </label>
           <div class="filter-actions">
-            <button class="button secondary" type="submit">Filter</button>
+            <button class="button secondary" type="submit">Apply</button>
             <a class="button ghost" href="{{ url_for('client_statement', client_id=client.id) }}">Clear</a>
           </div>
         </form>
@@ -1102,13 +1099,12 @@
       <section class="card statement-card" id="table-top">
         <div class="statement-card-head">
           <div>
-            <p class="eyebrow">Ledger</p>
-            <h2>Statement Entries</h2>
+            <h2>Entries</h2>
           </div>
           <div class="statement-card-actions">
-            <button class="button" type="button" data-add-entry-open>Add Entry</button>
+            <button class="button" type="button" data-add-entry-open>{{ icon('plus') }}<span>Add entry</span></button>
             <div class="history-dropdown" data-exchange-dropdown>
-              <a class="button secondary" href="#" data-exchange-toggle aria-expanded="false">Exchange USD &rarr; RMB</a>
+              <a class="button ghost" href="#" data-exchange-toggle aria-expanded="false">{{ icon('refresh') }}<span>Exchange USD &rarr; RMB</span></a>
               <div class="history-popover exchange-popover action-modal-popover">
                 <div class="action-modal-head">
                   <div class="history-popover-head">Exchange USD to RMB</div>

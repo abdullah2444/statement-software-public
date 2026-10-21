@@ -1344,12 +1344,8 @@
   }
   .icon-action[data-tip]::after { display: none; }
 
-  /* Client statement cards: type badges and actions share one line. */
-  .mobile-entry-card { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
-  .mobile-entry-card > .mobile-entry-top,
-  .mobile-entry-card > .mobile-entry-desc,
-  .mobile-entry-card > .mobile-entry-amounts { grid-column: 1 / -1; }
-  .mobile-entry-card > .mobile-entry-type { flex-wrap: wrap; }
+  /* Client statement cards: description and amount on top, the action icons under them. */
+  .mobile-entry-card { grid-template-columns: minmax(0, 1fr); }
   .mobile-entry-card > .mobile-entry-actions { flex-wrap: nowrap; gap: 6px; justify-content: flex-end; padding-top: 0; }
   .mobile-entry-actions .icon-action,
   .mobile-entry-actions .inline-delete { flex: none; }
