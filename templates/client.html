@@ -70,7 +70,18 @@
         const defaultProfitAccountId = {{ default_profit_account_id|tojson }};
         const setValue = (name, value) => {
           const field = sharedForm.querySelector(`[name="${name}"]`);
-          if (field) field.value = value ?? '';
+          if (!field) return;
+          // An older value the list doesn't offer (e.g. category "accommodation") gets its own
+          // option, so the drop-down shows it and the save keeps it.
+          if (field.tagName === 'SELECT') {
+            field.querySelectorAll('option[data-kept-value]').forEach((option) => option.remove());
+            if (value && ![...field.options].some((option) => option.value === value)) {
+              const option = new Option(value.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()), value);
+              option.dataset.keptValue = '';
+              field.add(option);
+            }
+          }
+          field.value = value ?? '';
         };
         const setCommissionValue = (name, value) => {
           const field = sharedCommissionForm?.querySelector(`[name="${name}"]`);

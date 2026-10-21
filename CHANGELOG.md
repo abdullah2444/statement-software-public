@@ -4,6 +4,14 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.17
+
+**Fix: "Bad Request" when saving some entries**
+- Entries with an older category that isn't in the Category list (for example
+  "accommodation", "transport" or "travel") couldn't be saved. Changing their
+  date, for instance, showed a "Bad Request" page. They now save normally and
+  keep their category, and the edit form shows that category.
+
 ## 5.2.16
 
 **Redesigned dashboard and statement page** (same colours, cleaner layout)

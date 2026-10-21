@@ -196,6 +196,22 @@ class ScrollingLedgerTests(unittest.TestCase):
         self.assertIn('Added an entry', page)
         self.assertIn('Undo deletes this entry again.', page)
 
+    def test_saving_an_entry_with_an_older_category_keeps_it(self):
+        # Imported entries can carry a category the edit form doesn't list ("accommodation"). The browser
+        # then sends no category at all, and the save used to fail with "Bad Request".
+        client_id = self.add_statement(0)
+        entry_id = self.db.execute(
+            "insert into statement_entries(client_id, source_no, entry_date, description, currency, direction,"
+            " amount, kind, category_hint) values (?, 1, '2023-05-15', 'Lifeng Hotel', 'CNY', 'OUT', 300,"
+            " 'movement', 'accommodation')", (client_id,)).lastrowid
+        self.db.commit()
+        response = self.client.post(f'/entries/{entry_id}/save', data={
+            'csrf_token': 'csrf', 'entry_id': entry_id, 'entry_date': '2026-05-15', 'description': 'Lifeng Hotel',
+            'currency': 'CNY', 'direction': 'OUT', 'amount': '300', 'kind': 'movement'})
+        self.assertEqual(response.status_code, 302)
+        row = self.db.execute("select entry_date, category_hint from statement_entries where id = ?", (entry_id,)).fetchone()
+        self.assertEqual((row['entry_date'], row['category_hint']), ('2026-05-15', 'accommodation'))
+
     # --- Expense account ----------------------------------------------------------------
 
     def test_expense_account_scrolls_the_same_way(self):

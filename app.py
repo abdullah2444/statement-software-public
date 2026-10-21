@@ -4476,10 +4476,12 @@ def save_entry(entry_id: int):
     new_entry_date = request.form["entry_date"]
     new_description = request.form["description"].strip()
     new_amount = money(request.form["amount"])
-    new_currency = request.form["currency"]
-    new_direction = request.form["direction"]
-    new_kind = request.form["kind"]
-    new_category_hint = request.form["category_hint"]
+    # A drop-down that can't show the saved value (an older category such as "accommodation")
+    # sends nothing, so keep what the entry already has instead of refusing the save.
+    new_currency = request.form.get("currency") or entry["currency"]
+    new_direction = request.form.get("direction") or entry["direction"]
+    new_kind = request.form.get("kind") or entry["kind"]
+    new_category_hint = request.form.get("category_hint") or entry["category_hint"]
     new_transfer_group = request.form.get("transfer_group", "").strip() or None
     add_to_company_profit = request.form.get("add_to_company_profit") == "1"
     profit_expense_account_id = request.form.get("profit_expense_account_id", type=int)
