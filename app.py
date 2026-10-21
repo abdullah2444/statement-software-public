@@ -933,6 +933,7 @@ DATA_GATE_EXEMPT_ENDPOINTS = {
     "settings_cloud_backup_restore",
     "settings_updates_resume",
     "static",
+    "favicon",
 }
 
 
@@ -1342,7 +1343,7 @@ def create_admin_bootstrap_file(password: str) -> None:
 
 # --- Auth helpers ---
 
-PUBLIC_ENDPOINTS = {"login_page", "login_action", "login_logo", "static", "healthz"}
+PUBLIC_ENDPOINTS = {"login_page", "login_action", "login_logo", "static", "healthz", "favicon"}
 API_ENDPOINTS = set()  # populated by @api_route decorator
 API_ACCESS_FULL = "full_control"
 API_ACCESS_READ = "read_only"
@@ -1886,7 +1887,7 @@ def add_security_headers(response):
     headers.setdefault("X-Content-Type-Options", "nosniff")
     headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     headers.setdefault("Referrer-Policy", "same-origin")
-    if request.endpoint not in ("static", "login_logo"):
+    if request.endpoint not in ("static", "login_logo", "favicon"):
         # Financial pages must not be kept by shared caches or the back button after logout.
         headers.setdefault("Cache-Control", "no-store")
     return response
@@ -6897,6 +6898,12 @@ def inject_software_update_notice() -> dict:
         except (sqlite3.Error, OSError):
             return None
     return {"software_update_notice": notice}
+
+
+@app.route("/favicon.ico")
+def favicon():
+    """Browsers ask for this on their own; the pages themselves link to static/icon.svg."""
+    return send_from_directory(BASE_DIR / "static", "favicon.ico", mimetype="image/vnd.microsoft.icon", max_age=86400)
 
 
 @app.route("/healthz")
