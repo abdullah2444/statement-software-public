@@ -908,6 +908,11 @@
                 <input type="hidden" name="backup_name" value="{{ backup.name }}">
                 <button type="submit" class="btn-secondary btn-sm">Restore</button>
               </form>
+              <form method="POST" action="{{ url_for('settings_delete_database_backup') }}" onsubmit="return confirm('Delete the backup from {{ backup.when }}? This can't be undone.');">
+                {{ csrf_input() }}
+                <input type="hidden" name="backup_name" value="{{ backup.name }}">
+                <button type="submit" class="btn-danger btn-sm">Delete</button>
+              </form>
             </div>
           </li>
           {%- endmacro %}
