@@ -801,7 +801,9 @@ def money_filter(value: float) -> str:
 @app.template_filter("money_with_symbol")
 def money_with_symbol_filter(value_currency: tuple[float, str]) -> str:
     value, code = value_currency
-    return f"{currency_symbol(code)}{float(value):,.2f}"
+    value = float(value)
+    # -1234.5 -> -$1,234.50 (the minus goes before the symbol)
+    return f"{'-' if value < -0.004 else ''}{currency_symbol(code)}{abs(value):,.2f}"
 
 
 def get_db() -> sqlite3.Connection:
@@ -3955,13 +3957,16 @@ def index():
 
 @app.route("/clients/new", methods=["POST"])
 def new_client():
-    name = request.form.get("name", "").strip()
+    name = " ".join(request.form.get("name", "").split())
     if not name:
         abort(400)
     db = get_db()
-    db.execute("insert into clients(name) values (?)", (name,))
+    existing = db.execute("select id, name from clients where name = ? collate nocase", (name,)).fetchone()
+    if existing:
+        flash(f"There is already a client called \"{existing['name']}\".", "error")
+        return redirect(url_for("index") + "#clients")
+    client_id = db.execute("insert into clients(name) values (?)", (name,)).lastrowid
     db.commit()
-    client_id = db.execute("select id from clients where name = ?", (name,)).fetchone()["id"]
     return redirect(url_for("client_statement", client_id=client_id))
 
 
@@ -5624,32 +5629,89 @@ def api_fx_rate():
     return jsonify({"error": "Unable to fetch exchange rate for " + from_cur + "/" + to_cur}), 503
 
 
+GLOBAL_SEARCH_LIMIT = 20
+
+
+def split_client_prefix(db: sqlite3.Connection, query: str):
+    """'Golden Gate freight' -> (the Golden Gate client, 'freight').
+
+    The search may start with a client's full name, or with the first word(s) of a name when
+    only one client starts that way ('golden freight'). The longest full name wins, so
+    'Golden Gate - Branch 2 rent' finds the branch, not 'Golden Gate'.
+    """
+    folded = query.casefold()
+    clients = [(row["name"].casefold(), row) for row in db.execute("select id, name from clients")]
+    full = [(name, row) for name, row in clients if folded == name or folded.startswith(name + " ")]
+    if full:
+        name, row = max(full, key=lambda item: len(item[0]))
+        return row, query[len(name):].strip()
+    words = query.split()
+    for count in range(len(words) - 1, 0, -1):
+        start = " ".join(words[:count]).casefold()
+        matches = [row for name, row in clients if name.startswith(start)]
+        if len(matches) == 1:
+            return matches[0], " ".join(words[count:])
+        if matches:
+            break  # several clients start this way: let the person pick one
+    return None, query
+
+
 @app.route("/api/global-search")
 def global_search():
-    """Search entries across all clients by any field."""
-    q = request.args.get("q", "").strip()
-    if not q or len(q) < 2:
-        return jsonify([])
+    """Search entries across all clients, or inside one client.
+
+    Start the search with a client's name ("Golden Gate freight"), or pass client_id, to look
+    only inside that client's statement. Clients whose name matches are suggested too.
+    """
+    q = " ".join(request.args.get("q", "").split())
     db = get_db()
-    q_pat = f"%{q}%"
-    results = db.execute(
-        """select se.id, se.client_id, c.name as client_name, se.entry_date,
-                  se.description, se.currency, se.direction, se.amount,
-                  se.source_no, se.kind, se.category_hint
-           from statement_entries se join clients c on se.client_id = c.id
-           where se.description like ?
-              or cast(se.amount as text) like ?
-              or se.entry_date like ?
-              or se.currency like ?
-              or se.kind like ?
-              or coalesce(se.category_hint,'') like ?
-              or c.name like ?
-              or coalesce(se.transfer_group,'') like ?
-           order by se.entry_date desc
-           limit 20""",
-        (q_pat, q_pat, q_pat, q_pat, q_pat, q_pat, q_pat, q_pat),
+    client_id = request.args.get("client_id", type=int)
+    if client_id:
+        client = db.execute("select id, name from clients where id = ?", (client_id,)).fetchone()
+        term = q
+    else:
+        client, term = split_client_prefix(db, q)
+    if client is None and len(q) < 2:
+        return jsonify({"client": None, "term": q, "clients": [], "entries": []})
+
+    clients = []
+    if client is None:
+        # Suggest clients named like the search, or like its first words ('golden gate samples').
+        words = q.split()
+        for count in range(len(words), 0, -1):
+            clients = [dict(r) for r in db.execute(
+                "select id, name from clients where name like ? order by name limit 6", (f"%{' '.join(words[:count])}%",))]
+            if clients:
+                break
+
+    where, params = [], []
+    if term:
+        pattern = f"%{term}%"
+        fields = ["se.description", "cast(se.amount as text)", "se.entry_date", "se.currency", "se.kind",
+                  "coalesce(se.category_hint,'')", "coalesce(se.transfer_group,'')", "cast(se.source_no as text)"]
+        if client is None:
+            fields.append("c.name")
+        where.append("(" + " or ".join(f"{field} like ?" for field in fields) + ")")
+        params += [pattern] * len(fields)
+    if client is not None:
+        where.append("se.client_id = ?")
+        params.append(client["id"])
+    entries = db.execute(
+        f"""select se.id, se.client_id, c.name as client_name, se.entry_date,
+                   se.description, se.currency, se.direction, se.amount,
+                   se.source_no, se.kind, se.category_hint
+            from statement_entries se join clients c on se.client_id = c.id
+            where {" and ".join(where) or "1 = 1"}
+            order by se.entry_date desc, se.id desc
+            limit ?""",
+        (*params, GLOBAL_SEARCH_LIMIT),
     ).fetchall()
-    return jsonify([dict(r) for r in results])
+    return jsonify({
+        "client": {"id": client["id"], "name": client["name"]} if client is not None else None,
+        "term": term,
+        "clients": clients,
+        "entries": [dict(r) for r in entries],
+    })
 
 
 @app.route("/api/fx-refresh", methods=["POST"])

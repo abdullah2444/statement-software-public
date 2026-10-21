@@ -4,6 +4,34 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.16
+
+**Redesigned dashboard and statement page** (same colours, cleaner layout)
+- New, plainer look everywhere: the app now uses your device's own font (the
+  old one only existed on Windows, so iPhones showed a fallback), with
+  calmer corners and shadows.
+- **Dashboard:** one "Company position" panel with the total in RMB, the USD
+  and CNY figures and the exchange rates. Bank accounts, Suppliers and Expense
+  accounts are now three equal cards that list every account with its balance,
+  so nothing is hidden behind a click. Add or edit an account right in its
+  card with the **+** and pencil buttons.
+- **Clients** is a proper list: name, number of entries, last entry date and
+  the USD, CNY and RMB balances in neat columns. Click a row to open it.
+  Rename, delete and "take out of group" are in the **⋯** menu on each row.
+  Groups show their total with the statements underneath.
+- **New client** is one button: press it, type the name, press Enter. A name
+  that already exists is refused with a message instead of an error page.
+- **Search inside one client:** type the client's name first, then what you
+  are looking for, for example `Golden Gate freight`. The start of a name is
+  enough when only one client begins that way (`cairo samples`). You can also
+  pick a client from the suggestions; it then shows as a small tag in the
+  search box and every search stays inside that client until you press its ×.
+- **Statement page:** the client name, tools and balances are one header card;
+  the filters fit on one line; on phones each entry shows the description and
+  amount on one line, with the date and buttons under it.
+- Negative amounts now always read -$1,234.50 (never $-1,234.50), on screen
+  and in the PDF.
+
 ## 5.2.15
 
 **New app icon**

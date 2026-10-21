@@ -92,23 +92,12 @@
 
 {% macro mobile_card(row) %}
 <article class="mobile-entry-card" data-entry-id="{{ row.id }}">
-  <div class="mobile-entry-top">
-    <div>
-      <span class="mobile-entry-date">{{ row.entry_date }}</span>
-      <strong>#{{ row.source_no }}</strong>
-    </div>
-    <span class="mobile-entry-currency">{{ row.currency }}</span>
+  <div class="mobile-entry-main">
+    <strong class="mobile-entry-desc">{{ row.description }}</strong>
+    <strong class="mobile-entry-amount {% if row.direction == 'IN' %}money-in{% else %}money-out{% endif %}">{{ '+' if row.direction == 'IN' else '-' }}{{ (row.amount, row.currency)|money_with_symbol }}</strong>
   </div>
-  <div class="mobile-entry-desc">
-    <strong>{{ row.description }}</strong>
-  </div>
-  <div class="mobile-entry-amounts">
-    <div>
-      <span>{{ row.direction }}</span>
-      <strong class="{% if row.direction == 'IN' %}money-in{% else %}money-out{% endif %}">{{ (row.amount, row.currency)|money_with_symbol }}</strong>
-    </div>
-  </div>
-  <div class="mobile-entry-type">{{ type_badge(row) }}</div>
+  <div class="mobile-entry-foot">
+  <span class="mobile-entry-meta">{{ row.entry_date }} &middot; #{{ row.source_no }}{{ type_badge(row) }}</span>
   <div class="mobile-entry-actions">
     {{ commission_action(row) }}
     <a href="#entry-{{ row.id }}" data-edit-open="{{ row.id }}" class="icon-action" data-tip="Edit entry" aria-label="Edit entry">{{ icon_label('edit', 'Edit') }}</a>
@@ -116,6 +105,7 @@
       <input type="hidden" name="return_per_page" value="" data-return-shown>
       <button type="submit" class="icon-action is-danger" data-tip="Delete entry" aria-label="Delete entry">{{ icon_label('trash', 'Delete') }}</button>
     </form>
+  </div>
   </div>
 </article>
 {% endmacro %}
