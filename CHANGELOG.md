@@ -4,6 +4,13 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.10
+
+**Backups on this server**
+- Each backup now has a **Delete** button, so you can remove backups you no
+  longer need one by one. You're asked to confirm first, and the deletion is
+  recorded in the activity log.
+
 ## 5.2.9
 
 **Only one server does cloud backups**

@@ -5670,6 +5670,24 @@ def settings_download_database_backup(backup_name: str):
     return send_file(backup_path, as_attachment=True, download_name=backup_path.name)
 
 
+@app.route("/settings/database/backups/delete", methods=["POST"])
+@admin_required
+def settings_delete_database_backup():
+    backup_name = request.form.get("backup_name", "").strip()
+    if not backup_name:
+        flash("Choose a backup to delete.", "error")
+        return redirect(url_for("settings_page") + "#backup-restore")
+    backup_path = resolve_backup_path(backup_name)
+    when = database_file_info(backup_path)["when"]
+    try:
+        backup_path.unlink()
+    except OSError as exc:
+        flash(f"Could not delete the backup: {exc}", "error")
+        return redirect(url_for("settings_page") + "#backup-restore")
+    flash(f"Backup from {when} deleted.", "success")
+    return redirect(url_for("settings_page") + "#backup-restore")
+
+
 @app.route("/settings/database/backups/restore", methods=["POST"])
 @admin_required
 def settings_restore_database_backup():
