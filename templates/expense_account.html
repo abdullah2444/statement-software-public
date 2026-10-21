@@ -93,7 +93,7 @@
         <div class="client-title-block">
           <p class="eyebrow">Expense Account</p>
           <h1>{{ account.name }}</h1>
-          <p class="client-subtitle">{{ rows|length }} entr{{ 'ies' if rows|length != 1 else 'y' }} · {{ currencies|join(', ') }}</p>
+          <p class="client-subtitle">{{ account_entry_count }} entr{{ 'ies' if account_entry_count != 1 else 'y' }} · {{ per_page_raw|upper }} rows view · {{ currencies|join(', ') }}</p>
         </div>
         <div class="hero-actions">
           <a class="button ghost" href="{{ url_for('expense_list') }}">Back</a>
@@ -157,7 +157,7 @@
         {% endfor %}
         <div class="balance-card">
           <p class="balance-label">Total Entries</p>
-          <p class="balance-value" data-total="count">{{ rows|length }}</p>
+          <p class="balance-value" data-total="count">{{ account_entry_count }}</p>
         </div>
       </section>
 
@@ -172,6 +172,7 @@
           </div>
         </div>
         <form method="get" action="{{ url_for('expense_account_view', account_id=account.id) }}" class="form-grid filters-grid">
+          <input type="hidden" name="per_page" value="{{ per_page_raw }}">
           <label>
             <span>Search</span>
             <input type="text" name="q" value="{{ filters.q }}" placeholder="Search descriptions...">
@@ -286,6 +287,41 @@
           {% if filters.q or filters.category or filters.date_from or filters.date_to %}No entries match these filters.{% else %}No entries yet. Click <strong>Add Entry</strong> to record the first one.{% endif %}
         </div>
         {% endif %}
+      </section>
+
+      {% set page_args = dict(account_id=account.id, per_page=per_page_raw, q=filters.q, category=filters.category, date_from=filters.date_from, date_to=filters.date_to) %}
+      <section class="pager">
+        <div class="pager-info">
+          <span>Page {{ page }} / {{ total_pages }}</span>
+          <span>&middot;</span>
+          <span>{{ total_rows }} rows</span>
+        </div>
+        <div class="pager-actions">
+          {% if page > 1 %}
+          <a class="button ghost" href="{{ url_for('expense_account_view', page=page-1, **page_args) }}">Newer</a>
+          {% endif %}
+          <form method="get" class="pager-jump" data-per-page-form>
+            {% for key in ('q', 'category', 'date_from', 'date_to') %}<input type="hidden" name="{{ key }}" value="{{ filters[key] }}">{% endfor %}
+            <span>Lines</span>
+            <select name="per_page" style="width:auto;" data-per-page-select aria-label="Rows per page">
+              {% for value, label in [('10','10'), ('25','25'), ('50','50'), ('all','All')] %}
+              <option value="{{ value }}" {% if per_page_raw == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </form>
+          {% if total_pages > 1 %}
+          <form method="get" class="pager-jump">
+            <input type="hidden" name="per_page" value="{{ per_page_raw }}">
+            {% for key in ('q', 'category', 'date_from', 'date_to') %}<input type="hidden" name="{{ key }}" value="{{ filters[key] }}">{% endfor %}
+            <span>Go to</span>
+            <input type="number" name="page" min="1" max="{{ total_pages }}" value="{{ page }}">
+            <button class="button ghost" type="submit">Go</button>
+          </form>
+          {% endif %}
+          {% if page < total_pages %}
+          <a class="button ghost" href="{{ url_for('expense_account_view', page=page+1, **page_args) }}">Previous Page</a>
+          {% endif %}
+        </div>
       </section>
 
       <!-- Shared inline editor (moved under the row being edited) -->
@@ -498,6 +534,9 @@
           filtersToggle.textContent = isOpen ? 'Close Filters' : 'Open Filters';
         });
 
+        const perPageSelect = document.querySelector('[data-per-page-select]');
+        perPageSelect?.addEventListener('change', () => perPageSelect.form.submit());
+
         // -- Fold-out sections --
         document.querySelectorAll('[data-section-toggle]').forEach((toggle) => {
           const body = document.getElementById(toggle.getAttribute('aria-controls'));
@@ -547,38 +586,30 @@
           });
         }
 
-        // The cards on top, worked out from the rows on the page (only when no filter hides rows).
-        const filtered = {{ (filters.q or filters.category or filters.date_from or filters.date_to)|tojson }};
-        function refreshTotals() {
-          if (filtered) return;
-          const rows = tbody.querySelectorAll('.display-row');
+        function refreshTotals(data) {
           const count = document.querySelector('[data-total="count"]');
-          if (count) count.textContent = rows.length;
+          if (count && data.count !== undefined) count.textContent = data.count;
           CURRENCIES.forEach((cur) => {
-            let sumIn = 0, sumOut = 0;
-            rows.forEach((row) => {
-              if (row.dataset.currency !== cur) return;
-              if (row.dataset.direction === 'IN') sumIn += Number(row.dataset.amount); else sumOut += Number(row.dataset.amount);
-            });
-            const bal = sumIn - sumOut;
+            const totals = (data.totals || {})[cur];
+            if (!totals) return;
             const balNode = document.querySelector(`[data-total="bal"][data-cur="${cur}"]`);
             if (balNode) {
-              balNode.textContent = money(cur, bal);
-              balNode.className = 'balance-value' + (bal < -0.005 ? ' is-negative' : Math.abs(bal) <= 0.005 ? ' is-zero' : '');
+              balNode.textContent = money(cur, totals.balance);
+              balNode.className = 'balance-value' + (totals.balance < -0.005 ? ' is-negative' : Math.abs(totals.balance) <= 0.005 ? ' is-zero' : '');
             }
             const inNode = document.querySelector(`[data-total="in"][data-cur="${cur}"]`);
             const outNode = document.querySelector(`[data-total="out"][data-cur="${cur}"]`);
-            if (inNode) inNode.textContent = money(cur, sumIn);
-            if (outNode) outNode.textContent = money(cur, sumOut);
+            if (inNode) inNode.textContent = money(cur, totals.in);
+            if (outNode) outNode.textContent = money(cur, totals.out);
           });
         }
 
         function refreshBalances() {
-          refreshTotals();
           fetch('{{ url_for("expense_account_balances", account_id=account.id) }}')
             .then((r) => r.json())
             .then((data) => {
               if (!data.ok) return;
+              refreshTotals(data);
               tbody.querySelectorAll('.display-row').forEach((row) => {
                 const info = data.balances[row.dataset.entryId];
                 if (!info) return;

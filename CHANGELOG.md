@@ -14,6 +14,8 @@ so write them for the people using the app.
   like on client statements.
 - Rename, currencies and Delete account are tucked into the **Account** menu.
 - The balance cards update straight away when you add, edit or delete.
+- Entries are shown 10 at a time with the newest first, like client
+  statements. Pick 10, 25, 50 or All under **Lines**.
 - The Expenses page shows totals across all accounts and a **New Account**
   button.
 - On phones, entries show as easy-to-tap cards. The calculator is available
