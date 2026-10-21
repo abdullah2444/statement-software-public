@@ -6832,6 +6832,7 @@ def expense_list():
         "expenses.html",
         accounts=accounts,
         all_currencies=ALL_EXPENSE_CURRENCIES,
+        currency_symbol=currency_symbol,
     )
 
 
@@ -6859,6 +6860,33 @@ def expense_account_new():
     db.commit()
     account = db.execute("select id from expense_accounts where name = ?", (name,)).fetchone()
     return redirect(url_for("expense_account_view", account_id=account["id"]))
+
+
+EXPENSE_PER_PAGE_OPTIONS = ("10", "25", "50", "all")
+
+
+def newest_first_page(items: list, per_page_raw: str, page: int) -> tuple[list, int, int]:
+    """One page of a date-ordered list, the way client statements page: page 1 holds
+    the newest rows, and rows inside a page stay oldest first."""
+    if per_page_raw == "all" or not items:
+        return items, 1, 1
+    per_page = int(per_page_raw)
+    total_pages = (len(items) + per_page - 1) // per_page
+    page = min(max(page, 1), total_pages)
+    end = len(items) - (page - 1) * per_page
+    return items[max(end - per_page, 0):end], page, total_pages
+
+
+def expense_account_totals(entries, currencies: list[str]) -> dict:
+    totals = {cur: {"in": 0.0, "out": 0.0, "balance": 0.0} for cur in currencies}
+    for entry in entries:
+        bucket = totals.get(entry["currency"])
+        if bucket is None:
+            continue
+        bucket["in" if entry["direction"] == "IN" else "out"] += entry["amount"]
+    for bucket in totals.values():
+        bucket["balance"] = bucket["in"] - bucket["out"]
+    return totals
 
 
 @app.route("/expenses/accounts/<int:account_id>")
@@ -6901,20 +6929,18 @@ def expense_account_view(account_id):
         params,
     ).fetchall()
 
-    rows = annotate_expense_rows(db, expense_running_balances(all_entries, currencies))
+    per_page_raw = (request.args.get("per_page") or "10").strip().lower()
+    if per_page_raw not in EXPENSE_PER_PAGE_OPTIONS:
+        per_page_raw = "10"
+    all_rows = expense_running_balances(all_entries, currencies)
+    page_rows, page, total_pages = newest_first_page(all_rows, per_page_raw, request.args.get("page", 1, type=int))
+    rows = annotate_expense_rows(db, page_rows)
 
-    # Totals
-    totals = {}
-    for cur in currencies:
-        total_in = db.execute(
-            "select coalesce(sum(amount),0) from expense_entries where account_id=? and currency=? and direction='IN'",
-            (account_id, cur),
-        ).fetchone()[0]
-        total_out = db.execute(
-            "select coalesce(sum(amount),0) from expense_entries where account_id=? and currency=? and direction='OUT'",
-            (account_id, cur),
-        ).fetchone()[0]
-        totals[cur] = {"in": total_in, "out": total_out, "balance": total_in - total_out}
+    # Totals for the whole account, whatever the filters show
+    account_entries = db.execute(
+        "select currency, direction, amount from expense_entries where account_id = ?", (account_id,)
+    ).fetchall()
+    totals = expense_account_totals(account_entries, currencies)
 
     # Latest undo event
     latest_event = db.execute(
@@ -6934,6 +6960,11 @@ def expense_account_view(account_id):
         currencies=currencies,
         all_currencies=ALL_EXPENSE_CURRENCIES,
         rows=rows,
+        total_rows=len(all_rows),
+        account_entry_count=len(account_entries),
+        page=page,
+        total_pages=total_pages,
+        per_page_raw=per_page_raw,
         totals=totals,
         latest_event=latest_event,
         templates=templates,
@@ -7151,7 +7182,8 @@ def expense_account_balances(account_id):
     balances = {}
     for row in rows:
         balances[str(row["id"])] = {"running_balances": row["running_balances"], "seq_no": row["seq_no"]}
-    return jsonify({"ok": True, "balances": balances, "currencies": currencies})
+    return jsonify({"ok": True, "balances": balances, "currencies": currencies,
+                    "totals": expense_account_totals(all_entries, currencies), "count": len(all_entries)})
 
 
 @app.route("/expenses/accounts/<int:account_id>/undo", methods=["POST"])

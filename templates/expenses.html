@@ -7,157 +7,147 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=asset_version) }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css', v=asset_version) }}">
     <style>
-      .user-bar {
-        display: flex; align-items: center; gap: 16px;
-        justify-content: flex-end; padding: 8px 24px;
-        font-size: 13px; color: #6b7280;
-      }
-      .user-bar a,
-      .user-bar .nav-link-button { color: #1d4ed8; text-decoration: none; font-weight: 500; }
-      .user-bar a:hover,
-      .user-bar .nav-link-button:hover { text-decoration: underline; }
-
-      .shell { position: relative; }
-      .shell::before {
-        content: ""; position: fixed; inset: 0;
-        background:
-          radial-gradient(circle at top left, rgba(29,78,216,0.08), transparent 24%),
-          linear-gradient(180deg, #f8fafc 0%, #f3f6fb 100%);
-        z-index: -1;
-      }
-
-      .page-header {
-        display: flex; align-items: center; justify-content: space-between;
-        margin-bottom: 24px; padding: 24px 32px;
-        background: linear-gradient(135deg, #ffffff 0%, #f7faff 100%);
-        border: 1px solid #e2e8f0;
-        border-radius: 16px; color: #0f172a;
-        box-shadow: 0 12px 28px rgba(15,23,42,0.05);
-      }
-      .page-header h1 { font-size: 1.6rem; font-weight: 700; }
-      .page-header a { color: #1d4ed8; text-decoration: none; font-size: 0.9rem; font-weight: 600; }
-      .page-header a:hover { color: #1e40af; }
-
-      .create-form {
-        background: rgba(255,255,255,0.98); border-radius: 14px; padding: 24px 28px;
-        margin-bottom: 24px; border: 1px solid #e5e7eb;
-        box-shadow: 0 10px 24px rgba(15,23,42,0.06);
-      }
-      .create-form h3 { margin-bottom: 16px; font-size: 1rem; color: #1a1a1a; }
-      .create-form .form-row {
-        display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;
-      }
-      .create-form input[type="text"] {
-        padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
-        font-size: 0.9rem; min-width: 240px;
-      }
-      .create-form .currency-checks {
-        display: flex; gap: 12px; align-items: center;
-      }
-      .create-form .currency-checks label {
-        display: flex; gap: 4px; align-items: center;
-        font-size: 0.85rem; color: #374151; cursor: pointer;
-      }
-      .create-form button {
-        padding: 10px 20px; border: none; border-radius: 10px;
-        background: #1d4ed8; color: white; font-weight: 600;
-        font-size: 0.88rem; cursor: pointer;
-      }
-      .create-form button:hover { background: #1e40af; }
-
-      .accounts-grid {
-        display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-        gap: 16px;
-      }
+      /* Same building blocks as the client pages (styles.css). */
+      .expenses-page .client-metrics { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+      .expenses-page .hero-actions { display: flex; }
+      .accounts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
       .account-card {
-        background: rgba(255,255,255,0.98); border-radius: 14px; padding: 20px 24px;
-        border: 1px solid #e5e7eb; box-shadow: 0 10px 24px rgba(15,23,42,0.06);
-        text-decoration: none; color: inherit; transition: box-shadow 0.15s, transform 0.15s;
+        display: grid; gap: 12px; padding: 16px 18px;
+        border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,0.96);
+        color: inherit; text-decoration: none;
+        transition: border-color 0.15s, box-shadow 0.18s, transform 0.18s;
       }
-      .account-card:hover { box-shadow: 0 16px 34px rgba(15,23,42,0.08); transform: translateY(-1px); }
-      .account-card h3 { font-size: 1.1rem; color: #1d4ed8; margin-bottom: 8px; }
-      .account-card .meta { font-size: 0.8rem; color: #6b7280; margin-bottom: 12px; }
-      .account-card .balances { display: flex; gap: 16px; flex-wrap: wrap; }
-      .account-card .bal-item {
-        display: flex; flex-direction: column; gap: 2px;
-      }
-      .bal-item .cur-label { font-size: 0.7rem; text-transform: uppercase; color: #9ca3af; letter-spacing: 0.05em; }
-      .bal-item .cur-value { font-size: 1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
-      .bal-item .cur-value.negative { color: #dc2626; }
-      .bal-item .cur-value.positive { color: #059669; }
-
-      .empty-state {
-        text-align: center; padding: 48px 24px; color: #9ca3af;
-        font-size: 0.95rem;
+      .account-card:hover { border-color: var(--accent-2); box-shadow: 0 12px 24px rgba(16,58,70,0.10); transform: translateY(-1px); }
+      .account-card:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+      .account-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+      .account-card h2 { margin: 0; font-size: 1.05rem; color: var(--ink); }
+      .account-card .meta { margin: 3px 0 0; font-size: 0.82rem; color: var(--muted); }
+      .account-card .open-arrow { color: var(--muted); font-size: 1.1rem; line-height: 1; }
+      .account-balances { display: flex; gap: 20px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--line); }
+      .account-balances .balance-label { margin: 0 0 3px; font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+      .account-balances .balance-value { margin: 0; font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--green); }
+      .account-balances .balance-value.is-negative { color: var(--red); }
+      .account-balances .balance-value.is-zero { color: var(--muted); }
+      .empty-accounts { text-align: center; padding: 48px 16px; color: var(--muted); border: 1px dashed var(--line); border-radius: 8px; background: rgba(255,255,255,0.7); }
+      .empty-accounts .button { margin-top: 12px; }
+      .new-account-form { display: grid; gap: 14px; }
+      .new-account-form label { display: grid; gap: 6px; }
+      .new-account-form span.label { font-size: 0.78rem; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+      .currency-toggles { display: flex; gap: 16px; flex-wrap: wrap; }
+      .currency-toggles label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+      .section-title { display: flex; align-items: baseline; justify-content: space-between; margin: 18px 0 10px; }
+      .section-title h2 { margin: 0; font-size: 1rem; }
+      @media (max-width: 768px) {
+        .expenses-page .client-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .accounts-grid { grid-template-columns: 1fr; }
+        .expenses-page .hero-actions, .expenses-page .hero-actions .button { width: 100%; }
       }
     </style>
   </head>
   <body>
-    <div class="shell">
-      {% include '_nav.html' %}
+    {% include '_nav.html' %}
+    <main class="shell client-page expenses-page">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in messages %}
+      <div style="padding:10px 16px;border-radius:8px;margin-bottom:12px;font-size:0.9rem;{% if cat == 'error' %}background:var(--red-bg);color:var(--red);border:1px solid #f1c0c0;{% else %}background:var(--green-bg);color:var(--green);border:1px solid #b7e4d3;{% endif %}">{{ msg }}</div>
+      {% endfor %}
+      {% endwith %}
 
-      <div class="content-wrap" style="padding: 0 0 40px;">
-        <div class="page-header">
-          <div>
-            <h1>Company Expenses</h1>
-            <p style="opacity:0.7; font-size:0.88rem; margin-top:4px;">Track internal company costs: rent, salaries, insurance, and more.</p>
-          </div>
-          <a href="{{ url_for('index') }}">&larr; Back to Dashboard</a>
+      <section class="hero client-hero">
+        <div class="client-title-block">
+          <p class="eyebrow">Company Expenses</p>
+          <h1>Expense Accounts</h1>
+          <p class="client-subtitle">Rent, salaries, office costs and company profit, kept apart from client statements.</p>
         </div>
+        <div class="hero-actions">
+          <button class="button" type="button" data-add-entry-open>New Account</button>
+        </div>
+      </section>
 
-        {% with messages = get_flashed_messages(with_categories=true) %}
-          {% for category, message in messages %}
-            <div style="padding:12px 16px; margin-bottom:16px; border-radius:8px; font-size:0.9rem;
-              {% if category == 'error' %}background:#fef2f2; color:#dc2626; border:1px solid #fecaca;{% else %}background:#f0fdf4; color:#059669; border:1px solid #bbf7d0;{% endif %}">
-              {{ message }}
+      {% if accounts %}
+      <section class="balance-strip client-metrics">
+        {% for cur in all_currencies %}
+        {% set ns = namespace(total=0, used=false) %}
+        {% for acc in accounts %}{% if cur in acc.currencies %}{% set ns.used = true %}{% set ns.total = ns.total + acc.totals.get(cur, {}).get('balance', 0) %}{% endif %}{% endfor %}
+        {% if ns.used %}
+        <div class="balance-card">
+          <p class="balance-label">All accounts · {{ cur }}</p>
+          <p class="balance-value {% if ns.total < -0.005 %}is-negative{% elif ns.total|abs <= 0.005 %}is-zero{% endif %}">{{ currency_symbol(cur) }}{{ "{:,.2f}".format(ns.total) }}</p>
+        </div>
+        {% endif %}
+        {% endfor %}
+        <div class="balance-card">
+          <p class="balance-label">Accounts</p>
+          <p class="balance-value">{{ accounts|length }}</p>
+        </div>
+      </section>
+
+      <div class="accounts-grid">
+        {% for acc in accounts %}
+        <a class="account-card" href="{{ url_for('expense_account_view', account_id=acc.id) }}">
+          <div class="account-card-head">
+            <div>
+              <h2>{{ acc.name }}</h2>
+              <p class="meta">{{ acc.entry_count }} entr{{ 'ies' if acc.entry_count != 1 else 'y' }}</p>
             </div>
-          {% endfor %}
-        {% endwith %}
+            <span class="open-arrow" aria-hidden="true">&rsaquo;</span>
+          </div>
+          <div class="account-balances">
+            {% for cur in acc.currencies %}
+            {% set bal = acc.totals.get(cur, {}).get('balance', 0) %}
+            <div>
+              <p class="balance-label">{{ cur }}</p>
+              <p class="balance-value {% if bal < -0.005 %}is-negative{% elif bal|abs <= 0.005 %}is-zero{% endif %}">{{ currency_symbol(cur) }}{{ "{:,.2f}".format(bal) }}</p>
+            </div>
+            {% endfor %}
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty-accounts">
+        <p>No expense accounts yet.</p>
+        <button class="button" type="button" data-add-entry-open>Create the first account</button>
+      </div>
+      {% endif %}
 
-        <div class="create-form">
-          <h3>Create New Expense Account</h3>
-          <form method="post" action="{{ url_for('expense_account_new') }}">
-            <div class="form-row">
-              <input type="text" name="name" placeholder="Account name (e.g. Office, Cairo Branch)" required>
-              <div class="currency-checks">
+      <div class="entry-modal" data-add-entry-modal hidden>
+        <div class="entry-modal-panel" role="dialog" aria-modal="true" aria-labelledby="new-account-title">
+          <div class="entry-modal-head">
+            <h2 id="new-account-title">New Expense Account</h2>
+            <button class="entry-modal-close" type="button" data-add-entry-close aria-label="Close">&times;</button>
+          </div>
+          <form method="post" action="{{ url_for('expense_account_new') }}" class="new-account-form">
+            <label>
+              <span class="label">Account name</span>
+              <input type="text" name="name" placeholder="e.g. Office, Cairo Branch" required>
+            </label>
+            <div>
+              <span class="label">Currencies</span>
+              <div class="currency-toggles" style="margin-top:8px;">
                 {% for cur in all_currencies %}
-                  <label>
-                    <input type="checkbox" name="currencies" value="{{ cur }}" {% if cur == 'CNY' %}checked{% endif %}>
-                    {{ cur }}
-                  </label>
+                <label><input type="checkbox" name="currencies" value="{{ cur }}" {% if cur == 'CNY' %}checked{% endif %}> {{ cur }}</label>
                 {% endfor %}
               </div>
-              <button type="submit">Create Account</button>
+            </div>
+            <div class="modal-form-actions">
+              <button class="button" type="submit">Create Account</button>
+              <button class="button ghost" type="button" data-add-entry-close>Cancel</button>
             </div>
           </form>
         </div>
-
-        {% if accounts %}
-          <div class="accounts-grid">
-            {% for acc in accounts %}
-              <a class="account-card" href="{{ url_for('expense_account_view', account_id=acc.id) }}">
-                <h3>{{ acc.name }}</h3>
-                <div class="meta">{{ acc.entry_count }} entr{{ 'ies' if acc.entry_count != 1 else 'y' }}</div>
-                <div class="balances">
-                  {% for cur in acc.currencies %}
-                    {% set bal = acc.totals.get(cur, {}) %}
-                    <div class="bal-item">
-                      <span class="cur-label">{{ cur }}</span>
-                      <span class="cur-value {% if bal.get('balance', 0) < -0.005 %}negative{% elif bal.get('balance', 0) > 0.005 %}positive{% endif %}">
-                        {{ "{:,.2f}".format(bal.get('balance', 0)) }}
-                      </span>
-                    </div>
-                  {% endfor %}
-                </div>
-              </a>
-            {% endfor %}
-          </div>
-        {% else %}
-          <div class="empty-state">
-            <p>No expense accounts yet. Create one above to get started.</p>
-          </div>
-        {% endif %}
       </div>
-    </div>
+    </main>
+    <script>
+      (() => {
+        const modal = document.querySelector('[data-add-entry-modal]');
+        const open = () => { modal.hidden = false; document.body.classList.add('modal-open'); modal.querySelector('[name="name"]').focus(); };
+        const close = () => { modal.hidden = true; document.body.classList.remove('modal-open'); };
+        document.querySelectorAll('[data-add-entry-open]').forEach((btn) => btn.addEventListener('click', open));
+        document.querySelectorAll('[data-add-entry-close]').forEach((btn) => btn.addEventListener('click', close));
+        modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+        document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !modal.hidden) close(); });
+      })();
+    </script>
   </body>
 </html>
