@@ -1,0 +1,78 @@
+{# Settings → API tokens (super admins only). #}
+        <form method="POST" action="{{ url_for('admin_create_token') }}" class="settings-card" id="create-token" autocomplete="off">
+          {{ csrf_input() }}
+          <h2>Create an API token</h2>
+          <p>For outside tools and bots. The token is shown once; copy it straight away.</p>
+          <div class="field-row">
+            <div class="settings-field">
+              <label for="token-name">Name</label>
+              <input type="text" id="token-name" name="name" placeholder="e.g. Mobile app" autocomplete="off" data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other">
+            </div>
+            <div class="settings-field">
+              <label for="token-access">Access</label>
+              <select id="token-access" name="access_level">
+                <option value="full_control">Full control</option>
+                <option value="read_only">Read only</option>
+                <option value="client_portal">Client portal</option>
+              </select>
+            </div>
+            <div class="settings-field" id="token-client-field">
+              <label for="token-client">Client</label>
+              <select id="token-client" name="client_id">
+                <option value="">Choose client</option>
+                {% for client in token_clients %}
+                <option value="{{ client.id }}">{{ client.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <div class="card-actions">
+            <button type="submit" class="btn-save">Create token</button>
+          </div>
+        </form>
+
+        <div class="settings-card" id="api-tokens">
+          <div class="card-head">
+            <div>
+              <h2>API tokens</h2>
+              <div class="muted-line">{{ tokens|length }} token{{ '' if tokens|length == 1 else 's' }}</div>
+            </div>
+          </div>
+          {% if tokens %}
+          <ul class="list">
+            {% for t in tokens %}
+            <li class="list-row">
+              <div class="list-main">
+                <div class="list-title">
+                  {{ t.name }}
+                  <span class="pill pill-{{ 'ok' if t.is_active else 'bad' }}">{{ 'Active' if t.is_active else 'Revoked' }}</span>
+                </div>
+                <div class="list-sub">
+                  <span class="mono">{{ t.token_prefix }}</span> · {{ (t.access_level or 'full_control').replace('_', ' ').capitalize() }}{% if t.client_name %} · {{ t.client_name }}{% endif %}
+                  · last used {{ t.last_used_at[:16].replace('T', ' ') if t.last_used_at else 'never' }}
+                </div>
+              </div>
+              <div class="list-actions">
+                {% if t.is_active %}
+                <form method="POST" action="{{ url_for('admin_revoke_token', token_id=t.id) }}">
+                  {{ csrf_input() }}
+                  <button type="submit" class="btn-secondary btn-sm">Revoke</button>
+                </form>
+                {% else %}
+                <form method="POST" action="{{ url_for('admin_activate_token', token_id=t.id) }}">
+                  {{ csrf_input() }}
+                  <button type="submit" class="btn-secondary btn-sm">Activate</button>
+                </form>
+                {% endif %}
+                <form method="POST" action="{{ url_for('admin_delete_token', token_id=t.id) }}" onsubmit="return confirm('Delete this token permanently?')">
+                  {{ csrf_input() }}
+                  <button type="submit" class="btn-danger btn-sm">Delete</button>
+                </form>
+              </div>
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <div class="field-hint">No tokens yet.</div>
+          {% endif %}
+        </div>

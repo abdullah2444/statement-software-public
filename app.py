@@ -430,8 +430,8 @@ NAV_SECTIONS = {
     "quick_submit_page": "quick_submit", "quick_submit_history": "quick_submit",
     "expense_list": "expenses", "expense_account_view": "expenses",
     "expense_account_balances": "expenses", "expense_templates_list": "expenses",
-    "admin_users": "users", "admin_tokens": "tokens",
-    "settings_page": "settings", "change_password": "password",
+    "admin_users": "settings", "admin_tokens": "settings",
+    "settings_page": "settings", "change_password": "settings",
 }
 
 
@@ -446,6 +446,8 @@ def inject_template_helpers() -> dict:
         "csrf_token": get_csrf_token,
         "csrf_input": csrf_input,
         "app_brand_name": app_brand_name,
+        "is_admin": is_admin,
+        "is_super_admin": is_super_admin,
         "nav_section": NAV_SECTIONS.get(request.endpoint or "", ""),
     }
 
@@ -1544,7 +1546,7 @@ def _api_token_actor(row: sqlite3.Row) -> dict:
         "auth_type": "token",
         "access_level": access_level,
         "client_id": client_id,
-        "role": "admin" if access_level == API_ACCESS_FULL else "api",
+        "role": ROLE_SUPER if access_level == API_ACCESS_FULL else "api",
         "token_id": row["id"],
         "token_name": row["name"],
         "user": None,
@@ -1628,7 +1630,12 @@ def _api_actor_allows(actor: dict | None, access: str) -> bool:
         return actor["access_level"] == API_ACCESS_FULL
     if access == "admin":
         return actor["access_level"] == API_ACCESS_FULL and (
-            actor["auth_type"] == "token" or actor.get("role") == "admin"
+            actor["auth_type"] == "token" or actor.get("role") in ADMIN_ROLES
+        )
+    if access == "super_admin":
+        # Full-control API tokens keep full access, as before.
+        return actor["access_level"] == API_ACCESS_FULL and (
+            actor["auth_type"] == "token" or actor.get("role") == ROLE_SUPER
         )
     return False
 
@@ -1829,13 +1836,72 @@ def audit_web_write(response):
     return response
 
 
+# Roles. A super admin can do everything (what "admin" meant before 5.2.8).
+# An admin looks after users, backups and the login screen, but can't change
+# the app's set-up (updates, AI, exchange rate, API tokens, cloud keys).
+ROLE_SUPER = "super_admin"
+ROLE_ADMIN = "admin"
+ROLE_USER = "user"
+ROLES = (ROLE_SUPER, ROLE_ADMIN, ROLE_USER)
+ROLE_LABELS = {ROLE_SUPER: "Super admin", ROLE_ADMIN: "Admin", ROLE_USER: "User"}
+ADMIN_ROLES = (ROLE_SUPER, ROLE_ADMIN)
+
+
+def is_super_admin(user=None) -> bool:
+    user = user if user is not None else getattr(g, "user", None)
+    return bool(user) and user["role"] == ROLE_SUPER
+
+
+def is_admin(user=None) -> bool:
+    """Admin or super admin."""
+    user = user if user is not None else getattr(g, "user", None)
+    return bool(user) and user["role"] in ADMIN_ROLES
+
+
 def admin_required(f):
+    """Admins and super admins."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not g.user or g.user["role"] != "admin":
+        if not is_admin():
             abort(403)
         return f(*args, **kwargs)
     return decorated
+
+
+def super_admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not is_super_admin():
+            abort(403)
+        return f(*args, **kwargs)
+    return decorated
+
+
+def roles_assignable_by(actor) -> tuple[str, ...]:
+    """Which roles this person may give to others."""
+    if is_super_admin(actor):
+        return ROLES
+    if is_admin(actor):
+        return (ROLE_ADMIN, ROLE_USER)
+    return ()
+
+
+def user_change_problem(actor, target, new_role: str | None = None, *, removing: bool = False) -> str | None:
+    """Why actor may not change target (role, status, password or deletion), or None."""
+    if not is_admin(actor):
+        return "Only admins can manage users."
+    if target["role"] == ROLE_SUPER and not is_super_admin(actor):
+        return "Only a super admin can change a super admin."
+    if new_role is not None and new_role not in roles_assignable_by(actor):
+        return "Only a super admin can give someone the super admin role."
+    losing_super = target["role"] == ROLE_SUPER and (removing or (new_role is not None and new_role != ROLE_SUPER))
+    if losing_super:
+        others = get_db().execute(
+            "select count(*) from users where role = ? and is_active = 1 and id != ?", (ROLE_SUPER, target["id"])
+        ).fetchone()[0]
+        if not others:
+            return "There must always be at least one active super admin."
+    return None
 
 
 def init_db() -> None:
@@ -2028,7 +2094,7 @@ def init_db() -> None:
     if user_count == 0:
         if INITIAL_ADMIN_USERNAME and INITIAL_ADMIN_PASSWORD:
             db.execute(
-                "insert into users(username, password_hash, role, must_change_password, created_at) values (?, ?, 'admin', ?, ?)",
+                "insert into users(username, password_hash, role, must_change_password, created_at) values (?, ?, 'super_admin', ?, ?)",
                 (
                     INITIAL_ADMIN_USERNAME,
                     generate_password_hash(INITIAL_ADMIN_PASSWORD),
@@ -2040,7 +2106,7 @@ def init_db() -> None:
         else:
             bootstrap_password = secrets.token_urlsafe(12)
             db.execute(
-                "insert into users(username, password_hash, role, must_change_password, created_at) values (?, ?, 'admin', 1, ?)",
+                "insert into users(username, password_hash, role, must_change_password, created_at) values (?, ?, 'super_admin', 1, ?)",
                 ("admin", generate_password_hash(bootstrap_password), datetime.now(timezone.utc).isoformat()),
             )
             create_admin_bootstrap_file(bootstrap_password)
@@ -2117,6 +2183,7 @@ def init_db() -> None:
     db.execute("update api_audit_log set source = 'api' where source is null or source = ''")
     redact_existing_audit_log(db)
     remove_github_backup_settings(db)
+    convert_admins_to_super_admins(db)
     backfill_exchange_links(db)
     db.commit()
     db.close()
@@ -2124,6 +2191,20 @@ def init_db() -> None:
 
 
 AUDIT_REDACTION_MARKER = "audit_log_redacted_v1"
+
+
+ROLES_MARKER = "roles_super_admin_v1"
+
+
+def convert_admins_to_super_admins(db: sqlite3.Connection) -> int:
+    """Once (5.2.8): everyone who was an admin keeps all their rights as a super admin."""
+    if db.execute("select 1 from app_settings where key = ?", (ROLES_MARKER,)).fetchone():
+        return 0
+    changed = db.execute("update users set role = 'super_admin' where role = 'admin'").rowcount
+    db.execute("insert or replace into app_settings(key, value) values (?, ?)", (ROLES_MARKER, utc_timestamp()))
+    if changed:
+        print(f"[users] {changed} admin account(s) are now super admins.")
+    return changed
 
 
 def remove_github_backup_settings(db: sqlite3.Connection) -> int:
@@ -3515,12 +3596,19 @@ def change_password():
             end_other_sessions(db, g.user["id"], keep_current=True)
             db.commit()
             flash("Password changed successfully", "success")
+            if request.form.get("return_to") == "settings":
+                return redirect(url_for("settings_page") + "#password")
             return redirect(url_for("index"))
+        if request.form.get("return_to") == "settings":
+            return redirect(url_for("settings_page") + "#password")
+    if not g.user["must_change_password"]:
+        return redirect(url_for("settings_page") + "#password")
+    # A first sign-in or reset password still gets the simple page of its own.
     return render_template("change_password.html", forced=g.user["must_change_password"])
 
 
 @app.route("/reset-secret-key", methods=["POST"])
-@admin_required
+@super_admin_required
 def reset_secret_key():
     """Rotate the session secret and invalidate existing sessions."""
     if not RESET_SECRET_TOKEN:
@@ -3543,9 +3631,19 @@ def reset_secret_key():
 @app.route("/admin/users")
 @admin_required
 def admin_users():
-    db = get_db()
-    users = db.execute("select * from users order by id").fetchall()
-    return render_template("admin.html", users=users)
+    """Users now live in Settings."""
+    return redirect(url_for("settings_page") + "#users")
+
+
+def _users_redirect():
+    return redirect(url_for("settings_page") + "#users")
+
+
+def _target_user(user_id: int):
+    user = get_db().execute("select * from users where id = ?", (user_id,)).fetchone()
+    if not user:
+        abort(404)
+    return user
 
 
 @app.route("/admin/users/add", methods=["POST"])
@@ -3553,28 +3651,29 @@ def admin_users():
 def admin_add_user():
     username = request.form.get("username", "").strip()
     password = request.form.get("password", "").strip()
-    role = request.form.get("role", "user")
+    role = request.form.get("role", ROLE_USER)
     if not username or not password:
         flash("Username and password are required", "error")
-        return redirect(url_for("admin_users"))
+        return _users_redirect()
     problem = password_problem(password, username)
     if problem:
         flash(problem, "error")
-        return redirect(url_for("admin_users"))
-    if role not in ("admin", "user"):
-        role = "user"
+        return _users_redirect()
+    if role not in roles_assignable_by(g.user):
+        flash("Only a super admin can create a super admin.", "error")
+        return _users_redirect()
     db = get_db()
     existing = db.execute("select id from users where username = ?", (username,)).fetchone()
     if existing:
         flash(f"Username '{username}' already exists", "error")
-        return redirect(url_for("admin_users"))
+        return _users_redirect()
     db.execute(
         "insert into users(username, password_hash, role, must_change_password, created_at) values (?, ?, ?, 1, ?)",
         (username, generate_password_hash(password), role, datetime.now(timezone.utc).isoformat()),
     )
     db.commit()
     flash(f"User '{username}' created. They must change password on first login.", "success")
-    return redirect(url_for("admin_users"))
+    return _users_redirect()
 
 
 @app.route("/admin/users/<int:user_id>/toggle", methods=["POST"])
@@ -3582,15 +3681,19 @@ def admin_add_user():
 def admin_toggle_user(user_id):
     if user_id == g.user["id"]:
         flash("Cannot deactivate yourself", "error")
-        return redirect(url_for("admin_users"))
+        return _users_redirect()
+    user = _target_user(user_id)
+    problem = user_change_problem(g.user, user, removing=bool(user["is_active"]))
+    if problem:
+        flash(problem, "error")
+        return _users_redirect()
     db = get_db()
-    user = db.execute("select * from users where id = ?", (user_id,)).fetchone()
-    if not user:
-        abort(404)
     db.execute("update users set is_active = ? where id = ?", (0 if user["is_active"] else 1, user_id))
+    if user["is_active"]:
+        end_other_sessions(db, user_id)
     db.commit()
     flash(f"User '{user['username']}' {'activated' if not user['is_active'] else 'deactivated'}", "success")
-    return redirect(url_for("admin_users"))
+    return _users_redirect()
 
 
 @app.route("/admin/users/<int:user_id>/role", methods=["POST"])
@@ -3598,37 +3701,40 @@ def admin_toggle_user(user_id):
 def admin_change_role(user_id):
     if user_id == g.user["id"]:
         flash("Cannot change your own role", "error")
-        return redirect(url_for("admin_users"))
+        return _users_redirect()
+    user = _target_user(user_id)
+    new_role = request.form.get("role", "")
+    if new_role not in ROLES:
+        flash("Choose a role.", "error")
+        return _users_redirect()
+    problem = user_change_problem(g.user, user, new_role=new_role)
+    if problem:
+        flash(problem, "error")
+        return _users_redirect()
     db = get_db()
-    user = db.execute("select * from users where id = ?", (user_id,)).fetchone()
-    if not user:
-        abort(404)
-    new_role = "admin" if user["role"] == "user" else "user"
     db.execute("update users set role = ? where id = ?", (new_role, user_id))
     db.commit()
-    flash(f"User '{user['username']}' is now {new_role}", "success")
-    return redirect(url_for("admin_users"))
+    flash(f"User '{user['username']}' is now {ROLE_LABELS[new_role].lower()}", "success")
+    return _users_redirect()
 
 
 @app.route("/admin/users/<int:user_id>/reset-password", methods=["POST"])
 @admin_required
 def admin_reset_password(user_id):
     new_pw = request.form.get("new_password", "").strip()
-    db = get_db()
-    user = db.execute("select * from users where id = ?", (user_id,)).fetchone()
-    if not user:
-        abort(404)
-    problem = password_problem(new_pw, user["username"])
+    user = _target_user(user_id)
+    problem = user_change_problem(g.user, user) or password_problem(new_pw, user["username"])
     if problem:
         flash(problem, "error")
-        return redirect(url_for("admin_users"))
+        return _users_redirect()
+    db = get_db()
     db.execute("update users set password_hash = ?, must_change_password = 1 where id = ?",
                (generate_password_hash(new_pw), user_id))
     # Anyone still logged in as this user (for example on a lost phone) is logged out.
     end_other_sessions(db, user_id, keep_current=user_id == g.user["id"])
     db.commit()
     flash(f"Password reset for '{user['username']}'. They must change it on next login.", "success")
-    return redirect(url_for("admin_users"))
+    return _users_redirect()
 
 
 @app.route("/admin/users/<int:user_id>/delete", methods=["POST"])
@@ -3636,15 +3742,17 @@ def admin_reset_password(user_id):
 def admin_delete_user(user_id):
     if user_id == g.user["id"]:
         flash("Cannot delete yourself", "error")
-        return redirect(url_for("admin_users"))
+        return _users_redirect()
+    user = _target_user(user_id)
+    problem = user_change_problem(g.user, user, removing=True)
+    if problem:
+        flash(problem, "error")
+        return _users_redirect()
     db = get_db()
-    user = db.execute("select * from users where id = ?", (user_id,)).fetchone()
-    if not user:
-        abort(404)
     db.execute("delete from users where id = ?", (user_id,))
     db.commit()
     flash(f"User '{user['username']}' deleted", "success")
-    return redirect(url_for("admin_users"))
+    return _users_redirect()
 
 
 # --- Main routes ---
@@ -5308,52 +5416,109 @@ def api_fx_refresh():
 
 
 @app.route("/settings", methods=["GET"])
-@admin_required
 def settings_page():
     return render_settings_page()
 
 
+SETTINGS_TABS = {
+    # tab: who sees it
+    "updates": ROLE_SUPER,
+    "general": ROLE_ADMIN,      # admins see only the Login screen part
+    "ai": ROLE_SUPER,
+    "backups": ROLE_ADMIN,      # admins can back up and restore, not change the cloud keys
+    "users": ROLE_ADMIN,
+    "tokens": ROLE_SUPER,
+    "activity": ROLE_ADMIN,
+    "password": ROLE_USER,
+}
+ACTIVITY_LOG_ROWS = 200
+
+
+def settings_tabs_for(user) -> list[str]:
+    allowed = {ROLE_SUPER: ROLES, ROLE_ADMIN: (ROLE_ADMIN, ROLE_USER), ROLE_USER: (ROLE_USER,)}.get(user["role"], ())
+    return [tab for tab, needed in SETTINGS_TABS.items() if needed in allowed]
+
+
+def _activity_log_rows(limit: int = ACTIVITY_LOG_ROWS) -> list[dict]:
+    rows = []
+    for row in get_db().execute("select * from api_audit_log order by id desc limit ?", (limit,)).fetchall():
+        item = dict(row)
+        item["detail"] = json.loads(item["detail"]) if item["detail"] else {}
+        item["undo_data"] = json.loads(item["undo_data"]) if item["undo_data"] else None
+        rows.append(item)
+    return rows
+
+
 def render_settings_page(revealed_recovery_key: str = ""):
-    # Mask the API key for display
-    raw_key = get_openrouter_api_key()
-    masked_key = raw_key[:6] + "..." + raw_key[-4:] if len(raw_key) > 10 else raw_key
-    current_model = get_openrouter_model()
-    models = _fetch_openrouter_models(api_key=raw_key, current_model=current_model)
-    response = make_response(render_template(
-        "settings.html",
-        api_key_masked=masked_key,
-        api_key_set=bool(raw_key),
-        current_model=current_model,
-        models=models,
-        model_fetch_status=_openrouter_models_status(),
-        ai_features=[(key, label, ai_feature_enabled(key)) for key, label in AI_FEATURES.items()],
-        login_branding_saved={key: get_setting(key, "") for key in LOGIN_BRANDING_DEFAULTS},
-        login_branding_defaults=LOGIN_BRANDING_DEFAULTS,
-        login_branding_max_length=LOGIN_BRANDING_MAX_LENGTH,
-        login_logo_set=bool(get_setting("login_logo_file", "")),
-        login_logo_on_dark=logo_is_light(get_setting("login_logo_file", "")),
-        current_db_info=database_file_info(DB_PATH),
-        db_backups=list_database_backups(),
-        db_path_display=str(DB_PATH),
-        backup_dir_display=str(BACKUP_DIR),
-        fx_rate_source=get_setting("fx_rate_source", "live"),
-        fx_live_rate=get_setting("fx_live_rate", ""),
-        fx_live_rate_updated_at=get_setting("fx_live_rate_updated_at", ""),
-        cloud=cloud_backup_status(),
-        cloud_region=get_setting("cloud_backup_region", ""),
-        cloud_bucket=get_setting("cloud_backup_bucket", ""),
-        cloud_prefix=get_setting("cloud_backup_prefix", "") or CLOUD_BACKUP_DEFAULT_PREFIX,
-        cloud_key_id=get_setting("cloud_backup_key_id", ""),
-        cloud_app_key_set=bool(get_setting("cloud_backup_app_key", "")),
-        # The recovery key is shown until the admin confirms they saved it, or after re-entering their password.
-        cloud_recovery_key=(
-            revealed_recovery_key
-            or (get_setting("cloud_backup_recovery_key", "") if cloud_backup_configured()
-                and get_setting("cloud_backup_recovery_key_confirmed", "") != "1" else "")
-        ),
-        cloud_recovery_key_revealed=bool(revealed_recovery_key),
-        updates=software_update_status(),
-    ))
+    user = g.user
+    tabs = settings_tabs_for(user)
+    super_admin = is_super_admin(user)
+    context = {
+        "tabs": tabs,
+        "super_admin": super_admin,
+        "role_labels": ROLE_LABELS,
+        "forced_password_change": bool(user["must_change_password"]),
+    }
+    if "general" in tabs:
+        context.update(
+            login_branding_saved={key: get_setting(key, "") for key in LOGIN_BRANDING_DEFAULTS},
+            login_branding_defaults=LOGIN_BRANDING_DEFAULTS,
+            login_branding_max_length=LOGIN_BRANDING_MAX_LENGTH,
+            login_logo_set=bool(get_setting("login_logo_file", "")),
+            login_logo_on_dark=logo_is_light(get_setting("login_logo_file", "")),
+        )
+    if super_admin:
+        raw_key = get_openrouter_api_key()
+        current_model = get_openrouter_model()
+        context.update(
+            api_key_masked=raw_key[:6] + "..." + raw_key[-4:] if len(raw_key) > 10 else raw_key,
+            api_key_set=bool(raw_key),
+            current_model=current_model,
+            models=_fetch_openrouter_models(api_key=raw_key, current_model=current_model),
+            model_fetch_status=_openrouter_models_status(),
+            ai_features=[(key, label, ai_feature_enabled(key)) for key, label in AI_FEATURES.items()],
+            fx_rate_source=get_setting("fx_rate_source", "live"),
+            fx_live_rate=get_setting("fx_live_rate", ""),
+            fx_live_rate_updated_at=get_setting("fx_live_rate_updated_at", ""),
+            updates=software_update_status(),
+            cloud_region=get_setting("cloud_backup_region", ""),
+            cloud_bucket=get_setting("cloud_backup_bucket", ""),
+            cloud_prefix=get_setting("cloud_backup_prefix", "") or CLOUD_BACKUP_DEFAULT_PREFIX,
+            cloud_key_id=get_setting("cloud_backup_key_id", ""),
+            cloud_app_key_set=bool(get_setting("cloud_backup_app_key", "")),
+            # The recovery key is shown until the admin confirms they saved it, or after re-entering their password.
+            cloud_recovery_key=(
+                revealed_recovery_key
+                or (get_setting("cloud_backup_recovery_key", "") if cloud_backup_configured()
+                    and get_setting("cloud_backup_recovery_key_confirmed", "") != "1" else "")
+            ),
+            cloud_recovery_key_revealed=bool(revealed_recovery_key),
+            db_path_display=str(DB_PATH),
+            backup_dir_display=str(BACKUP_DIR),
+        )
+    if "backups" in tabs:
+        context.update(
+            current_db_info=database_file_info(DB_PATH),
+            db_backups=list_database_backups(),
+            cloud=cloud_backup_status(),
+        )
+    if "users" in tabs:
+        context.update(
+            users=get_db().execute("select * from users order by id").fetchall(),
+            assignable_roles=roles_assignable_by(user),
+        )
+    if "tokens" in tabs:
+        db = get_db()
+        context.update(
+            tokens=db.execute(
+                """select t.*, c.name as client_name from api_tokens t
+                left join clients c on c.id = t.client_id order by t.created_at desc"""
+            ).fetchall(),
+            token_clients=db.execute("select id, name from clients order by name").fetchall(),
+        )
+    if "activity" in tabs:
+        context["audit_log"] = _activity_log_rows()
+    response = make_response(render_template("settings.html", **context))
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -5361,6 +5526,11 @@ def render_settings_page(revealed_recovery_key: str = ""):
 @app.route("/settings", methods=["POST"])
 @admin_required
 def settings_save():
+    if not is_super_admin() and (
+        request.form.get("section") != "login-screen"
+        or any(request.form.get(key) for key in ("openrouter_api_key", "openrouter_model", "fx_rate_source", "ai_features_form"))
+    ):
+        abort(403)
     db = get_db()
     api_key = request.form.get("openrouter_api_key", "").strip()
     model = request.form.get("openrouter_model", "").strip()
@@ -5816,8 +5986,7 @@ def cloud_backup_alert() -> str:
 @app.context_processor
 def inject_cloud_backup_alert() -> dict:
     def alert() -> str:
-        user = getattr(g, "user", None)
-        if not user or user["role"] != "admin":
+        if not is_admin():
             return ""
         try:
             return cloud_backup_alert()
@@ -5871,7 +6040,7 @@ def _cloud_settings_redirect():
 
 
 @app.route("/settings/cloud-backup/save", methods=["POST"])
-@admin_required
+@super_admin_required
 def settings_cloud_backup_save():
     """Connect to the B2 bucket (creating the encrypted backup store if it is new) and save the settings."""
     form = request.form
@@ -5948,7 +6117,7 @@ def settings_cloud_backup_save():
 
 
 @app.route("/settings/cloud-backup/confirm-key", methods=["POST"])
-@admin_required
+@super_admin_required
 def settings_cloud_backup_confirm_key():
     key = get_setting("cloud_backup_recovery_key", "")
     typed = request.form.get("confirm_last4", "").strip().upper()
@@ -5961,7 +6130,7 @@ def settings_cloud_backup_confirm_key():
 
 
 @app.route("/settings/cloud-backup/reveal-key", methods=["POST"])
-@admin_required
+@super_admin_required
 def settings_cloud_backup_reveal_key():
     if not check_password_hash(g.user["password_hash"], request.form.get("current_password", "")):
         flash("Password is incorrect.", "error")
@@ -5970,7 +6139,7 @@ def settings_cloud_backup_reveal_key():
 
 
 @app.route("/settings/cloud-backup/disconnect", methods=["POST"])
-@admin_required
+@super_admin_required
 def settings_cloud_backup_disconnect():
     """Stop cloud backups and forget the saved keys. Backups already in the bucket are not touched."""
     if _cloud_job_lock.locked():
@@ -6305,8 +6474,7 @@ def software_update_notice() -> dict | None:
     """A banner for the top of every page, or None."""
     if update_paused():
         return {"kind": "paused", "text": "The software is being updated. Saving is paused for a few minutes."}
-    user = getattr(g, "user", None)
-    if not user or user["role"] != "admin":
+    if not is_super_admin():
         return None
     releases = available_updates()
     if releases and not update_in_progress():
@@ -6342,7 +6510,7 @@ def _updates_response(ok: bool, message: str, status: int = 200):
 
 
 @app.route("/settings/updates/check", methods=["POST"])
-@admin_required
+@super_admin_required
 def settings_updates_check():
     result = check_for_updates()
     if not result["ok"]:
@@ -6353,7 +6521,7 @@ def settings_updates_check():
 
 
 @app.route("/settings/updates/install", methods=["POST"])
-@admin_required
+@super_admin_required
 def settings_updates_install():
     target = (request.form.get("version") or (request.get_json(silent=True) or {}).get("version") or "").strip()
     release = next((r for r in available_updates() if r["version"] == target), None)
@@ -6374,7 +6542,7 @@ def settings_updates_install():
 
 
 @app.route("/settings/updates/resume", methods=["POST"])
-@admin_required
+@super_admin_required
 def settings_updates_resume():
     """Escape hatch: let people save again if the updater died and left saving paused."""
     if not update_paused():
@@ -6386,7 +6554,7 @@ def settings_updates_resume():
 
 
 @app.route("/api/updates/status")
-@admin_required
+@super_admin_required
 def api_updates_status():
     response = jsonify(software_update_status())
     response.headers["Cache-Control"] = "no-store"
@@ -6394,7 +6562,7 @@ def api_updates_status():
 
 
 @app.route("/reload", methods=["POST"])
-@admin_required
+@super_admin_required
 def reload_data():
     init_db()
     if seed_from_csv():
@@ -7008,26 +7176,12 @@ def expense_import_csv(account_id):
 @app.route("/admin/tokens")
 @admin_required
 def admin_tokens():
-    db = get_db()
-    tokens = db.execute(
-        """select t.*, c.name as client_name
-        from api_tokens t
-        left join clients c on c.id = t.client_id
-        order by t.created_at desc"""
-    ).fetchall()
-    clients = db.execute("select id, name from clients order by name").fetchall()
-    audit_rows = db.execute("select * from api_audit_log order by id desc limit 10").fetchall()
-    audit_log = []
-    for row in audit_rows:
-        item = dict(row)
-        item["detail"] = json.loads(item["detail"]) if item["detail"] else {}
-        item["undo_data"] = json.loads(item["undo_data"]) if item["undo_data"] else None
-        audit_log.append(item)
-    return render_template("admin_tokens.html", tokens=tokens, clients=clients, audit_log=audit_log)
+    """API tokens and the activity log now live in Settings."""
+    return redirect(url_for("settings_page") + ("#tokens" if is_super_admin() else "#activity"))
 
 
 @app.route("/admin/tokens/create", methods=["POST"])
-@admin_required
+@super_admin_required
 def admin_create_token():
     from hashlib import sha256
     name = request.form.get("name", "").strip() or "Unnamed Token"
@@ -7060,7 +7214,7 @@ def admin_create_token():
 
 
 @app.route("/admin/tokens/<int:token_id>/revoke", methods=["POST"])
-@admin_required
+@super_admin_required
 def admin_revoke_token(token_id):
     db = get_db()
     token = db.execute("select * from api_tokens where id = ?", (token_id,)).fetchone()
@@ -7073,7 +7227,7 @@ def admin_revoke_token(token_id):
 
 
 @app.route("/admin/tokens/<int:token_id>/activate", methods=["POST"])
-@admin_required
+@super_admin_required
 def admin_activate_token(token_id):
     db = get_db()
     token = db.execute("select * from api_tokens where id = ?", (token_id,)).fetchone()
@@ -7086,7 +7240,7 @@ def admin_activate_token(token_id):
 
 
 @app.route("/admin/tokens/<int:token_id>/delete", methods=["POST"])
-@admin_required
+@super_admin_required
 def admin_delete_token(token_id):
     db = get_db()
     token = db.execute("select * from api_tokens where id = ?", (token_id,)).fetchone()
@@ -8054,15 +8208,27 @@ def api_users():
     return jsonify({"users": [dict(u) for u in users]})
 
 
+def _api_acting_user() -> dict:
+    """Who is acting, for the user-management rules. A full-control token acts as a super admin."""
+    actor = getattr(g, "api_actor", None) or {}
+    if actor.get("user") is not None:
+        return actor["user"]
+    return {"id": None, "role": ROLE_SUPER if actor.get("access_level") == API_ACCESS_FULL else ""}
+
+
 @api_route("/api/v1/users", methods=["POST"], endpoint="api_create_user", access="admin")
 def api_create_user():
     data = _api_request_data()
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
-    role = data.get("role") if data.get("role") in {"admin", "user"} else "user"
+    role = data.get("role") or ROLE_USER
     must_change = 1 if parse_bool_flag(data.get("must_change_password", True)) else 0
     if not username:
         return _api_error("username is required", 400)
+    if role not in ROLES:
+        return _api_error(f"role must be one of: {', '.join(ROLES)}", 400)
+    if role not in roles_assignable_by(_api_acting_user()):
+        return _api_error("Only a super admin can create a super admin.", 403)
     problem = password_problem(password, username)
     if problem:
         return _api_error(problem, 400)
@@ -8088,10 +8254,17 @@ def api_update_user(user_id):
         return _api_error("User not found", 404)
     data = _api_request_data()
     role = data.get("role", user["role"])
-    if role not in {"admin", "user"}:
-        role = user["role"]
+    if role not in ROLES:
+        return _api_error(f"role must be one of: {', '.join(ROLES)}", 400)
     is_active = 1 if parse_bool_flag(data.get("is_active", user["is_active"])) else 0
     must_change = 1 if parse_bool_flag(data.get("must_change_password", user["must_change_password"])) else 0
+    problem = user_change_problem(
+        _api_acting_user(), user,
+        new_role=role if role != user["role"] else None,
+        removing=bool(user["is_active"]) and not is_active,
+    )
+    if problem:
+        return _api_error(problem, 403)
     before = _api_user_payload(user)
     db.execute(
         "update users set role = ?, is_active = ?, must_change_password = ? where id = ?",
@@ -8108,9 +8281,12 @@ def api_reset_user_password(user_id):
     data = _api_request_data()
     password = data.get("password") or ""
     db = get_db()
-    user = db.execute("select id, username from users where id = ?", (user_id,)).fetchone()
+    user = db.execute("select * from users where id = ?", (user_id,)).fetchone()
     if user is None:
         return _api_error("User not found", 404)
+    problem = user_change_problem(_api_acting_user(), user)
+    if problem:
+        return _api_error(problem, 403)
     problem = password_problem(password, user["username"])
     if problem:
         return _api_error(problem, 400)
@@ -8132,13 +8308,16 @@ def api_delete_user(user_id):
         return _api_error("User not found", 404)
     if g.api_actor and g.api_actor.get("user") is not None and int(g.api_actor["user"]["id"]) == user_id:
         return _api_error("You cannot delete your own user.", 409)
+    problem = user_change_problem(_api_acting_user(), user, removing=True)
+    if problem:
+        return _api_error(problem, 403)
     db.execute("delete from users where id = ?", (user_id,))
     db.commit()
     _api_log("delete_user", "user", user_id, _api_user_payload(user))
     return jsonify({"ok": True, "deleted_id": user_id})
 
 
-@api_route("/api/v1/tokens", methods=["GET"], access="admin")
+@api_route("/api/v1/tokens", methods=["GET"], access="super_admin")
 def api_tokens():
     db = get_db()
     tokens = db.execute(
@@ -8151,7 +8330,7 @@ def api_tokens():
     return jsonify({"tokens": [dict(t) for t in tokens]})
 
 
-@api_route("/api/v1/tokens", methods=["POST"], endpoint="api_create_token", access="admin")
+@api_route("/api/v1/tokens", methods=["POST"], endpoint="api_create_token", access="super_admin")
 def api_create_token():
     from hashlib import sha256
     data = _api_request_data()
@@ -8185,7 +8364,7 @@ def api_create_token():
     return jsonify({"ok": True, "token": raw_token, "token_record": dict(token)}), 201
 
 
-@api_route("/api/v1/tokens/<int:token_id>", methods=["PATCH"], endpoint="api_update_token", access="admin")
+@api_route("/api/v1/tokens/<int:token_id>", methods=["PATCH"], endpoint="api_update_token", access="super_admin")
 def api_update_token(token_id):
     data = _api_request_data()
     db = get_db()
@@ -8219,7 +8398,7 @@ def api_update_token(token_id):
     return jsonify({"ok": True, "token_record": dict(updated)})
 
 
-@api_route("/api/v1/tokens/<int:token_id>", methods=["DELETE"], endpoint="api_delete_token", access="admin")
+@api_route("/api/v1/tokens/<int:token_id>", methods=["DELETE"], endpoint="api_delete_token", access="super_admin")
 def api_delete_token(token_id):
     db = get_db()
     token = db.execute("select * from api_tokens where id = ?", (token_id,)).fetchone()

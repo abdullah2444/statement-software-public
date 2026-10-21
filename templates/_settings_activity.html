@@ -1,0 +1,73 @@
+{# Settings → Activity log (admins and super admins). #}
+        <div class="settings-card" id="activity-log">
+          <div class="card-head">
+            <div>
+              <h2>Activity log</h2>
+              <div class="muted-line">Latest {{ audit_log|length }} changes made by people and API tokens</div>
+            </div>
+          </div>
+          {% if audit_log %}
+          <div class="log-filter">
+            <select id="log-action-filter" aria-label="Action">
+              <option value="">All actions</option>
+              {% set actions_seen = [] %}
+              {% for entry in audit_log %}
+                {% if entry.action not in actions_seen %}
+                  {% if actions_seen.append(entry.action) %}{% endif %}
+                  <option value="{{ entry.action }}">{{ entry.action.replace('_', ' ').capitalize() }}</option>
+                {% endif %}
+              {% endfor %}
+            </select>
+            <select id="log-source-filter" aria-label="Source">
+              <option value="">People and tokens</option>
+              <option value="web">People</option>
+              <option value="api">API tokens</option>
+            </select>
+            <input type="text" id="log-search" placeholder="Search who, what, details…" autocomplete="off" data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other">
+            <span class="log-count" id="log-count"></span>
+          </div>
+          <ul class="list" id="audit-log-list">
+            {% for entry in audit_log %}
+            {% set d = entry.detail %}
+            <li class="list-row log-row{% if entry.undone %} undone{% endif %}"
+                data-action="{{ entry.action }}"
+                data-source="{{ entry.get('source') or 'api' }}"
+                data-actor="{{ (entry.get('actor_name') or entry.get('api_token_name') or 'legacy')|lower }}"
+                data-detail="{{ entry.detail|tojson|forceescape }}">
+              <div class="list-main">
+                <div class="list-title">
+                  {% if 'create' in entry.action %}{% set tone = 'ok' %}
+                  {% elif 'delete' in entry.action or 'revoke' in entry.action %}{% set tone = 'bad' %}
+                  {% elif 'update' in entry.action or 'restore' in entry.action or 'reset' in entry.action or 'change' in entry.action %}{% set tone = 'info' %}
+                  {% else %}{% set tone = 'muted' %}{% endif %}
+                  <span class="pill pill-{{ tone }}">{{ entry.action.replace('_', ' ') }}</span>
+                  <span>{{ entry.resource_type.replace('_', ' ') }}{% if entry.resource_id %} #{{ entry.resource_id }}{% endif %}</span>
+                  {% if entry.undone %}<span class="pill pill-muted">Undone</span>{% endif %}
+                </div>
+                <div class="list-sub log-detail" title="Click to see everything" onclick="this.classList.toggle('expanded')">
+                  {% if d.get('description') %}{{ d.description }} · {{ d.get('currency','') }} {{ d.get('amount','') }}
+                  {% elif d.get('name') %}{{ d.name }}
+                  {% elif d.get('account_name') %}{{ d.account_name }} (USD {{ d.get('usd_balance','') }}, CNY {{ d.get('cny_balance','') }})
+                  {% elif d.get('supplier_name') %}{{ d.supplier_name }} · {{ d.get('currency','') }} {{ d.get('amount_owed','') }}
+                  {% elif d.get('before') and d.get('after') %}Updated: {{ d.after.get('description', d.after.get('account_name', d.after.get('name', 'record'))) }}
+                  {% elif d.get('transfer_group') %}FX: {{ d.transfer_group }}
+                  {% elif d.get('form') %}{{ d.get('endpoint', 'web action') }} {{ d.form|tojson }}
+                  {% else %}{{ d|tojson }}{% endif %}
+                </div>
+              </div>
+              <div class="list-side">
+                {{ entry.created_at[:16].replace('T', ' ') }}<br>
+                {% if entry.get('actor_type') == 'api_token' %}{{ entry.get('actor_name') or entry.get('api_token_name') or 'Unknown token' }} · token
+                {% elif entry.get('actor_type') == 'user' %}{{ entry.get('actor_name') or 'Unknown user' }}
+                {% else %}older entry{% endif %}
+              </div>
+            </li>
+            {% endfor %}
+          </ul>
+          <div class="card-actions card-actions-left">
+            <button type="button" class="btn-secondary" id="log-more" hidden>Show more</button>
+          </div>
+          {% else %}
+          <div class="field-hint">No activity recorded yet.</div>
+          {% endif %}
+        </div>

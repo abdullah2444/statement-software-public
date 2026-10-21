@@ -305,7 +305,7 @@
           </div>
 
           <!-- Delete -->
-          {% if session.get('role') == 'admin' %}
+          {% if is_admin() %}
             <form method="post" action="{{ url_for('expense_account_delete', account_id=account.id) }}"
               onsubmit="return confirm('Delete this expense account and ALL its entries? This cannot be undone.')">
               <button type="submit" class="btn-danger" style="padding:6px 14px; border:1px solid #fca5a5; border-radius:6px; background:white; cursor:pointer;">Delete Account</button>

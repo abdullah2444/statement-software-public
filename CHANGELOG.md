@@ -4,6 +4,20 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.8
+
+**New: super admin**
+- Everyone who was an admin becomes a **super admin** and can still do everything.
+- **Admin** now means: login screen, cloud backup (back up and restore only),
+  backups on this server, users, activity log and password.
+- **User**: password only in Settings.
+- Only a super admin can create or change super admins, and there is always
+  at least one active super admin.
+
+**Settings**
+- Users, API tokens, the activity log and your password are now tabs in
+  Settings. The top menu is just Dashboard, Expenses and Settings.
+
 ## 5.2.7
 
 **Removed**

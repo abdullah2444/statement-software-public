@@ -355,6 +355,26 @@
       .btn-danger:hover { background: #fef2f2; }
       .settings-shell button:disabled { opacity: 0.55; cursor: not-allowed; }
 
+      .list-row-stack { display: block; }
+      .list-row-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+      details.manage { margin-top: 8px; border-top: none; padding-top: 0; }
+      .manage-grid { display: grid; gap: 10px; padding: 10px 0 4px; }
+      .inline-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0; }
+      .inline-row form { margin: 0; }
+      .inline-row select, .inline-row input { min-height: 34px; padding: 6px 10px; border: 1px solid #cfd8e3; border-radius: 8px; font-size: 14px; box-sizing: border-box; }
+      .inline-row input { width: 200px; }
+      .inline-row select { width: auto; min-width: 140px; }
+      .field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 16px; }
+      .field-row .settings-field input, .field-row .settings-field select { width: 100%; box-sizing: border-box; }
+      .settings-field input[type="password"] { width: 100%; padding: 10px 12px; border: 1px solid #cfd8e3; border-radius: 10px; font-size: 14px; box-sizing: border-box; }
+      .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+      .log-filter select { width: auto; flex: 0 0 auto; min-height: 36px; }
+      .log-filter input { flex: 1 1 180px; min-height: 36px; }
+      .log-row .log-detail { max-width: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; font-family: inherit; font-size: 13px; }
+      .log-row .log-detail.expanded { white-space: pre-wrap; overflow-wrap: anywhere; }
+      .log-row.undone .list-title { opacity: 0.55; text-decoration: line-through; }
+      .flash-token { background: #fffbeb; color: #78350f; border: 1px solid #f59e0b; overflow-wrap: anywhere; font-family: ui-monospace, Menlo, Consolas, monospace; }
+
       /* Secret keys show as dots without being "passwords" for password managers. */
       .secret-input { -webkit-text-security: disc; text-security: disc; }
 
@@ -396,13 +416,16 @@
 
       <div class="settings-layout">
         <nav class="settings-tabs" aria-label="Settings sections" role="tablist">
-          <a href="#updates" role="tab" data-tab="updates">Updates{% if updates.available %}<span class="tab-dot" title="Update available"></span>{% endif %}</a>
-          <a href="#general" role="tab" data-tab="general">General</a>
-          <a href="#ai" role="tab" data-tab="ai">AI</a>
-          <a href="#backups" role="tab" data-tab="backups">Backups{% if cloud.last_error %}<span class="tab-dot tab-dot-bad" title="Last cloud backup failed"></span>{% endif %}</a>
+          {% set tab_labels = {'updates': 'Updates', 'general': 'General' if super_admin else 'Login screen', 'ai': 'AI', 'backups': 'Backups', 'users': 'Users', 'tokens': 'API tokens', 'activity': 'Activity log', 'password': 'Password'} %}
+          {% for tab in tabs %}
+          <a href="#{{ tab }}" role="tab" data-tab="{{ tab }}">{{ tab_labels[tab] }}
+            {%- if tab == 'updates' and updates.available %}<span class="tab-dot" title="Update available"></span>{% endif %}
+            {%- if tab == 'backups' and cloud.last_error %}<span class="tab-dot tab-dot-bad" title="Last cloud backup failed"></span>{% endif %}</a>
+          {% endfor %}
         </nav>
 
         <div class="settings-panels">
+      {% if 'updates' in tabs %}
       <section class="settings-panel" data-panel="updates" role="tabpanel">
         <div class="settings-card" id="software-updates" data-last-run="{{ updates.run.id if updates.run.state != 'running' else '' }}">
           <div class="card-head">
@@ -496,8 +519,11 @@
           {% endif %}
         </div>
       </section>
+      {% endif %}
 
+      {% if 'general' in tabs %}
       <section class="settings-panel" data-panel="general" role="tabpanel">
+        {% if super_admin %}
         <form method="POST" action="{{ url_for('settings_save') }}" class="settings-card" id="exchange-rate" autocomplete="off">
           {{ csrf_input() }}
           <input type="hidden" name="section" value="exchange-rate">
@@ -537,6 +563,7 @@
             <button type="submit" class="btn-save">Save</button>
           </div>
         </form>
+        {% endif %}
 
         <form method="POST" action="{{ url_for('settings_save') }}" enctype="multipart/form-data" class="settings-card" id="login-screen" autocomplete="off">
           {{ csrf_input() }}
@@ -580,7 +607,9 @@
           </div>
         </form>
       </section>
+      {% endif %}
 
+      {% if 'ai' in tabs %}
       <section class="settings-panel" data-panel="ai" role="tabpanel">
         <form method="POST" action="{{ url_for('settings_save') }}" class="settings-card" id="ai-features" autocomplete="off">
           {{ csrf_input() }}
@@ -656,7 +685,9 @@
           </div>
         </form>
       </section>
+      {% endif %}
 
+      {% if 'backups' in tabs %}
       <section class="settings-panel" data-panel="backups" role="tabpanel">
       <div class="settings-card" id="cloud-backup">
         <h2>
@@ -673,7 +704,7 @@
         <div class="cloud-box cloud-box-error">The <strong>restic</strong> backup tool is not installed on this server. Rebuild the app with the latest Dockerfile, or install restic (<code>apt install restic</code>).</div>
         {% endif %}
 
-        {% if cloud_recovery_key %}
+        {% if super_admin and cloud_recovery_key %}
         <div class="cloud-box cloud-box-key">
           <strong>Your recovery key</strong>
           <div class="cloud-key mono" id="cloud-recovery-key">{{ cloud_recovery_key }}</div>
@@ -726,7 +757,10 @@
         </div>
         {% endif %}
 
-        {% if not cloud.configured %}
+        {% if not cloud.configured and not super_admin %}
+        <div class="cloud-box">Cloud backup isn't set up yet. A super admin can connect it.</div>
+        {% endif %}
+        {% if not cloud.configured and super_admin %}
         <div class="cloud-box cloud-box-help">
           <strong>How to set up (about 5 minutes)</strong>
           <ol>
@@ -739,6 +773,7 @@
         </div>
         {% endif %}
 
+        {% if super_admin %}
         {% if cloud.configured %}<details class="more"><summary>Connection and schedule</summary>{% endif %}
         <form method="POST" action="{{ url_for('settings_cloud_backup_save') }}" class="cloud-settings-form" autocomplete="off">
           {{ csrf_input() }}
@@ -800,8 +835,9 @@
           </div>
         </form>
         {% if cloud.configured %}</details>{% endif %}
+        {% endif %}
 
-        {% if cloud.configured %}
+        {% if cloud.configured and super_admin %}
         <div class="card-actions card-actions-left card-actions-split">
           {% if cloud.recovery_key_confirmed and not cloud_recovery_key_revealed %}
           <form method="POST" action="{{ url_for('settings_cloud_backup_reveal_key') }}" class="cloud-inline-form">
@@ -878,6 +914,7 @@
               <div class="field-hint">A full backup (.tar.gz) also restores receipt images; a database file (.db) does not.</div>
             </form>
           </details>
+          {% if super_admin %}
           <details class="more">
             <summary>Where files are stored</summary>
             <div class="more-body kv">
@@ -885,8 +922,32 @@
               <span>Backups</span><span class="mono">{{ backup_dir_display }}</span>
             </div>
           </details>
+          {% endif %}
         </div>
 
+      </section>
+      {% endif %}
+
+      {% if 'users' in tabs %}
+      <section class="settings-panel" data-panel="users" role="tabpanel">
+{% include '_settings_users.html' %}
+      </section>
+      {% endif %}
+
+      {% if 'tokens' in tabs %}
+      <section class="settings-panel" data-panel="tokens" role="tabpanel">
+{% include '_settings_tokens.html' %}
+      </section>
+      {% endif %}
+
+      {% if 'activity' in tabs %}
+      <section class="settings-panel" data-panel="activity" role="tabpanel">
+{% include '_settings_activity.html' %}
+      </section>
+      {% endif %}
+
+      <section class="settings-panel" data-panel="password" role="tabpanel">
+{% include '_settings_password.html' %}
       </section>
         </div>
       </div>
@@ -937,6 +998,44 @@
     })();
     </script>
     <script>
+    // Activity log: filter, and show 30 rows at a time.
+    (function () {
+      var list = document.getElementById('audit-log-list');
+      if (!list) return;
+      var rows = Array.prototype.slice.call(list.querySelectorAll('.log-row'));
+      var actionEl = document.getElementById('log-action-filter');
+      var sourceEl = document.getElementById('log-source-filter');
+      var searchEl = document.getElementById('log-search');
+      var countEl = document.getElementById('log-count');
+      var moreBtn = document.getElementById('log-more');
+      var limit = 30;
+      function apply() {
+        var action = actionEl.value, source = sourceEl.value, search = searchEl.value.toLowerCase();
+        var matches = rows.filter(function (row) {
+          var hay = (row.dataset.action + ' ' + row.dataset.actor + ' ' + row.dataset.detail).toLowerCase();
+          return (!action || row.dataset.action === action) && (!source || row.dataset.source === source) && (!search || hay.indexOf(search) !== -1);
+        });
+        rows.forEach(function (row) { row.style.display = 'none'; });
+        matches.slice(0, limit).forEach(function (row) { row.style.display = ''; });
+        countEl.textContent = matches.length + (matches.length === 1 ? ' entry' : ' entries');
+        moreBtn.hidden = matches.length <= limit;
+      }
+      [actionEl, sourceEl].forEach(function (el) { el.addEventListener('change', function () { limit = 30; apply(); }); });
+      searchEl.addEventListener('input', function () { limit = 30; apply(); });
+      moreBtn.addEventListener('click', function () { limit += 30; apply(); });
+      apply();
+    })();
+
+    // API tokens: the Client box only matters for client portal tokens.
+    (function () {
+      var access = document.getElementById('token-access');
+      var clientField = document.getElementById('token-client-field');
+      if (!access || !clientField) return;
+      function sync() { clientField.style.display = access.value === 'client_portal' ? '' : 'none'; }
+      access.addEventListener('change', sync);
+      sync();
+    })();
+
     var fxTestBtn = document.getElementById('fx-test-btn');
     var fxTestResult = document.getElementById('fx-test-result');
     if (fxTestBtn) {
@@ -1048,7 +1147,7 @@
           .catch(function(err) { rows.textContent = ''; rows.insertRow().insertCell().textContent = 'Network error: ' + err.message; });
       });
 
-      {% if cloud.job_running %}startPolling();{% endif %}
+      {% if cloud is defined and cloud.job_running %}startPolling();{% endif %}
     })();
     </script>
     <script>
@@ -1135,7 +1234,7 @@
         });
       }
 
-      {% if updates.in_progress %}startPolling();{% endif %}
+      {% if super_admin and updates.in_progress %}startPolling();{% endif %}
     })();
     </script>
   </body>
