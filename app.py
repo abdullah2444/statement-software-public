@@ -6832,6 +6832,7 @@ def expense_list():
         "expenses.html",
         accounts=accounts,
         all_currencies=ALL_EXPENSE_CURRENCIES,
+        currency_symbol=currency_symbol,
     )
 
 

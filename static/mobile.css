@@ -1036,7 +1036,7 @@
     font-size: 0.9rem !important;
   }
   .mobile-edit-btn { display: inline-flex !important; flex: 1; justify-content: center; align-items: center; }
-  .expense-table tr.edit-row.is-open { display: block; padding: 12px; background: #f0f4ff; }
+  .expense-table tr.edit-row.is-open { display: block; padding: 12px; background: var(--soft, #eef4f3); }
   .expense-table tr.edit-row td { display: block; }
   .expense-table .edit-form-grid { grid-template-columns: 1fr !important; }
   .expense-table .edit-actions { display: flex; gap: 8px; margin-top: 12px; }

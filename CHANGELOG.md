@@ -4,6 +4,25 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.12
+
+**Expenses look like the rest of the app**
+- Expense accounts now use the same layout as client statements: a header
+  with Back, Export and Account buttons, balance cards, the same filters, and
+  a ledger with Edit and Del buttons on every row.
+- **Add Entry** opens a pop-up with a clear "Money out / Money in" choice,
+  like on client statements.
+- Rename, currencies and Delete account are tucked into the **Account** menu.
+- The balance cards update straight away when you add, edit or delete.
+- The Expenses page shows totals across all accounts and a **New Account**
+  button.
+- On phones, entries show as easy-to-tap cards. The calculator is available
+  on expense accounts too.
+
+**One colour scheme**
+- Expenses, Settings, the login page and the password page now use the
+  app's teal colours instead of bright blue.
+
 ## 5.2.11
 
 **Your company name everywhere**
