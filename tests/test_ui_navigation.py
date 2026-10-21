@@ -47,7 +47,8 @@ class NavigationTests(unittest.TestCase):
     def test_menu_highlights_the_current_page(self):
         for path, label in (('/', 'Dashboard'), ('/settings', 'Settings'), ('/expenses/', 'Expenses'),
                             ('/quick-submit', 'Quick Submit')):
-            current = re.findall(r'aria-current="page">([^<]+)<', self.page(path))
+            # Phone menu links start with an icon: <svg ...>...</svg><span>Label</span>
+            current = re.findall(r'aria-current="page">(?:<svg.*?</svg><span>)?([^<]+)<', self.page(path), re.S)
             self.assertTrue(current, path)
             self.assertEqual(set(current), {label}, path)
 

@@ -143,6 +143,33 @@ class ScrollingLedgerTests(unittest.TestCase):
         self.assertEqual(sorted(v['usd'] for v in data['balances'].values()), [10.0, 20.0, 30.0])
         self.assertEqual(self.client.get('/clients/999999/rows').status_code, 404)
 
+    def test_commission_rows_show_company_status_instead_of_commission_button(self):
+        client_id = self.add_statement(0)
+        account_id = self.db.execute("insert into expense_accounts(name, enabled_currencies) values ('Office', 'USD')").lastrowid
+        rows = {}
+        for name, category, profit in (('Factory', 'factory_payment', None), ('Fee in', 'commission', account_id), ('Fee out', 'commission', None)):
+            rows[name] = self.db.execute(
+                "insert into statement_entries(client_id, source_no, entry_date, description, currency, direction,"
+                " amount, kind, category_hint, profit_expense_account_id) values (?, 0, '2026-05-01', ?, 'USD', 'OUT', 10, 'movement', ?, ?)",
+                (client_id, name, category, profit),
+            ).lastrowid
+        self.db.commit()
+        page = self.client.get(f'/clients/{client_id}').get_data(as_text=True)
+
+        def row_html(entry_id):
+            return page.split(f'id="entry-{entry_id}"')[1].split('</tr>')[0]
+
+        self.assertIn('data-commission-open', row_html(rows['Factory']))
+        self.assertNotIn('data-commission-open', row_html(rows['Fee in']))
+        self.assertIn('Added to company profit (Office)', row_html(rows['Fee in']))
+        self.assertNotIn('data-commission-open', row_html(rows['Fee out']))
+        self.assertIn('Not added to company profit', row_html(rows['Fee out']))
+        response = self.client.post(f'/clients/{client_id}/commission', data={
+            'csrf_token': 'csrf', 'source_entry_id': rows['Fee out'], 'commission_date': '2026-05-02', 'percentage': '5'})
+        self.assertEqual(response.status_code, 302)
+        self.assertIsNone(self.db.execute(
+            "select id from statement_entries where commission_source_entry_id = ?", (rows['Fee out'],)).fetchone())
+
     # --- Expense account ----------------------------------------------------------------
 
     def test_expense_account_scrolls_the_same_way(self):

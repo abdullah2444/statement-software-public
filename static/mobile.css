@@ -89,64 +89,133 @@
     background: rgba(0,0,0,0.4);
   }
 
+  .mobile-drawer.is-open .mobile-drawer-overlay { animation: drawer-fade 0.2s ease-out; }
+  .mobile-drawer.is-open .mobile-drawer-panel { animation: drawer-slide 0.22s ease-out; }
+  @keyframes drawer-fade { from { opacity: 0; } }
+  @keyframes drawer-slide { from { transform: translateX(-100%); } }
+
   .mobile-drawer-panel {
     position: absolute;
     top: 0;
     left: 0;
     bottom: 0;
-    width: min(300px, 80vw);
+    width: min(296px, 84vw);
+    padding: calc(14px + env(safe-area-inset-top, 0px)) 12px calc(14px + env(safe-area-inset-bottom, 0px));
+    box-sizing: border-box;
     background: #fff;
+    border-radius: 0 20px 20px 0;
     display: flex;
     flex-direction: column;
-    box-shadow: 4px 0 24px rgba(0,0,0,0.12);
+    gap: 6px;
+    box-shadow: 8px 0 32px rgba(15, 23, 42, 0.16);
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
 
+  /* Who is signed in, and a round close button */
   .mobile-drawer-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 20px;
-    border-bottom: 1px solid #e5e7eb;
+    gap: 10px;
+    padding: 4px 4px 14px 6px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid #edf1f2;
+  }
+  .mobile-drawer-who {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .mobile-drawer-avatar {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: #e8f2f2;
+    color: #0f5f62;
     font-weight: 700;
-    font-size: 1rem;
-    color: #0f172a;
   }
+  .mobile-drawer-names {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .mobile-drawer-names strong,
+  .mobile-drawer-names small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mobile-drawer-names strong { color: #103a46; font-size: 0.98rem; }
+  .mobile-drawer-names small { color: #6b7280; font-size: 0.78rem; }
   .mobile-drawer-header button {
-    background: none;
-    border: none;
-    font-size: 1.6rem;
-    color: #6b7280;
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: #f1f5f6;
+    color: #475569;
     cursor: pointer;
-    width: 44px;
-    height: 44px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 8px;
+    -webkit-appearance: none;
+    appearance: none;
   }
-  .mobile-drawer-header button:active { background: #f1f5f9; }
+  .mobile-drawer-header button svg { width: 18px; height: 18px; }
+  .mobile-drawer-header button:active { background: #e2e8ea; }
 
-  .mobile-drawer-panel a,
-  .mobile-drawer-panel .nav-link-button {
+  /* Menu items: icon + word, a soft pill for the current page */
+  .mobile-drawer-links {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .mobile-drawer-panel .mobile-drawer-links a,
+  .mobile-drawer-panel .mobile-drawer-logout .nav-link-button {
     display: flex;
     align-items: center;
-    padding: 14px 20px;
-    font-size: 0.95rem;
-    font-weight: 500;
-    color: #1f2937;
-    text-decoration: none;
-    border-bottom: 1px solid #f3f4f6;
+    gap: 12px;
+    width: 100%;
     min-height: 48px;
+    padding: 0 12px;
+    box-sizing: border-box;
+    border: 0;
+    border-radius: 12px;
+    color: #1f2937;
+    font-size: 0.95rem;
+    font-weight: 600;
+    text-align: left;
+    text-decoration: none;
   }
-  .mobile-drawer-panel a:active,
-  .mobile-drawer-panel .nav-link-button:active { background: #f8fafc; }
-  .mobile-drawer-logout {
-    color: #dc2626 !important;
+  .mobile-drawer-panel .mobile-drawer-links a svg,
+  .mobile-drawer-panel .mobile-drawer-logout svg {
+    width: 20px;
+    height: 20px;
+    flex: none;
+    color: #64748b;
+  }
+  .mobile-drawer-panel .mobile-drawer-links a:active { background: #f3f6f7; }
+  .mobile-drawer-panel .mobile-drawer-links a[aria-current="page"] {
+    background: #e8f2f2;
+    color: #0f5f62;
+  }
+  .mobile-drawer-panel .mobile-drawer-links a[aria-current="page"] svg { color: #0f5f62; }
+
+  /* Log out sits at the bottom, quiet until pressed */
+  .mobile-drawer-panel .mobile-drawer-logout {
     margin-top: auto;
-    border-top: 1px solid #e5e7eb !important;
+    padding-top: 8px;
+    border-top: 1px solid #edf1f2;
   }
+  .mobile-drawer-panel .mobile-drawer-logout .nav-link-button { color: #b42318; }
+  .mobile-drawer-panel .mobile-drawer-logout svg { color: #b42318; }
+  .mobile-drawer-panel .mobile-drawer-logout .nav-link-button:active { background: #fef2f2; }
 
   /* -- Shell / Layout -- */
   .shell,
@@ -428,21 +497,30 @@
   .client-subtitle {
     font-size: 0.8rem;
   }
+  .client-page .client-hero {
+    flex-direction: row !important;
+    flex-wrap: nowrap;
+    align-items: flex-start !important;
+  }
+  .client-page .client-title-block {
+    flex: 1;
+    width: auto;
+  }
   .client-page .hero-actions {
-    width: 100%;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    display: flex;
+    flex: none;
+    gap: 4px;
   }
-  .client-page .hero-actions > .button,
-  .client-page .hero-actions > .history-dropdown,
-  .client-page .hero-actions > form {
-    width: 100%;
-  }
-  .client-page .hero-actions .button,
-  .client-page .hero-actions a.button {
-    width: 100%;
-    min-width: 0;
+  .client-page .hero-actions > .history-dropdown { width: auto; }
+  /* The way back to the dashboard: "‹ Dashboard" above the client name */
+  .client-page .crumb-rest { display: none; }
+  .client-page .crumb-link { display: inline-flex; align-items: center; min-height: 28px; font-weight: 600; }
+  .client-page .crumb-link::before { content: "\2039"; margin-right: 5px; font-size: 1.3em; line-height: 1; }
+  .client-page .hero-actions .icon-action.is-tool {
+    min-width: 46px;
+    min-height: 46px;
+    padding: 4px;
+    background: #fff;
   }
   .client-metrics {
     grid-template-columns: 1fr !important;
@@ -633,7 +711,7 @@
     right: 14px !important;
     left: auto;
     top: auto !important;
-    bottom: 18px !important;
+    bottom: calc(18px + env(safe-area-inset-bottom, 0px)) !important;
     transform: none !important;
     width: 48px !important;
     height: 48px !important;
@@ -1211,7 +1289,7 @@
 
 /* Scrolling ledgers: the "Newest" button sits left on phones, clear of the calculator and row buttons */
 @media (max-width: 768px) {
-  .ledger-top { right: auto; left: 16px; bottom: 18px; }
+  .ledger-top { right: auto; left: 16px; }
   .ledger-feed { padding-bottom: 72px; }
 }
 

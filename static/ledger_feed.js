@@ -174,6 +174,8 @@
     trash: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>',
     percent: '<path d="M19 5 5 19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
     check: '<path d="M20 6 9 17l-5-5"/>',
+    company: '<path d="M4 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"/><path d="M16 9h2a2 2 0 0 1 2 2v10"/><path d="M3 21h18"/>'
+      + '<path d="M8 7h4"/><path d="M8 11h4"/><path d="M8 15h4"/>',
   };
 
   // Turns node into an icon button: tooltip text on hover, a small word under it on phones.

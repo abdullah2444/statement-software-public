@@ -2653,6 +2653,7 @@ def annotate_commission_rows(
         row_data["can_auto_commission"] = (
             row_data.get("direction") == "OUT"
             and not row_data.get("commission_source_entry_id")
+            and row_data.get("category_hint") != "commission"
             and not child
         )
         annotated.append(row_data)
@@ -2693,6 +2694,8 @@ def commission_error_message(
         return "Source entry does not belong to this client."
     if source_entry["commission_source_entry_id"]:
         return "Auto commission cannot start from a generated commission row."
+    if source_entry["category_hint"] == "commission":
+        return "Auto commission cannot start from a commission entry."
     if source_entry["direction"] != "OUT":
         return "Auto commission is only available for outgoing entries."
     if commission_child_entry(db, source_entry["id"]) is not None:

@@ -100,7 +100,8 @@
           const existing = actionsWrap.querySelector('[data-role="commission-action"]');
           if (existing) existing.remove();
 
-          const isCommissionRow = !!displayRow.dataset.commissionSourceEntryId;
+          // Same rules as commission_action() in _statement_rows.html
+          const isCommissionRow = !!displayRow.dataset.commissionSourceEntryId || displayRow.dataset.categoryHint === 'commission';
           const hasCommissionChild = !!displayRow.dataset.commissionChildId;
           const canAutoCommission = displayRow.dataset.direction === 'OUT' && !isCommissionRow && !hasCommissionChild;
 
@@ -113,9 +114,16 @@
           } else if (isCommissionRow || hasCommissionChild) {
             commissionNode = document.createElement('span');
             commissionNode.tabIndex = 0;
-            commissionNode.className = 'is-status';
-            if (isCommissionRow) window.iconAction(commissionNode, 'percent', 'This is a commission row', 'Comm. row');
-            else window.iconAction(commissionNode, 'check', 'Commission already added', 'Has comm.');
+            if (!isCommissionRow) {
+              commissionNode.className = 'is-status is-ok';
+              window.iconAction(commissionNode, 'check', 'Commission added', 'Has comm.');
+            } else if (displayRow.dataset.profitExpenseAccountId) {
+              commissionNode.className = 'is-status is-ok';
+              window.iconAction(commissionNode, 'company', 'Added to company profit', 'In company');
+            } else {
+              commissionNode.className = 'is-status is-off';
+              window.iconAction(commissionNode, 'company', 'Not added to company profit', 'Not added');
+            }
           }
           if (commissionNode) commissionNode.dataset.role = 'commission-action';
 
@@ -283,9 +291,12 @@
             const displayRow = document.querySelector('#entry-' + entryId);
             // The quick in-place update only refreshes the desktop table, so phones reload the page
             if (!displayRow || mobileSheetSource) { sharedForm.submit(); return; }
-            // A new date moves the row elsewhere in the list, so let the page reload around it
-            const dateChanged = formData.get('entry_date') !== displayRow.dataset.entryDate;
-            const isCommissionMutation = dateChanged ||
+            // A new date moves the row elsewhere in the list, and a new type or category changes
+            // its badge, so let the page reload around it
+            const needsReload = formData.get('entry_date') !== displayRow.dataset.entryDate
+              || formData.get('kind') !== displayRow.dataset.kind
+              || formData.get('category_hint') !== displayRow.dataset.categoryHint;
+            const isCommissionMutation = needsReload ||
               displayRow.dataset.categoryHint === 'commission' ||
               formData.get('category_hint') === 'commission' ||
               !!displayRow.dataset.profitExpenseEntryId ||
@@ -917,6 +928,7 @@
     {% if g.user %}
     {% include '_nav.html' %}
     {% import '_statement_rows.html' as ledger with context %}
+    {% from '_icons.html' import icon_label %}
     {% endif %}
     <main class="shell client-page">
       {% with messages = get_flashed_messages(with_categories=true) %}
@@ -928,14 +940,13 @@
       {% endwith %}
       <section class="hero client-hero">
         <div class="client-title-block">
-          <p class="eyebrow">Client Statement</p>
+          <p class="eyebrow"><a class="crumb-link" href="{{ url_for('index') }}">Dashboard</a><span class="crumb-rest"> / Client Statement</span></p>
           <h1>{{ client.name }}</h1>
           <p class="client-subtitle">{{ total_rows }} entr{{ 'ies' if total_rows != 1 else 'y' }} · newest first</p>
         </div>
         <div class="hero-actions">
-          <a class="button ghost" href="{{ url_for('index') }}">Back</a>
           <div class="history-dropdown export-dropdown" data-export-dropdown>
-            <a class="button ghost" href="#" data-export-toggle aria-expanded="false">Export</a>
+            <a class="icon-action is-tool" href="#" data-export-toggle aria-expanded="false" data-tip="Export (PDF, CSV, Excel)" aria-label="Export">{{ icon_label('download', 'Export') }}</a>
             <div class="history-popover export-popover">
               <div class="history-popover-head">Export Statement</div>
               <div class="export-menu">
@@ -946,7 +957,7 @@
             </div>
           </div>
           <div class="history-dropdown" data-history-dropdown>
-            <a class="button ghost" href="#" data-history-toggle aria-expanded="false">History</a>
+            <a class="icon-action is-tool" href="#" data-history-toggle aria-expanded="false" data-tip="Recent changes" aria-label="History">{{ icon_label('clock', 'History') }}</a>
             <div class="history-popover">
               <div class="history-popover-head">Recent Changes</div>
               {% if recent_events %}
@@ -967,7 +978,7 @@
           {% if latest_event %}
           <form method="post" action="{{ url_for('undo_last_change', client_id=client.id) }}" class="inline-delete">
             <input type="hidden" name="return_per_page" value="{{ rows|length }}" data-return-shown>
-            <button class="button ghost" type="submit">Undo</button>
+            <button class="icon-action is-tool" type="submit" data-tip="Undo last change" aria-label="Undo last change">{{ icon_label('undo', 'Undo') }}</button>
           </form>
           {% endif %}
         </div>
