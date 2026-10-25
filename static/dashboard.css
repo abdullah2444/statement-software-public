@@ -745,7 +745,7 @@ body.group-mode .clients-table .group-check { display: block; }
   #group-toggle-btn { flex: 0 0 auto; }
   .search-hint { margin: 8px 14px 12px; }
 
-  /* The client list becomes two-line rows: name on the left, balances on the right. */
+  /* The client list becomes two-line rows: name and ≈ RMB on the left, USD and CNY on the right. */
   .dash .clients-table,
   .dash .clients-table tbody,
   .dash .clients-table tr,
@@ -755,7 +755,7 @@ body.group-mode .clients-table .group-check { display: block; }
   .dash .clients-table tr.group-row {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto auto;
-    grid-template-areas: "check name usd menu" "check name cny menu";
+    grid-template-areas: "check name usd menu" "check rmb cny menu";
     align-items: center;
     column-gap: 8px;
     padding: 10px 6px 10px 14px;
@@ -766,11 +766,14 @@ body.group-mode .clients-table .group-check { display: block; }
   .dash .clients-table td.col-name { grid-area: name; min-width: 0 !important; }
   .dash .clients-table td.col-num:nth-of-type(3) { grid-area: usd; }
   .dash .clients-table td.col-num:nth-of-type(4) { grid-area: cny; }
-  .dash .clients-table td.col-rmb { display: none; }
+  .dash .clients-table td.col-rmb { grid-area: rmb; text-align: left; font-size: 0.8rem !important; font-weight: 500; }
+  .dash .clients-table td.col-rmb::before { content: "\2248  RMB "; color: var(--muted); font-weight: 400; }
   .dash .clients-table td.col-actions { grid-area: menu; width: auto; }
   .dash .clients-table .col-name a { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dash .client-row.is-parent .col-name,
-  .dash .client-row.is-child .col-name { padding-left: 18px !important; }
+  .dash .client-row.is-child .col-name,
+  .dash .client-row.is-parent td.col-rmb,
+  .dash .client-row.is-child td.col-rmb { padding-left: 18px !important; }
   .dash .client-row.is-parent .col-name::before,
   .dash .client-row.is-child .col-name::before { left: 4px; }
   body.group-mode .dash .clients-table td.col-check { padding: 0 6px 0 0 !important; width: auto; }

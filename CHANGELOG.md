@@ -4,6 +4,13 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.18
+
+**≈ RMB for each client on the phone**
+- On a phone, the client list now shows each client's approximate total in
+  RMB under their name, next to the USD and CNY balances. Before, it was only
+  shown on a computer.
+
 ## 5.2.17
 
 **Only real categories, and no more "Bad Request" when editing**
