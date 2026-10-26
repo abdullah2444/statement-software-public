@@ -130,6 +130,70 @@
 
 /* -- Phones ------------------------------------------------- */
 
+/* -- Orders: which order is shown, and closing / editing it -- */
+
+.client-page .order-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-bottom: 16px;
+  padding: 12px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--card-radius);
+  background: #fff;
+  box-shadow: var(--card-shadow);
+}
+.order-pick { margin: 0; }
+.order-pick label { display: flex; align-items: center; gap: 10px; margin: 0; }
+.order-pick-label { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.client-page .order-pick select { min-width: 220px; min-height: 38px; font-weight: 600; color: var(--accent); }
+.order-carry { margin: 0; font-size: 0.86rem; color: var(--muted); }
+.order-carry strong { margin-left: 6px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.order-carry strong.is-negative { color: var(--red); }
+.order-actions { display: flex; gap: 8px; margin-left: auto; }
+.order-menu { position: relative; }
+.order-menu > summary { list-style: none; cursor: pointer; }
+.order-menu > summary::-webkit-details-marker { display: none; }
+.order-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 30;
+  display: grid;
+  gap: 12px;
+  width: min(320px, calc(100vw - 32px));
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(19, 32, 40, 0.16);
+}
+.order-panel form { display: grid; gap: 12px; margin: 0; }
+.order-panel label { display: grid; gap: 6px; margin: 0; }
+.order-panel label span { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+.order-panel-title { margin: 0; font-weight: 700; color: var(--accent); }
+.order-panel-note { margin: 0; font-size: 0.82rem; color: var(--muted); line-height: 1.4; }
+.order-panel-actions { display: flex; justify-content: flex-end; }
+.order-panel-extra { padding-top: 12px; border-top: 1px solid #eef2f3; }
+.order-panel-extra .button { width: 100%; }
+.order-locked-note {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #fff8e6;
+  color: #7a5a12;
+  font-size: 0.86rem;
+}
+.order-empty { margin: 0; padding: 28px 16px; text-align: center; color: var(--muted); font-size: 0.9rem; }
+/* Someone who isn't an admin sees a closed order but can't change it. */
+.client-page.is-order-locked [data-add-entry-open],
+.client-page.is-order-locked [data-exchange-dropdown],
+.client-page.is-order-locked .actions-wrap,
+.client-page.is-order-locked .mobile-entry-actions,
+.client-page.is-order-locked a[data-commission-open] { display: none !important; }
+
 @media (max-width: 768px) {
   .client-page { padding-top: 12px !important; }
 
@@ -149,6 +213,16 @@
   .client-page .client-metrics .balance-card + .balance-card { border-left: 0; border-top: 1px solid #e8eef0; }
   .client-page .client-metrics .balance-label { margin: 0; }
   .client-page .client-metrics .balance-value { font-size: 1.1rem !important; }
+
+  .client-page .order-bar { padding: 12px 14px; margin-bottom: 12px; }
+  .order-pick, .order-pick label { width: 100%; }
+  .client-page .order-pick select { flex: 1; min-width: 0; min-height: 44px; font-size: 16px !important; }
+  .order-actions { width: 100%; margin-left: 0; }
+  .order-menu { flex: 1; }
+  .order-menu > summary { width: 100%; justify-content: center; }
+  .order-panel { left: 0; right: auto; }
+  .order-actions .order-menu:last-child .order-panel { left: auto; right: 0; }
+  .order-panel input { min-height: 44px; font-size: 16px !important; }
 
   .client-page .client-filters { padding: 10px !important; margin-bottom: 12px; }
   .client-page .client-filters .filters-head { display: flex !important; }

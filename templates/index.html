@@ -563,7 +563,7 @@
           data.entries.forEach((e) => {
             const link = item('a', 'sr-item sr-entry');
             link.setAttribute('role', 'option');
-            link.href = '/clients/' + encodeURIComponent(e.client_id) + '?per_page=all#entry-' + encodeURIComponent(e.id);
+            link.href = '/clients/' + encodeURIComponent(e.client_id) + '?per_page=all&order=' + encodeURIComponent(e.order_id || 'all') + '#entry-' + encodeURIComponent(e.id);
             const main = item('span', 'sr-main');
             main.append(item('span', 'sr-desc', e.description || ''),
                         item('span', 'sr-meta', (client ? '' : e.client_name + ' · ') + e.entry_date + ' · #' + e.source_no));

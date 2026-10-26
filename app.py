@@ -23,7 +23,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 import zoneinfo
 from zoneinfo import ZoneInfo
 
@@ -1436,6 +1436,10 @@ WEB_AUDIT_ACTIONS = {
     "ungroup_client": ("ungroup_client", "client"),
     "ungroup_all_children": ("ungroup_all_children", "client"),
     "rename_client": ("rename_client", "client"),
+    "close_order": ("close_order", "client"),
+    "edit_order": ("update_order", "client"),
+    "reopen_order": ("reopen_order", "client"),
+    "delete_order": ("delete_order", "client"),
     "add_bank_balance": ("create_bank_balance", "bank_balance"),
     "edit_bank_balance": ("update_bank_balance", "bank_balance"),
     "delete_bank_balance": ("delete_bank_balance", "bank_balance"),
@@ -2282,6 +2286,7 @@ def init_db() -> None:
     settle_cloud_backup_owner(db)
     backfill_exchange_links(db)
     move_old_categories(db)
+    setup_client_orders(db)
     db.commit()
     db.close()
     ensure_runtime_dirs()
@@ -2665,9 +2670,9 @@ def annotate_commission_rows(
 
 
 def statement_rows_with_commission_state(
-    db: sqlite3.Connection, client_id: int, entries: list[sqlite3.Row]
+    db: sqlite3.Connection, client_id: int, entries: list, start: tuple[float, float] = (0.0, 0.0)
 ) -> list[dict]:
-    rows = running_balances(entries)
+    rows = running_balances(entries, start)
     child_by_source, source_by_child = commission_relationship_maps(db, client_id)
     rows = annotate_commission_rows(rows, child_by_source, source_by_child)
     profit_account_ids = {
@@ -2748,8 +2753,8 @@ def create_commission_entry(
         """
         insert into statement_entries (
             client_id, source_no, entry_date, description, currency, direction,
-            amount, kind, category_hint, commission_source_entry_id
-        ) values (?, 0, ?, ?, ?, 'OUT', ?, 'movement', 'commission', ?)
+            amount, kind, category_hint, commission_source_entry_id, order_id
+        ) values (?, 0, ?, ?, ?, 'OUT', ?, 'movement', 'commission', ?, ?)
         """,
         (
             source_entry["client_id"],
@@ -2758,6 +2763,7 @@ def create_commission_entry(
             source_entry["currency"],
             amount,
             source_entry["id"],
+            source_entry["order_id"] if "order_id" in source_entry.keys() else None,
         ),
     )
     created_id = cursor.lastrowid
@@ -3259,9 +3265,8 @@ def resequence_all_clients() -> None:
     db.close()
 
 
-def running_balances(entries: list[sqlite3.Row]) -> list[dict]:
-    usd = 0.0
-    cny = 0.0
+def running_balances(entries: list[sqlite3.Row], start: tuple[float, float] = (0.0, 0.0)) -> list[dict]:
+    usd, cny = start
     rows: list[dict] = []
     for entry in entries:
         amount = float(entry["amount"])
@@ -3299,6 +3304,216 @@ def running_balances(entries: list[sqlite3.Row]) -> list[dict]:
     return rows
 
 
+# A client's statement is split into orders. Every client starts with "Order 1";
+# closing the newest order starts the next one, and whatever balance is left
+# carries over as the next order's starting balance. Orders only group entries:
+# the client's total balance is still the sum of all of them.
+
+# The order new entries go to: the newest open one, or the newest if all are closed.
+CURRENT_ORDER_SQL = (
+    "select id from client_orders where client_id = {client} "
+    "order by (closed_at is null) desc, seq_no desc limit 1"
+)
+CLOSED_ORDER_MESSAGE = "This order is closed. Only an admin can change it."
+
+
+def setup_client_orders(db: sqlite3.Connection) -> None:
+    db.execute(
+        """
+        create table if not exists client_orders (
+            id integer primary key autoincrement,
+            client_id integer not null references clients(id),
+            seq_no integer not null,
+            name text not null,
+            closed_at text,
+            created_at text not null default ''
+        )
+        """
+    )
+    db.execute("create index if not exists idx_client_orders_client on client_orders(client_id, seq_no)")
+    entry_columns = {row[1] for row in db.execute("pragma table_info(statement_entries)").fetchall()}
+    if "order_id" not in entry_columns:
+        db.execute("alter table statement_entries add column order_id integer")
+    db.execute("create index if not exists idx_statement_entries_order on statement_entries(order_id)")
+    # Triggers so every way of adding clients and entries (pages, API, bots,
+    # imports, undo) gets an order without each one having to know about orders.
+    wrong_order = "new.order_id is null or new.order_id not in (select id from client_orders where client_id = new.client_id)"
+    set_current = (
+        "update statement_entries set order_id = ("
+        + CURRENT_ORDER_SQL.format(client="new.client_id")
+        + ") where id = new.id;"
+    )
+    db.execute(
+        """
+        create trigger if not exists client_orders_first after insert on clients
+        begin
+            insert into client_orders(client_id, seq_no, name, created_at)
+            values (new.id, 1, 'Order 1', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+        end
+        """
+    )
+    db.execute(
+        """
+        create trigger if not exists client_orders_cleanup after delete on clients
+        begin
+            delete from client_orders where client_id = old.id;
+        end
+        """
+    )
+    db.execute(
+        f"""
+        create trigger if not exists statement_entries_default_order after insert on statement_entries
+        when {wrong_order}
+        begin
+            {set_current}
+        end
+        """
+    )
+    db.execute(
+        f"""
+        create trigger if not exists statement_entries_moved_client after update of client_id, order_id on statement_entries
+        when {wrong_order}
+        begin
+            {set_current}
+        end
+        """
+    )
+    # Clients and entries from before orders existed, or from a restored older backup.
+    db.execute(
+        """
+        insert into client_orders(client_id, seq_no, name, created_at)
+        select c.id, 1, 'Order 1', ? from clients c
+        where not exists (select 1 from client_orders o where o.client_id = c.id)
+        """,
+        (utc_timestamp(),),
+    )
+    db.execute("delete from client_orders where client_id not in (select id from clients)")
+    db.execute(
+        "update statement_entries set order_id = ("
+        + CURRENT_ORDER_SQL.format(client="statement_entries.client_id")
+        + ") where order_id is null or order_id not in "
+        "(select id from client_orders where client_id = statement_entries.client_id)"
+    )
+
+
+def client_orders(db: sqlite3.Connection, client_id: int) -> list[dict]:
+    rows = db.execute(
+        """
+        select o.*, (select count(*) from statement_entries e where e.order_id = o.id) as entry_count
+        from client_orders o where o.client_id = ? order by o.seq_no
+        """,
+        (client_id,),
+    ).fetchall()
+    return [{**dict(row), "is_open": row["closed_at"] is None} for row in rows]
+
+
+def current_order_id(db: sqlite3.Connection, client_id: int) -> int | None:
+    row = db.execute(CURRENT_ORDER_SQL.format(client="?"), (client_id,)).fetchone()
+    return row["id"] if row else None
+
+
+def client_order(db: sqlite3.Connection, client_id: int, order_id: int | None) -> sqlite3.Row | None:
+    if not order_id:
+        return None
+    return db.execute(
+        "select * from client_orders where id = ? and client_id = ?", (order_id, client_id)
+    ).fetchone()
+
+
+def selected_order(db: sqlite3.Connection, client_id: int, orders: list[dict], raw: str | None) -> dict | None:
+    """The order a statement page shows: ?order=<id>, ?order=all (None), or the current order."""
+    raw = (raw or "").strip()
+    if raw == "all":
+        return None
+    by_id = {order["id"]: order for order in orders}
+    if raw.isdigit() and int(raw) in by_id:
+        return by_id[int(raw)]
+    return by_id.get(current_order_id(db, client_id))
+
+
+def order_opening_balance(db: sqlite3.Connection, order: dict | None) -> tuple[float, float]:
+    """What the client's earlier orders leave over: this order's starting USD and CNY balance."""
+    if order is None:
+        return 0.0, 0.0
+    row = db.execute(
+        """
+        select
+            coalesce(sum(case when e.currency = 'USD' then
+                case when e.direction = 'IN' then e.amount else -e.amount end end), 0) as usd,
+            coalesce(sum(case when e.currency = 'CNY' then
+                case when e.direction = 'IN' then e.amount else -e.amount end end), 0) as cny
+        from statement_entries e join client_orders o on o.id = e.order_id
+        where o.client_id = ? and o.seq_no < ?
+        """,
+        (order["client_id"], order["seq_no"]),
+    ).fetchone()
+    return round(row["usd"], 2) + 0.0, round(row["cny"], 2) + 0.0
+
+
+def order_closed_for_user(db: sqlite3.Connection, order_id: int | None) -> bool:
+    """True when the order is closed and the person is not an admin, so they may not change it."""
+    if not order_id or is_admin():
+        return False
+    row = db.execute("select closed_at from client_orders where id = ?", (order_id,)).fetchone()
+    return bool(row and row["closed_at"])
+
+
+def entry_order_closed_for_user(db: sqlite3.Connection, entry_id: int | None) -> bool:
+    if not entry_id:
+        return False
+    row = db.execute("select order_id from statement_entries where id = ?", (entry_id,)).fetchone()
+    return bool(row) and order_closed_for_user(db, row["order_id"])
+
+
+def carried_balance_rows(order: dict, opening: tuple[float, float]) -> list[dict]:
+    """Rows that start an exported order with the balance carried over from earlier orders."""
+    rows = []
+    for currency, value in (("USD", opening[0]), ("CNY", opening[1])):
+        if abs(value) < 0.005:
+            continue
+        rows.append({
+            "id": None,
+            "client_id": order["client_id"],
+            "source_no": "",
+            "entry_date": "",
+            "description": f"Balance brought forward from earlier orders ({currency})",
+            "currency": currency,
+            "direction": "IN" if value > 0 else "OUT",
+            "amount": abs(value),
+            "kind": "movement",
+            "category_hint": UNCATEGORIZED,
+            "transfer_group": None,
+            "exchange_rate": None,
+            "linked_entry_id": None,
+            "image_path": None,
+            "commission_source_entry_id": None,
+            "profit_expense_entry_id": None,
+            "profit_expense_account_id": None,
+            "order_id": order["id"],
+            "is_carried_balance": True,
+        })
+    return rows
+
+
+def statement_view(db: sqlite3.Connection, client_id: int, args) -> tuple[dict, str, list[dict], dict | None, tuple[float, float]]:
+    """Filters, view mode, the client's orders, the order shown, and its starting balance."""
+    filters, view_mode = statement_filters_from_args(args)
+    orders = client_orders(db, client_id)
+    order = selected_order(db, client_id, orders, args.get("order"))
+    filters["order"] = str(order["id"]) if order else "all"
+    filters["order_id"] = order["id"] if order else None
+    return filters, view_mode, orders, order, order_opening_balance(db, order)
+
+
+def _referrer_arg(name: str) -> str:
+    """A query value of the page the form was sent from, when it is one of our pages."""
+    referrer = request.referrer or ""
+    parsed = urlparse(referrer)
+    if not referrer or parsed.netloc != request.host:
+        return ""
+    return (parse_qs(parsed.query).get(name) or [""])[0]
+
+
 def row_to_dict(row: sqlite3.Row) -> dict:
     return {
         "id": row["id"],
@@ -3318,6 +3533,7 @@ def row_to_dict(row: sqlite3.Row) -> dict:
         "profit_expense_entry_id": row["profit_expense_entry_id"] if "profit_expense_entry_id" in row.keys() else None,
         "profit_expense_account_id": row["profit_expense_account_id"] if "profit_expense_account_id" in row.keys() else None,
         "image_path": row["image_path"] if "image_path" in row.keys() else None,
+        "order_id": row["order_id"] if "order_id" in row.keys() else None,
     }
 
 
@@ -4140,6 +4356,9 @@ def statement_filtered_entries(db: sqlite3.Connection, client_id: int, filters: 
     if filters["date_to"]:
         clauses.append("entry_date <= ?")
         params.append(filters["date_to"])
+    if filters.get("order_id"):
+        clauses.append("order_id = ?")
+        params.append(filters["order_id"])
     where_sql = " and ".join(clauses)
     return db.execute(
         f"select * from statement_entries where {where_sql} order by entry_date, id", params
@@ -4155,14 +4374,14 @@ def client_statement(client_id: int):
     commission_expense_accounts = expense_account_options(db)
     default_profit_account_id = default_profit_expense_account_id(commission_expense_accounts)
 
-    filters, view_mode = statement_filters_from_args(request.args)
+    filters, view_mode, orders, order, opening = statement_view(db, client_id, request.args)
     shown = ledger_shown_count(request.args.get("per_page"), request.args.get("page", type=int))
     all_entries = statement_filtered_entries(db, client_id, filters)
     total_rows = len(all_entries)
 
-    rows = statement_rows_with_commission_state(db, client_id, all_entries)
-    current_usd_balance = rows[-1]["running_usd"] if rows else 0.0
-    current_cny_balance = rows[-1]["running_cny"] if rows else 0.0
+    rows = statement_rows_with_commission_state(db, client_id, all_entries, opening)
+    current_usd_balance = rows[-1]["running_usd"] if rows else opening[0]
+    current_cny_balance = rows[-1]["running_cny"] if rows else opening[1]
     fx_summary = exchange_rate_summary()
     approx_total_rmb = None
     if fx_summary.get("display_rate") is not None:
@@ -4193,6 +4412,11 @@ def client_statement(client_id: int):
         default_profit_account_id=default_profit_account_id,
         quick_submit_id=request.args.get("quick_submit_id", type=int),
         quick_submit=_get_quick_submit(request.args.get("quick_submit_id", type=int)),
+        orders=orders,
+        order=order,
+        opening=opening,
+        order_locked=order is not None and order_closed_for_user(db, order["id"]),
+        is_admin=is_admin(),
     )
 
 
@@ -4202,9 +4426,9 @@ def client_statement_rows(client_id: int):
     db = get_db()
     if db.execute("select 1 from clients where id = ?", (client_id,)).fetchone() is None:
         abort(404)
-    filters, view_mode = statement_filters_from_args(request.args)
+    filters, view_mode, _, _, opening = statement_view(db, client_id, request.args)
     all_entries = statement_filtered_entries(db, client_id, filters)
-    rows = statement_rows_with_commission_state(db, client_id, all_entries)
+    rows = statement_rows_with_commission_state(db, client_id, all_entries, opening)
     limit = ledger_shown_count(request.args.get("limit"))
     chunk, has_more = newest_first_chunk(rows, limit, ledger_cursor(request.args))
     context = dict(rows=chunk, view_mode=view_mode, type_options=TYPE_OPTIONS, category_options=CATEGORY_OPTIONS)
@@ -4221,8 +4445,8 @@ def client_statement_balances(client_id: int):
     db = get_db()
     if db.execute("select 1 from clients where id = ?", (client_id,)).fetchone() is None:
         abort(404)
-    filters, _ = statement_filters_from_args(request.args)
-    rows = running_balances(statement_filtered_entries(db, client_id, filters))
+    filters, _, _, _, opening = statement_view(db, client_id, request.args)
+    rows = running_balances(statement_filtered_entries(db, client_id, filters), opening)
     return jsonify({
         "ok": True,
         "balances": {str(row["id"]): {"usd": row["running_usd"], "cny": row["running_cny"]} for row in rows},
@@ -4278,6 +4502,11 @@ def add_entry(client_id: int):
     transfer_group = request.form.get("transfer_group", "").strip() or None
     add_to_company_profit = request.form.get("add_to_company_profit") == "1"
     profit_expense_account_id = request.form.get("profit_expense_account_id", type=int)
+    target_order = client_order(db, client_id, request.form.get("order_id", type=int))
+    order_id = target_order["id"] if target_order else current_order_id(db, client_id)
+    if order_closed_for_user(db, order_id):
+        flash(CLOSED_ORDER_MESSAGE, "error")
+        return redirect(_return_url(client_id, "entry-new"))
     try:
         category_hint = checked_category(category_hint)
         validate_profit_expense_selection(
@@ -4299,8 +4528,8 @@ def add_entry(client_id: int):
         """
         insert into statement_entries (
             client_id, source_no, entry_date, description, currency, direction,
-            amount, kind, category_hint, transfer_group, image_path
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            amount, kind, category_hint, transfer_group, image_path, order_id
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             client_id,
@@ -4314,6 +4543,7 @@ def add_entry(client_id: int):
             category_hint,
             transfer_group,
             image_filename,
+            order_id,
         ),
     )
     entry = db.execute(
@@ -4357,6 +4587,11 @@ def exchange_balance(client_id: int):
     if client is None:
         abort(404)
 
+    target_order = client_order(db, client_id, request.form.get("order_id", type=int))
+    order_id = target_order["id"] if target_order else current_order_id(db, client_id)
+    if order_closed_for_user(db, order_id):
+        flash(CLOSED_ORDER_MESSAGE, "error")
+        return redirect(_return_url(client_id, "exchange-balance"))
     exchange_date = request.form["exchange_date"]
     usd_amount_raw = request.form.get("usd_amount", "").strip()
     usd_amount = money(usd_amount_raw, label="USD amount") if usd_amount_raw else 0.0
@@ -4402,8 +4637,8 @@ def exchange_balance(client_id: int):
         """
         insert into statement_entries (
             client_id, source_no, entry_date, description, currency, direction,
-            amount, kind, category_hint, transfer_group, exchange_rate
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            amount, kind, category_hint, transfer_group, exchange_rate, order_id
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             client_id,
@@ -4417,6 +4652,7 @@ def exchange_balance(client_id: int):
             "fx_transfer",
             transfer_group,
             effective_rate,
+            order_id,
         ),
     )
     usd_entry = db.execute("select * from statement_entries where client_id = ? order by id desc limit 1", (client_id,)).fetchone()
@@ -4424,8 +4660,8 @@ def exchange_balance(client_id: int):
         """
         insert into statement_entries (
             client_id, source_no, entry_date, description, currency, direction,
-            amount, kind, category_hint, transfer_group, exchange_rate
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            amount, kind, category_hint, transfer_group, exchange_rate, order_id
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             client_id,
@@ -4439,6 +4675,7 @@ def exchange_balance(client_id: int):
             "fx_transfer",
             transfer_group,
             effective_rate,
+            order_id,
         ),
     )
     cny_entry = db.execute("select * from statement_entries where client_id = ? order by id desc limit 1", (client_id,)).fetchone()
@@ -4471,6 +4708,8 @@ def create_commission(client_id: int):
     source_entry = db.execute("select * from statement_entries where id = ?", (source_entry_id,)).fetchone()
     source_anchor = f"entry-{source_entry_id}" if source_entry_id else "table-top"
     error = commission_error_message(db, source_entry, client_id)
+    if not error and entry_order_closed_for_user(db, source_entry_id):
+        error = CLOSED_ORDER_MESSAGE
     if error:
         flash(error, "error")
         return redirect(_return_url(client_id, source_anchor))
@@ -4492,15 +4731,153 @@ def create_commission(client_id: int):
     return redirect(_return_url(client_id, source_anchor))
 
 
+def _order_redirect(client_id: int, order_id: int | None):
+    return redirect(url_for("client_statement", client_id=client_id, order=order_id) + "#table-top")
+
+
+def _route_order(client_id: int, order_id: int) -> tuple[sqlite3.Connection, sqlite3.Row]:
+    db = get_db()
+    order = client_order(db, client_id, order_id)
+    if order is None:
+        abort(404)
+    return db, order
+
+
+def _closing_date(raw: str | None) -> str:
+    try:
+        return date.fromisoformat((raw or "").strip()).isoformat()
+    except ValueError:
+        raise ValueError("Enter a valid closing date.") from None
+
+
+def move_entries_across_close(db: sqlite3.Connection, order: sqlite3.Row, old_date: str, new_date: str) -> int:
+    """After a closing date changes, entries dated between the old and new date follow it.
+
+    An earlier date sends this order's later entries to the next order; a later
+    date brings the next order's entries up to the new date back into this one."""
+    next_order = db.execute(
+        "select id from client_orders where client_id = ? and seq_no > ? order by seq_no limit 1",
+        (order["client_id"], order["seq_no"]),
+    ).fetchone()
+    if next_order is None or old_date == new_date:
+        return 0
+    if new_date < old_date:
+        cursor = db.execute(
+            "update statement_entries set order_id = ? where order_id = ? and entry_date > ?",
+            (next_order["id"], order["id"], new_date),
+        )
+    else:
+        cursor = db.execute(
+            "update statement_entries set order_id = ? where order_id = ? and entry_date > ? and entry_date <= ?",
+            (order["id"], next_order["id"], old_date, new_date),
+        )
+    return cursor.rowcount
+
+
+@app.route("/clients/<int:client_id>/orders/<int:order_id>/close", methods=["POST"])
+def close_order(client_id: int, order_id: int):
+    db, order = _route_order(client_id, order_id)
+    if order["closed_at"]:
+        flash(f"{order['name']} is already closed.", "error")
+        return _order_redirect(client_id, order_id)
+    try:
+        closed_at = _closing_date(request.form.get("closed_at") or local_today().isoformat())
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return _order_redirect(client_id, order_id)
+    db.execute("update client_orders set closed_at = ? where id = ?", (closed_at, order_id))
+    newest = db.execute("select max(seq_no) from client_orders where client_id = ?", (client_id,)).fetchone()[0]
+    message = f"{order['name']} is closed."
+    if order["seq_no"] == newest:
+        name = f"Order {newest + 1}"
+        db.execute(
+            "insert into client_orders(client_id, seq_no, name, created_at) values (?, ?, ?, ?)",
+            (client_id, newest + 1, name, utc_timestamp()),
+        )
+        message += f" New entries now go to {name}."
+    db.commit()
+    flash(message, "success")
+    return _order_redirect(client_id, current_order_id(db, client_id))
+
+
+@app.route("/clients/<int:client_id>/orders/<int:order_id>/edit", methods=["POST"])
+@admin_required
+def edit_order(client_id: int, order_id: int):
+    db, order = _route_order(client_id, order_id)
+    name = " ".join(request.form.get("name", "").split())[:80]
+    if not name:
+        flash("The order needs a name.", "error")
+        return _order_redirect(client_id, order_id)
+    closed_at = order["closed_at"]
+    if closed_at and request.form.get("closed_at") is not None:
+        try:
+            closed_at = _closing_date(request.form.get("closed_at"))
+        except ValueError as exc:
+            flash(str(exc), "error")
+            return _order_redirect(client_id, order_id)
+    db.execute("update client_orders set name = ?, closed_at = ? where id = ?", (name, closed_at, order_id))
+    moved = move_entries_across_close(db, order, order["closed_at"], closed_at) if order["closed_at"] else 0
+    db.commit()
+    message = "Order saved."
+    if moved:
+        message += f" {moved} entr{'y' if moved == 1 else 'ies'} moved to match the new closing date."
+    flash(message, "success")
+    return _order_redirect(client_id, order_id)
+
+
+@app.route("/clients/<int:client_id>/orders/<int:order_id>/reopen", methods=["POST"])
+@admin_required
+def reopen_order(client_id: int, order_id: int):
+    db, order = _route_order(client_id, order_id)
+    if not order["closed_at"]:
+        flash(f"{order['name']} is already open.", "error")
+        return _order_redirect(client_id, order_id)
+    db.execute("update client_orders set closed_at = null where id = ?", (order_id,))
+    # Later orders that closing this one started and that are still empty are not needed any more.
+    db.execute(
+        """
+        delete from client_orders
+        where client_id = ? and seq_no > ? and closed_at is null
+          and not exists (select 1 from statement_entries e where e.order_id = client_orders.id)
+        """,
+        (client_id, order["seq_no"]),
+    )
+    db.commit()
+    flash(f"{order['name']} is open again.", "success")
+    return _order_redirect(client_id, order_id)
+
+
+@app.route("/clients/<int:client_id>/orders/<int:order_id>/delete", methods=["POST"])
+@admin_required
+def delete_order(client_id: int, order_id: int):
+    db, order = _route_order(client_id, order_id)
+    orders = client_orders(db, client_id)
+    this = next(item for item in orders if item["id"] == order_id)
+    others_open = [item for item in orders if item["is_open"] and item["id"] != order_id]
+    if this["entry_count"]:
+        flash("Only an empty order can be deleted.", "error")
+        return _order_redirect(client_id, order_id)
+    if len(orders) == 1 or not others_open:
+        flash("This is the only open order, so it can't be deleted.", "error")
+        return _order_redirect(client_id, order_id)
+    db.execute("delete from client_orders where id = ?", (order_id,))
+    db.commit()
+    flash(f"{order['name']} was deleted.", "success")
+    return _order_redirect(client_id, current_order_id(db, client_id))
+
+
 def _return_url(client_id: int, anchor: str = "table-top") -> str:
     """Build redirect URL preserving page/per_page from the form submission."""
     page = request.form.get("return_page", "").strip()
     per_page = request.form.get("return_per_page", "").strip()
+    order = request.form.get("return_order", "").strip() or _referrer_arg("order")
     params = {}
     if page:
         params["page"] = page
     if per_page:
         params["per_page"] = per_page
+    if order:
+        params["order"] = order
     base = url_for("client_statement", client_id=client_id, **params)
     return f"{base}#{anchor}"
 
@@ -4511,6 +4888,11 @@ def save_entry(entry_id: int):
     entry = db.execute("select * from statement_entries where id = ?", (entry_id,)).fetchone()
     if entry is None:
         abort(404)
+    if order_closed_for_user(db, entry["order_id"]):
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({"ok": False, "error": CLOSED_ORDER_MESSAGE}), 403
+        flash(CLOSED_ORDER_MESSAGE, "error")
+        return redirect(_return_url(entry["client_id"], f"entry-{entry_id}"))
     before = row_to_dict(entry)
     new_entry_date = request.form["entry_date"]
     new_description = request.form["description"].strip()
@@ -4622,6 +5004,9 @@ def delete_entry(entry_id: int):
     entry = db.execute("select * from statement_entries where id = ?", (entry_id,)).fetchone()
     if entry is None:
         abort(404)
+    if order_closed_for_user(db, entry["order_id"]):
+        flash(CLOSED_ORDER_MESSAGE, "error")
+        return redirect(_return_url(entry["client_id"], f"entry-{entry_id}"))
     linked_commission = commission_child_entry(db, entry_id)
     if linked_commission is not None:
         flash("Delete the generated commission entry first.", "error")
@@ -4656,6 +5041,14 @@ def undo_last_change(client_id: int):
         return redirect(_return_url(client_id))
 
     payload = json.loads(event["payload"])
+    touched = [payload.get("entry", {}), payload.get("before", {}), *payload.get("entries", [])]
+    if any(
+        order_closed_for_user(db, item.get("order_id")) or entry_order_closed_for_user(db, item.get("id"))
+        for item in touched
+        if item
+    ):
+        flash("Nothing was undone: that change is in a closed order. Only an admin can change it.", "error")
+        return redirect(_return_url(client_id))
     affected_expense_accounts: set[int] = set()
     if event["action"] == "add":
         entry_id = payload.get("entry", {}).get("id")
@@ -4713,8 +5106,9 @@ def undo_last_change(client_id: int):
             insert into statement_entries (
                 id, client_id, source_no, entry_date, description, currency, direction,
                 amount, kind, category_hint, transfer_group, exchange_rate, image_path,
-                commission_source_entry_id, profit_expense_entry_id, profit_expense_account_id
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                commission_source_entry_id, profit_expense_entry_id, profit_expense_account_id,
+                order_id
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 entry.get("id"),
@@ -4733,6 +5127,7 @@ def undo_last_change(client_id: int):
                 entry.get("commission_source_entry_id"),
                 entry.get("profit_expense_entry_id"),
                 entry.get("profit_expense_account_id"),
+                entry.get("order_id"),
             ),
         )
         affected_expense_accounts.update(
@@ -4779,15 +5174,28 @@ def _attachment_response(payload: bytes | str, content_type: str, filename: str)
     return response
 
 
-def _statement_export_data(db: sqlite3.Connection, client_id: int) -> tuple[sqlite3.Row | None, list[dict]]:
+def _statement_export_data(
+    db: sqlite3.Connection, client_id: int, order_raw: str | None = "all"
+) -> tuple[sqlite3.Row | None, list[dict]]:
+    """A client's rows to export: one order (starting with what earlier orders carried over) or all of them."""
     client = db.execute("select * from clients where id = ?", (client_id,)).fetchone()
     if client is None:
         return None, []
+    order = selected_order(db, client_id, client_orders(db, client_id), order_raw or "all")
+    if order is None:
+        entries = db.execute(
+            f"select * from statement_entries where client_id = ? order by {ENTRY_ORDER}",
+            (client_id,),
+        ).fetchall()
+        return client, statement_rows_with_commission_state(db, client_id, entries)
     entries = db.execute(
-        f"select * from statement_entries where client_id = ? order by {ENTRY_ORDER}",
-        (client_id,),
+        f"select * from statement_entries where client_id = ? and order_id = ? order by {ENTRY_ORDER}",
+        (client_id, order["id"]),
     ).fetchall()
-    return client, statement_rows_with_commission_state(db, client_id, entries)
+    carried = carried_balance_rows(order, order_opening_balance(db, order))
+    rows = statement_rows_with_commission_state(db, client_id, [*carried, *entries])
+    client = {**dict(client), "name": f"{client['name']} - {order['name']}"}
+    return client, rows
 
 
 def _statement_pdf_response(client: sqlite3.Row, rows: list[dict]):
@@ -5111,7 +5519,7 @@ def _expense_pdf_response(
 @app.route("/clients/<int:client_id>/export.pdf")
 def export_pdf(client_id: int):
     db = get_db()
-    client, rows = _statement_export_data(db, client_id)
+    client, rows = _statement_export_data(db, client_id, request.args.get("order"))
     if client is None:
         abort(404)
     return _statement_pdf_response(client, rows)
@@ -5123,6 +5531,8 @@ def export_statement(client_id: int):
     client = db.execute("select * from clients where id = ?", (client_id,)).fetchone()
     if client is None:
         abort(404)
+    order = selected_order(db, client_id, client_orders(db, client_id), request.args.get("order") or "all")
+    order_id = order["id"] if order else None
     entries = db.execute(
         """
         select
@@ -5139,10 +5549,10 @@ def export_statement(client_id: int):
             profit_expense_entry_id,
             profit_expense_account_id
         from statement_entries
-        where client_id = ?
+        where client_id = ? and (? is null or order_id = ?)
         order by entry_date, id
         """,
-        (client_id,),
+        (client_id, order_id, order_id),
     ).fetchall()
     output = io.StringIO()
     writer = csv.writer(output)
@@ -5188,7 +5598,7 @@ def export_statement(client_id: int):
 @app.route("/clients/<int:client_id>/export.xlsx")
 def export_statement_xlsx(client_id: int):
     db = get_db()
-    client, rows = _statement_export_data(db, client_id)
+    client, rows = _statement_export_data(db, client_id, request.args.get("order"))
     if client is None:
         abort(404)
     return _statement_xlsx_response(client, rows)
@@ -5739,7 +6149,7 @@ def global_search():
     entries = db.execute(
         f"""select se.id, se.client_id, c.name as client_name, se.entry_date,
                    se.description, se.currency, se.direction, se.amount,
-                   se.source_no, se.kind, se.category_hint
+                   se.source_no, se.kind, se.category_hint, se.order_id
             from statement_entries se join clients c on se.client_id = c.id
             where {" and ".join(where) or "1 = 1"}
             order by se.entry_date desc, se.id desc
