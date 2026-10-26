@@ -15,8 +15,8 @@ so write them for the people using the app.
 - Pick which order to look at from the **Order** list above the filters, or
   choose **All orders** to see everything together. The dashboard still shows
   each client's full balance.
-- PDF, CSV and Excel export only the order you are looking at. The PDF and
-  Excel start with the balance brought forward.
+- The Export menu lets you choose **This order** or **Entire statement** (PDF,
+  Excel or CSV). An order's PDF and Excel start with the balance brought forward.
 - Admins can rename an order, change its closing date (entries dated between
   the old and new date move with it), reopen it, or delete an empty one.
 - A closed order can only be changed by an admin. Other users can still see it.

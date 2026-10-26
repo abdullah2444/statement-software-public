@@ -5214,12 +5214,15 @@ def _statement_export_data(
     client = db.execute("select * from clients where id = ?", (client_id,)).fetchone()
     if client is None:
         return None, []
-    order = selected_order(db, client_id, client_orders(db, client_id), order_raw or "all")
+    orders = client_orders(db, client_id)
+    order = selected_order(db, client_id, orders, order_raw or "all")
     if order is None:
         entries = db.execute(
             f"select * from statement_entries where client_id = ? order by {ENTRY_ORDER}",
             (client_id,),
         ).fetchall()
+        if len(orders) > 1:
+            client = {**dict(client), "name": f"{client['name']} - full statement"}
         return client, statement_rows_with_commission_state(db, client_id, entries)
     entries = db.execute(
         f"select * from statement_entries where client_id = ? and order_id = ? order by {ENTRY_ORDER}",

@@ -130,6 +130,14 @@
 
 /* -- Phones ------------------------------------------------- */
 
+/* -- Export menu: this order or the entire statement -- */
+
+.client-page .export-popover { width: min(280px, calc(100vw - 32px)); }
+.export-group-label { margin: 10px 0 6px; font-size: 0.75rem; font-weight: 700; color: var(--muted); }
+.export-group-label:first-of-type { margin-top: 4px; }
+.export-menu.is-row { grid-template-columns: repeat(3, 1fr); }
+.export-menu.is-row a { padding: 8px 6px; border: 1px solid var(--line); text-align: center; justify-content: center; }
+
 /* -- Orders: which order is shown, and closing / editing it -- */
 
 .client-page .order-bar {

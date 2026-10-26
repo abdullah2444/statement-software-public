@@ -977,11 +977,17 @@
             <a class="icon-action is-tool" href="#" data-export-toggle aria-expanded="false" data-tip="Export (PDF, CSV, Excel)" aria-label="Export">{{ icon_label('download', 'Export') }}</a>
             <div class="history-popover export-popover">
               <div class="history-popover-head">Export Statement</div>
-              <div class="export-menu">
-                <a href="{{ url_for('export_pdf', client_id=client.id, order=filters.order) }}">PDF</a>
-                <a href="{{ url_for('export_statement', client_id=client.id, order=filters.order) }}">CSV</a>
-                <a href="{{ url_for('export_statement_xlsx', client_id=client.id, order=filters.order) }}">Excel</a>
+              {#- With several orders: export the order shown, or the entire statement. -#}
+              {% set export_choices = [('all', 'Entire statement')] %}
+              {% if order and orders|length > 1 %}{% set export_choices = [(order.id, 'This order (' ~ order.name ~ ')'), ('all', 'Entire statement')] %}{% endif %}
+              {% for export_order, export_label in export_choices %}
+              {% if orders|length > 1 %}<p class="export-group-label">{{ export_label }}</p>{% endif %}
+              <div class="export-menu{% if orders|length > 1 %} is-row{% endif %}">
+                <a href="{{ url_for('export_pdf', client_id=client.id, order=export_order) }}">PDF</a>
+                <a href="{{ url_for('export_statement_xlsx', client_id=client.id, order=export_order) }}">Excel</a>
+                <a href="{{ url_for('export_statement', client_id=client.id, order=export_order) }}">CSV</a>
               </div>
+              {% endfor %}
             </div>
           </div>
           <div class="history-dropdown" data-history-dropdown>
