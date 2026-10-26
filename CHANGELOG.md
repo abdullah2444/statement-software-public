@@ -4,6 +4,23 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.19
+
+**Orders inside a statement**
+- A client's statement can now be split into orders. Everything already in a
+  statement is "Order 1", so nothing changes until you close an order.
+- **Close order** (on the statement page) ends the current order and starts the
+  next one. New entries go into the new order, and whatever balance is left
+  carries over as its starting balance ("Brought forward").
+- Pick which order to look at from the **Order** list above the filters, or
+  choose **All orders** to see everything together. The dashboard still shows
+  each client's full balance.
+- The Export menu lets you choose **This order** or **Entire statement** (PDF,
+  Excel or CSV). An order's PDF and Excel start with the balance brought forward.
+- Admins can rename an order, change its closing date (entries dated between
+  the old and new date move with it), reopen it, or delete an empty one.
+- A closed order can only be changed by an admin. Other users can still see it.
+
 ## 5.2.18
 
 **≈ RMB for each client on the phone**
