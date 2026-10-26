@@ -3326,11 +3326,15 @@ def setup_client_orders(db: sqlite3.Connection) -> None:
             seq_no integer not null,
             name text not null,
             closed_at text,
+            last_entry_id integer,
             created_at text not null default ''
         )
         """
     )
     db.execute("create index if not exists idx_client_orders_client on client_orders(client_id, seq_no)")
+    order_columns = {row[1] for row in db.execute("pragma table_info(client_orders)").fetchall()}
+    if "last_entry_id" not in order_columns:
+        db.execute("alter table client_orders add column last_entry_id integer")
     entry_columns = {row[1] for row in db.execute("pragma table_info(statement_entries)").fetchall()}
     if "order_id" not in entry_columns:
         db.execute("alter table statement_entries add column order_id integer")
@@ -4753,25 +4757,51 @@ def _closing_date(raw: str | None) -> str:
 def move_entries_across_close(db: sqlite3.Connection, order: sqlite3.Row, old_date: str, new_date: str) -> int:
     """After a closing date changes, entries dated between the old and new date follow it.
 
-    An earlier date sends this order's later entries to the next order; a later
-    date brings the next order's entries up to the new date back into this one."""
+    Inside that window an entry belongs to this order when it is dated before the
+    closing date, or on it and saved before the order was closed (last_entry_id);
+    otherwise to the next order. So moving the date and moving it back puts every
+    entry back where it was. Entries outside the window are not touched, and an
+    auto commission always stays in the same order as the entry it was charged on."""
     next_order = db.execute(
         "select id from client_orders where client_id = ? and seq_no > ? order by seq_no limit 1",
         (order["client_id"], order["seq_no"]),
     ).fetchone()
     if next_order is None or old_date == new_date:
         return 0
-    if new_date < old_date:
-        cursor = db.execute(
-            "update statement_entries set order_id = ? where order_id = ? and entry_date > ?",
-            (next_order["id"], order["id"], new_date),
+    last_entry_id = order["last_entry_id"]
+    if last_entry_id is None:
+        last_entry_id = db.execute(
+            "select coalesce(max(id), 0) from statement_entries where order_id = ?", (order["id"],)
+        ).fetchone()[0]
+    low, high = sorted((old_date, new_date))
+    rows = db.execute(
+        """
+        select id, entry_date, order_id from statement_entries
+        where order_id in (?, ?) and entry_date >= ? and entry_date <= ?
+          and commission_source_entry_id is null
+        """,
+        (order["id"], next_order["id"], low, high),
+    ).fetchall()
+    moved = 0
+    for row in rows:
+        keep = row["entry_date"] < new_date or (row["entry_date"] == new_date and row["id"] <= last_entry_id)
+        target = order["id"] if keep else next_order["id"]
+        if target != row["order_id"]:
+            db.execute("update statement_entries set order_id = ? where id = ?", (target, row["id"]))
+            moved += 1
+    moved += db.execute(
+        """
+        update statement_entries set order_id = (
+            select source.order_id from statement_entries source
+            where source.id = statement_entries.commission_source_entry_id
         )
-    else:
-        cursor = db.execute(
-            "update statement_entries set order_id = ? where order_id = ? and entry_date > ? and entry_date <= ?",
-            (order["id"], next_order["id"], old_date, new_date),
-        )
-    return cursor.rowcount
+        where client_id = ? and commission_source_entry_id is not null
+          and order_id != (select source.order_id from statement_entries source
+                           where source.id = statement_entries.commission_source_entry_id)
+        """,
+        (order["client_id"],),
+    ).rowcount
+    return moved
 
 
 @app.route("/clients/<int:client_id>/orders/<int:order_id>/close", methods=["POST"])
@@ -4785,7 +4815,10 @@ def close_order(client_id: int, order_id: int):
     except ValueError as exc:
         flash(str(exc), "error")
         return _order_redirect(client_id, order_id)
-    db.execute("update client_orders set closed_at = ? where id = ?", (closed_at, order_id))
+    last_entry_id = db.execute("select coalesce(max(id), 0) from statement_entries").fetchone()[0]
+    db.execute(
+        "update client_orders set closed_at = ?, last_entry_id = ? where id = ?", (closed_at, last_entry_id, order_id)
+    )
     newest = db.execute("select max(seq_no) from client_orders where client_id = ?", (client_id,)).fetchone()[0]
     message = f"{order['name']} is closed."
     if order["seq_no"] == newest:
@@ -4832,7 +4865,7 @@ def reopen_order(client_id: int, order_id: int):
     if not order["closed_at"]:
         flash(f"{order['name']} is already open.", "error")
         return _order_redirect(client_id, order_id)
-    db.execute("update client_orders set closed_at = null where id = ?", (order_id,))
+    db.execute("update client_orders set closed_at = null, last_entry_id = null where id = ?", (order_id,))
     # Later orders that closing this one started and that are still empty are not needed any more.
     db.execute(
         """

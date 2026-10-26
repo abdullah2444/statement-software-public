@@ -154,6 +154,21 @@ class ClientOrderTests(unittest.TestCase):
         self.post(self.admin, f'/clients/{self.client_id}/orders/{first["id"]}/edit', name='March container', closed_at='2026-03-10')
         self.assertEqual(self.order_of('Mold supplier'), first['id'])
 
+    def test_moving_the_closing_date_and_back_puts_everything_back(self):
+        first = self.orders()[0]
+        self.post(self.admin, f'/clients/{self.client_id}/orders/{first["id"]}/close', closed_at='2026-03-06')
+        self.add_raw('2026-03-06', 'Same day, next order', 'USD', 'OUT', 5)
+        mold = self.db.execute("select * from statement_entries where description = 'Mold supplier'").fetchone()
+        self.module.create_commission_entry(self.db, mold, '2026-03-09', '5')
+        self.db.commit()
+        before = dict(self.db.execute("select id, order_id from statement_entries").fetchall())
+        path = f'/clients/{self.client_id}/orders/{first["id"]}/edit'
+        self.post(self.admin, path, name='Order 1', closed_at='2026-03-02')
+        child = self.db.execute("select order_id from statement_entries where commission_source_entry_id = ?", (mold['id'],)).fetchone()[0]
+        self.assertEqual(child, self.order_of('Mold supplier'))  # the commission went with its entry
+        self.post(self.admin, path, name='Order 1', closed_at='2026-03-06')
+        self.assertEqual(dict(self.db.execute("select id, order_id from statement_entries").fetchall()), before)
+
     def test_exports_follow_the_order(self):
         first = self.orders()[0]
         self.post(self.admin, f'/clients/{self.client_id}/orders/{first["id"]}/close', closed_at='2026-03-10')
