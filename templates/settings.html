@@ -421,7 +421,7 @@
           {% for tab in tabs %}
           <a href="#{{ tab }}" role="tab" data-tab="{{ tab }}">{{ tab_labels[tab] }}
             {%- if tab == 'updates' and updates.available %}<span class="tab-dot" title="Update available"></span>{% endif %}
-            {%- if tab == 'backups' and cloud.last_error %}<span class="tab-dot tab-dot-bad" title="Last cloud backup failed"></span>{% endif %}</a>
+            {%- if tab == 'backups' and (cloud.last_error or cloud.r2.last_error) %}<span class="tab-dot tab-dot-bad" title="Last cloud backup failed"></span>{% endif %}</a>
           {% endfor %}
         </nav>
 
@@ -718,7 +718,7 @@
       <section class="settings-panel" data-panel="backups" role="tabpanel">
       <div class="settings-card" id="cloud-backup">
         <h2>
-          Cloud backup <span class="muted-inline">(Backblaze B2)</span>
+          Cloud backup <span class="muted-inline">(Backblaze B2{{ ' + Cloudflare R2' if cloud.r2.configured }})</span>
           {% if cloud.configured %}
             <span class="pill pill-ok">Connected</span>
           {% else %}
@@ -761,6 +761,20 @@
         <div class="cloud-box cloud-box-warn">{{ cloud.last_warning }}</div>
         {% endif %}
 
+        {% if cloud.r2.configured %}
+        <div class="db-meta">
+          <div class="db-meta-item"><strong>Second copy in Cloudflare R2</strong><span class="mono">{{ cloud.r2.location }}</span></div>
+          <div class="db-meta-item"><strong>Last copy saved</strong><span id="r2-last-success">{{ cloud.r2.last_success|local_time if cloud.r2.last_success else 'None yet' }}</span></div>
+          <div class="db-meta-item"><strong>Space used in R2</strong><span id="r2-storage">{{ cloud.r2.storage_label or 'Not measured yet' }}</span></div>
+        </div>
+        {% if cloud.r2.last_error %}
+        <div class="cloud-box cloud-box-error">Last Cloudflare R2 copy failed: {{ cloud.r2.last_error }}</div>
+        {% endif %}
+        {% if cloud.r2.last_warning %}
+        <div class="cloud-box cloud-box-warn">Cloudflare R2: {{ cloud.r2.last_warning }}</div>
+        {% endif %}
+        {% endif %}
+
         {% if not cloud.owned_here %}
         <div class="cloud-box cloud-box-warn inline-alert" id="cloud-paused">
           <span>
@@ -794,6 +808,15 @@
         <div class="settings-field"><div class="field-hint">Test Restore opens your newest backup with the recovery key in a scratch folder and checks it. Your live data is not touched.</div></div>
 
         <div id="cloud-snapshots" style="display:none;margin-top:16px;">
+          {% if cloud.r2.configured %}
+          <div class="settings-field">
+            <label for="cloud-copy-select">Backups in</label>
+            <select id="cloud-copy-select">
+              <option value="backblaze">Backblaze</option>
+              <option value="r2">Cloudflare R2</option>
+            </select>
+          </div>
+          {% endif %}
           <div class="table-scroll-wrap">
             <table class="db-table">
               <thead><tr><th>Backup time</th><th>ID</th><th>Actions</th></tr></thead>
@@ -804,6 +827,7 @@
             {{ csrf_input() }}
             <input type="hidden" name="snapshot_id" id="cloud-restore-id">
             <input type="hidden" name="confirm_text" id="cloud-restore-confirm">
+            <input type="hidden" name="copy" id="cloud-restore-copy" value="backblaze">
           </form>
         </div>
         {% endif %}
@@ -889,6 +913,60 @@
         {% endif %}
 
         {% if cloud.configured and super_admin %}
+        <details class="more" id="cloud-r2"{% if not cloud.r2.configured %} open{% endif %}>
+          <summary>{{ 'Second copy in Cloudflare R2' if cloud.r2.configured else 'Add a second copy in Cloudflare R2 (free)' }}</summary>
+          {% if not cloud.r2.configured %}
+          <div class="cloud-box cloud-box-help">
+            A second copy in a different company means a problem at Backblaze never leaves you without a backup. Cloudflare R2 is free up to 10 GB, and this app uses well under 1 GB.
+            <ol>
+              <li>In your Cloudflare dashboard, open <strong>R2 Object Storage</strong> and turn it on. Cloudflare asks for a payment card even for the free plan.</li>
+              <li>Click <strong>Create bucket</strong>, give it a name (for example <em>statement-backups</em>) and keep the location on <strong>Automatic</strong>.</li>
+              <li>Open the new bucket's <strong>Settings</strong> and copy the <strong>S3 API</strong> address.</li>
+              <li>Back on the R2 page, open <strong>Manage API tokens → Create API token</strong>. Choose <strong>Object Read &amp; Write</strong> and <strong>Apply to specific buckets only</strong> with your new bucket. Create it, then copy the <strong>Access Key ID</strong> and <strong>Secret Access Key</strong> (Cloudflare shows the secret only once).</li>
+              <li>Paste the three below and click <strong>Connect R2</strong>. The copy uses your existing recovery key, so there is nothing new to save.</li>
+            </ol>
+          </div>
+          {% endif %}
+          <form method="POST" action="{{ url_for('settings_cloud_backup_r2_save') }}" class="cloud-settings-form" autocomplete="off">
+            {{ csrf_input() }}
+            <div class="settings-field">
+              <label for="cloud_backup_r2_endpoint">S3 API Address</label>
+              <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" autocomplete="off" type="text" id="cloud_backup_r2_endpoint" name="cloud_backup_r2_endpoint" required
+                     value="{{ r2_endpoint }}" placeholder="https://…r2.cloudflarestorage.com/statement-backups">
+            </div>
+            <div class="settings-field">
+              <label for="cloud_backup_r2_key_id">Access Key ID</label>
+              <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" autocomplete="off" type="text" id="cloud_backup_r2_key_id" name="cloud_backup_r2_key_id" required value="{{ r2_key_id }}">
+            </div>
+            <div class="settings-field">
+              <label for="cloud_backup_r2_secret_key">Secret Access Key</label>
+              <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" class="secret-input" autocomplete="off" spellcheck="false" autocapitalize="off" type="text" id="cloud_backup_r2_secret_key" name="cloud_backup_r2_secret_key"
+                     {% if not r2_secret_set %}required{% endif %}
+                     placeholder="{% if r2_secret_set %}Saved (leave blank to keep it){% endif %}">
+            </div>
+            <details class="cloud-advanced">
+              <summary>Advanced</summary>
+              <div class="settings-field">
+                <label for="cloud_backup_r2_bucket">Bucket Name</label>
+                <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" autocomplete="off" type="text" id="cloud_backup_r2_bucket" name="cloud_backup_r2_bucket" placeholder="Taken from the address">
+              </div>
+              <div class="settings-field">
+                <label for="cloud_backup_r2_prefix">Folder In Bucket</label>
+                <input data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" autocomplete="off" type="text" id="cloud_backup_r2_prefix" name="cloud_backup_r2_prefix" value="{{ r2_prefix }}">
+              </div>
+            </details>
+            <div class="card-actions card-actions-left">
+              <button type="submit" class="btn-save">{{ 'Save' if cloud.r2.configured else 'Connect R2' }}</button>
+            </div>
+          </form>
+          {% if cloud.r2.configured %}
+          <form method="POST" action="{{ url_for('settings_cloud_backup_r2_disconnect') }}" class="cloud-inline-form"
+                onsubmit="return confirm('Stop sending a second copy to Cloudflare R2 and remove its keys from this app? Backups already in the R2 bucket are NOT deleted.');">
+            {{ csrf_input() }}
+            <button type="submit" class="btn-danger">Turn off the R2 copy</button>
+          </form>
+          {% endif %}
+        </details>
         <div class="card-actions card-actions-left card-actions-split">
           {% if cloud.recovery_key_confirmed and not cloud_recovery_key_revealed %}
           <form method="POST" action="{{ url_for('settings_cloud_backup_reveal_key') }}" class="cloud-inline-form">
@@ -1148,6 +1226,11 @@
             document.getElementById('cloud-last-success').textContent = st.last_success_local || 'None yet';
             document.getElementById('cloud-next-run').textContent = st.next_run || 'Automatic backups off';
             document.getElementById('cloud-storage').textContent = st.storage_label || 'Not measured yet';
+            var r2Last = document.getElementById('r2-last-success');
+            if (r2Last && st.r2 && st.r2.configured) {
+              r2Last.textContent = st.r2.last_success_local || 'None yet';
+              document.getElementById('r2-storage').textContent = st.r2.storage_label || 'Not measured yet';
+            }
           })
           .catch(function(err) { show('error', 'Could not read backup status: ' + err.message); });
       }
@@ -1167,12 +1250,15 @@
       if (runBtn) runBtn.addEventListener('click', function() { start('/api/cloud-backup/run', 'Backing up…'); });
       verifyBtn.addEventListener('click', function() { start('/api/cloud-backup/verify', 'Checking backups…'); });
 
+      var copySelect = document.getElementById('cloud-copy-select');  // only when R2 is connected
+      if (copySelect) copySelect.addEventListener('change', function() { listBtn.click(); });
       listBtn.addEventListener('click', function() {
+        var copy = copySelect ? copySelect.value : 'backblaze';
         var rows = document.getElementById('cloud-snapshot-rows');
         document.getElementById('cloud-snapshots').style.display = 'block';
         rows.textContent = '';
         var loading = rows.insertRow(); loading.insertCell().textContent = 'Loading…';
-        fetch('/api/cloud-backup/snapshots', {headers: {'X-Requested-With': 'XMLHttpRequest'}})
+        fetch('/api/cloud-backup/snapshots?copy=' + encodeURIComponent(copy), {headers: {'X-Requested-With': 'XMLHttpRequest'}})
           .then(function(r) { return r.json(); })
           .then(function(d) {
             rows.textContent = '';
@@ -1186,7 +1272,7 @@
               var wrap = document.createElement('div'); wrap.className = 'inline-actions';
               var dl = document.createElement('a');
               dl.className = 'btn-secondary'; dl.textContent = 'Download';
-              dl.href = '/settings/cloud-backup/download/' + encodeURIComponent(snap.id);
+              dl.href = '/settings/cloud-backup/download/' + encodeURIComponent(snap.id) + '?copy=' + encodeURIComponent(copy);
               var rs = document.createElement('button');
               rs.type = 'button'; rs.className = 'btn-save'; rs.textContent = 'Restore';
               rs.addEventListener('click', function() {
@@ -1194,6 +1280,7 @@
                 if (typed !== 'RESTORE') return;
                 document.getElementById('cloud-restore-id').value = snap.id;
                 document.getElementById('cloud-restore-confirm').value = typed;
+                document.getElementById('cloud-restore-copy').value = copy;
                 show('', 'Restoring… this can take a minute. Do not close the page.');
                 document.getElementById('cloud-restore-form').submit();
               });

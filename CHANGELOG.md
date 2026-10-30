@@ -4,6 +4,20 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.23
+
+**A second backup copy in Cloudflare R2**
+- Settings → Backups has a new **Add a second copy in Cloudflare R2** section,
+  with the steps. Paste the bucket's S3 API address and an R2 API token, then
+  click **Connect R2**. R2 is free up to 10 GB; this app uses well under 1 GB.
+- After that, every backup goes to Backblaze **and** Cloudflare R2, encrypted
+  with the same recovery key, so there is nothing new to save.
+- If one of them fails (like Backblaze's trouble this week), the backup still
+  counts as long as the other copy was saved, and the page shows each copy's
+  last backup and any problem. A failed copy is tried again within 10 minutes.
+- **Show backups** lets you choose which copy to list, download or restore from.
+  **Test restore** checks both.
+
 ## 5.2.22
 
 **Cloud backup no longer gets in the way of updates**
