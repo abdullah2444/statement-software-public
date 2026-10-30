@@ -388,6 +388,10 @@ class Restic:
         }
         if isinstance(self.config, R2Config):
             env["AWS_DEFAULT_REGION"] = "auto"
+        # Windows only: without these restic can't look up addresses or find a temp folder.
+        for name in ("SYSTEMROOT", "TEMP", "TMP"):
+            if os.name == "nt" and os.environ.get(name):
+                env[name] = os.environ[name]
         if self.cache_dir is not None:
             env["RESTIC_CACHE_DIR"] = str(self.cache_dir)
         return env
