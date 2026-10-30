@@ -4,6 +4,16 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.21
+
+**Grouped clients count as one in "Clients owe you"**
+- On the dashboard, **You hold for clients** and **Clients owe you** now treat a
+  group (a client and the clients grouped under it) as one customer. The group's
+  balances are added up first, and the group lands on one side by its total.
+- Before, each client in a group was counted on its own, so a client could show
+  as owing you even when its group holds more money than that overall.
+- The totals at the top and Company position don't change.
+
 ## 5.2.20
 
 **Your own exchange rate**
