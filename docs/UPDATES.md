@@ -10,8 +10,11 @@ of every page. The card in Settings shows the release notes and an
 2. **Backing up**: pauses saving (pages still open, but Save buttons get "The
    software is being updated" for a few minutes), waits for saves already in
    progress, then makes a recovery backup and checks it can be opened. If
-   cloud backup is set up, a cloud backup is made too. If any backup fails,
-   the update stops here and nothing is changed.
+   cloud backup is set up, a cloud backup is made too. If the recovery backup
+   fails, the update stops here and nothing is changed. If only the cloud
+   backup fails (for example Backblaze is having trouble), the update goes on
+   with the recovery backup, and Settings → Cloud Backup shows the reason; the
+   next scheduled cloud backup catches up.
 3. **Installing**: restarts the app on the new version. The page shows
    "Reconnecting…" and comes back by itself.
 4. **Checking**: checks that the new version starts, reports the right

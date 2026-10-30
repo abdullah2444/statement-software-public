@@ -116,11 +116,17 @@ def backup(label: str) -> dict:
         result = {"cloud_snapshot": ""}
         if statement_app.cloud_backup_active():
             # The cloud backup goes first, so the local backup also holds its "last backup" time.
-            _wait_for_cloud_job()
-            cloud = statement_app.run_cloud_backup()
-            if not cloud["ok"]:
-                raise RuntimeError("Cloud backup failed: " + cloud["error"])
-            result["cloud_snapshot"] = cloud["snapshot_id"]
+            # A Backblaze problem doesn't stop the update: the verified local backup made
+            # below is what an update rolls back to, and the cloud copy catches up later.
+            try:
+                _wait_for_cloud_job()
+                cloud = statement_app.run_cloud_backup()
+            except RuntimeError as exc:
+                cloud = {"ok": False, "error": str(exc)}
+            if cloud["ok"]:
+                result["cloud_snapshot"] = cloud["snapshot_id"]
+            else:
+                result["cloud_warning"] = "Cloud backup failed, so only the local backup was made: " + cloud["error"]
         path = statement_app.create_full_backup_file(label)
         try:
             result.update(verify_full_backup(path))

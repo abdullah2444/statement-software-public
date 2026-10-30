@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -42,10 +43,66 @@ _MISSING_REPO_MARKERS = (
     "unable to open config file",
 )
 _WRONG_PASSWORD_MARKERS = ("wrong password", "no key found")
+# restic retries a file Backblaze won't serve for up to 15 minutes, printing e.g.
+# "Load(<snapshot/4c58ada185>, 0, 0) returned error, retrying after 610ms: ...".
+# After this many tries of the same file it is stopped, with a clear message.
+_RETRY_LINE_RE = re.compile(r"^\s*\w+\(<([^>]+)>.*\) returned error, retrying after [^:]*:\s*(.*)$")
+RETRIES_BEFORE_GIVING_UP = 6
 
 
 class CloudBackupError(Exception):
     """A user-facing failure. The message never contains secrets."""
+
+
+class FileKeepsFailing(CloudBackupError):
+    pass
+
+
+def run_watched(command: list[str], env: dict, cwd: str | None, timeout: int) -> subprocess.CompletedProcess:
+    """Run restic like subprocess.run, but stop it once Backblaze keeps refusing one file.
+
+    Raises subprocess.TimeoutExpired, or FileKeepsFailing naming the file.
+    """
+    proc = subprocess.Popen(command, env=env, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    out: list[str] = []
+    err: list[str] = []
+    tries: dict[str, int] = {}
+    stuck: list[tuple[str, str]] = []
+
+    def read_stderr() -> None:
+        for line in proc.stderr:
+            err.append(line)
+            match = _RETRY_LINE_RE.match(line)
+            if match and not stuck:
+                name = match.group(1)
+                tries[name] = tries.get(name, 0) + 1
+                if tries[name] >= RETRIES_BEFORE_GIVING_UP:
+                    stuck.append((name, match.group(2).strip()))
+                    proc.kill()
+
+    readers = [
+        threading.Thread(target=lambda: out.extend(proc.stdout), daemon=True),
+        threading.Thread(target=read_stderr, daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise
+    finally:
+        for reader in readers:
+            reader.join(timeout=5)
+    if stuck:
+        name, reason = stuck[0]
+        raise FileKeepsFailing(
+            f"Backblaze keeps refusing one backup file ({name}): {reason[:120]}. "
+            "This is a problem on Backblaze's side; see status.backblaze.com. "
+            "Your data on this server is safe."
+        )
+    return subprocess.CompletedProcess(command, proc.returncode, "".join(out), "".join(err))
 
 
 class RepositoryMissing(CloudBackupError):
@@ -198,14 +255,9 @@ class Restic:
             raise CloudBackupError("The restic backup tool is not installed on this server.")
         self.check_key()
         try:
-            proc = subprocess.run(
-                [restic_binary(), *args],
-                env=self._env(),
-                cwd=str(cwd) if cwd else None,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
+            proc = run_watched([restic_binary(), *args], self._env(), str(cwd) if cwd else None, timeout)
+        except FileKeepsFailing as exc:
+            raise CloudBackupError(self._scrub(str(exc))) from None
         except subprocess.TimeoutExpired as exc:
             raise CloudBackupError(f"Backblaze did not respond within {timeout // 60} minutes.") from exc
         if proc.returncode != 0:
