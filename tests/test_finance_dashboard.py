@@ -163,6 +163,29 @@ class FinanceDashboardTests(unittest.TestCase):
         self.assertEqual(body['client_split']['owed']['usd'], -30000.0)
         self.assertEqual(body['company_status']['receivable_usd'], 30000.0)
 
+    def test_a_group_counts_once_by_its_combined_balance(self):
+        def group_under(parent_id, child_id):
+            self.db.execute("update clients set parent_id = ? where id = ?", (parent_id, child_id))
+            self.db.commit()
+
+        # Owes $5,000 on its own, but its sub-client holds $8,000: the group holds $3,000.
+        parent = self.new_client('Nile Group', ('USD', 'OUT', 5000))
+        group_under(parent, self.new_client('Nile Group - Shop 2', ('USD', 'IN', 8000)))
+        # Both members owe: one customer owing $2,500 in all.
+        owing = self.new_client('Delta Group', ('USD', 'OUT', 1000))
+        group_under(owing, self.new_client('Delta Group - Branch', ('USD', 'OUT', 1500)))
+        self.new_client('Single client', ('USD', 'OUT', 700))
+
+        split = self.module.client_balance_split(self.module.client_list(), 7.0)
+        self.assertEqual((split['held']['count'], split['held']['usd']), (1, 3000.0))
+        self.assertEqual((split['owed']['count'], split['owed']['usd']), (2, -3200.0))
+        # Still adds up to the net of every statement.
+        stats = self.module.dashboard_stats()
+        self.assertAlmostEqual(split['held']['usd'] + split['owed']['usd'], stats['total_usd_balance'])
+
+        page = self.admin.get('/').get_data(as_text=True)
+        self.assertIn('Clients owe you <span>&middot; 2 clients</span>', page)
+
     def test_without_a_rate_each_currency_is_sorted_on_its_own(self):
         self.new_client('Mixed', ('USD', 'IN', 1000), ('CNY', 'OUT', 7000))
         split = self.module.client_balance_split(self.module.client_list(), None)

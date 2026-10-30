@@ -121,7 +121,7 @@ Important response groups:
 - `company_status`: the final owner/company balance used by the web UI.
 - `exchange_rate_summary.display_rate`: the USD/CNY rate used for approximate RMB display.
 - `exchange_rate_summary.rate_in_use`: which rate that is: `manual` (typed by an admin), `live`, or `latest` (the newest exchange, only while neither is set).
-- `client_split`: clients you hold money for (`held`) and clients who owe you (`owed`), kept apart instead of netted. Each side has `usd`, `cny`, `rmb` (at `display_rate`, or null without a rate) and `count`. A client goes on one side by their whole balance at `display_rate`; with no rate, each currency is sorted on its own.
+- `client_split`: clients you hold money for (`held`) and clients who owe you (`owed`), kept apart instead of netted. Each side has `usd`, `cny`, `rmb` (at `display_rate`, or null without a rate) and `count`. A group (a client and the clients grouped under it) counts once, by the group's combined balance. Each one goes on one side by their whole balance at `display_rate`; with no rate, each currency is sorted on its own.
 
 Do **not** calculate owner net RMB as only:
 

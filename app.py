@@ -3183,13 +3183,21 @@ def save_manual_fx_rate(db: sqlite3.Connection, rate: float) -> None:
 def client_balance_split(clients: list[dict], rate: float | None) -> dict:
     """Money you hold for clients and money clients owe you, kept apart instead of netted.
 
-    Each client goes on one side by their whole balance (USD at the rate plus RMB).
-    With no rate, each currency is sorted on its own.
+    A group (a client and the clients grouped under it) is one customer: its
+    balances are added up first and it counts once. Each customer goes on one side
+    by their whole balance (USD at the rate plus RMB). With no rate, each currency
+    is sorted on its own.
     """
-    split = {side: {"usd": 0.0, "cny": 0.0, "count": 0} for side in ("held", "owed")}
+    known = {client["id"] for client in clients}
+    customers: dict[int, list[float]] = {}
     for client in clients:
-        usd = round(float(client["usd_balance"]), 2)
-        cny = round(float(client["cny_balance"]), 2)
+        parent_id = client.get("parent_id")
+        totals = customers.setdefault(parent_id if parent_id in known else client["id"], [0.0, 0.0])
+        totals[0] += float(client["usd_balance"])
+        totals[1] += float(client["cny_balance"])
+    split = {side: {"usd": 0.0, "cny": 0.0, "count": 0} for side in ("held", "owed")}
+    for usd, cny in customers.values():
+        usd, cny = round(usd, 2), round(cny, 2)
         if rate:
             total = usd * rate + cny
             if abs(total) < 0.005:
