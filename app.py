@@ -1397,6 +1397,7 @@ AUDIT_SENSITIVE_FIELDS = {
     "api_key",
     "csrf_token",
     "cloud_backup_app_key",
+    "cloud_backup_r2_secret_key",
     "cloud_backup_recovery_key",
     "current_password",
     "new_password",
@@ -6437,6 +6438,11 @@ def render_settings_page(revealed_recovery_key: str = ""):
             cloud_prefix=get_setting("cloud_backup_prefix", "") or CLOUD_BACKUP_DEFAULT_PREFIX,
             cloud_key_id=get_setting("cloud_backup_key_id", ""),
             cloud_app_key_set=bool(get_setting("cloud_backup_app_key", "")),
+            r2_endpoint=(f"https://{get_setting('cloud_backup_r2_host')}/{get_setting('cloud_backup_r2_bucket')}"
+                         if get_setting("cloud_backup_r2_host", "") else ""),
+            r2_prefix=get_setting("cloud_backup_r2_prefix", "") or get_setting("cloud_backup_prefix", "") or CLOUD_BACKUP_DEFAULT_PREFIX,
+            r2_key_id=get_setting("cloud_backup_r2_key_id", ""),
+            r2_secret_set=bool(get_setting("cloud_backup_r2_secret_key", "")),
             # The recovery key is shown until the admin confirms they saved it, or after re-entering their password.
             cloud_recovery_key=(
                 revealed_recovery_key
@@ -6695,8 +6701,26 @@ CLOUD_BACKUP_STATE_KEYS = (
     "cloud_backup_storage_bytes",
     "cloud_backup_job",
 )
-# Test hook: a local restic repository path used instead of the B2 bucket.
+# The second copy in Cloudflare R2. It uses the same recovery key, schedule and retention.
+R2_CONFIG_KEYS = (
+    "cloud_backup_r2_host",
+    "cloud_backup_r2_bucket",
+    "cloud_backup_r2_prefix",
+    "cloud_backup_r2_key_id",
+    "cloud_backup_r2_secret_key",
+)
+R2_STATE_KEYS = tuple(f"cloud_backup_r2_{name}" for name in (
+    "last_success", "last_snapshot_id", "last_error", "last_error_at", "last_prune", "last_warning", "storage_bytes",
+))
+# Where each backup goes. Each copy keeps its own results in settings named <keys><name>,
+# so Backblaze keeps the names it always had.
+CLOUD_COPIES = (
+    {"name": "backblaze", "label": "Backblaze", "keys": "cloud_backup_"},
+    {"name": "r2", "label": "Cloudflare R2", "keys": "cloud_backup_r2_"},
+)
+# Test hooks: local restic repository paths used instead of the B2 and R2 buckets.
 CLOUD_BACKUP_REPOSITORY_OVERRIDE = os.environ.get("CLOUD_BACKUP_REPOSITORY_OVERRIDE", "")
+CLOUD_BACKUP_R2_REPOSITORY_OVERRIDE = os.environ.get("CLOUD_BACKUP_R2_REPOSITORY_OVERRIDE", "")
 
 _cloud_job_lock = threading.Lock()
 _cloud_scheduler_started = False
@@ -6852,6 +6876,53 @@ def make_restic(config: cloud_backup.B2Config) -> cloud_backup.Restic:
     )
 
 
+def r2_configured() -> bool:
+    return cloud_backup_configured() and all(get_setting(key, "") for key in R2_CONFIG_KEYS)
+
+
+def load_r2_config() -> cloud_backup.R2Config:
+    if not r2_configured():
+        raise cloud_backup.CloudBackupError("The Cloudflare R2 copy is not set up.")
+    return cloud_backup.R2Config(
+        host=get_setting("cloud_backup_r2_host"),
+        bucket=get_setting("cloud_backup_r2_bucket"),
+        prefix=get_setting("cloud_backup_r2_prefix"),
+        key_id=get_setting("cloud_backup_r2_key_id"),
+        app_key=get_setting("cloud_backup_r2_secret_key"),
+        recovery_key=get_setting("cloud_backup_recovery_key"),
+    )
+
+
+def make_r2_restic(config: cloud_backup.R2Config) -> cloud_backup.Restic:
+    # restic keeps each repository's cache in its own folder, so both copies share this one.
+    return cloud_backup.Restic(
+        config,
+        cache_dir=BACKUP_DIR / ".restic-cache",
+        repository=CLOUD_BACKUP_R2_REPOSITORY_OVERRIDE or None,
+    )
+
+
+def cloud_copies() -> list[dict]:
+    """Backblaze, and Cloudflare R2 once it is connected."""
+    return [copy for copy in CLOUD_COPIES if copy["name"] == "backblaze" or r2_configured()]
+
+
+def cloud_copy(name: str | None) -> dict:
+    """The copy a request asks for (?copy=r2); Backblaze when it names none or one not set up."""
+    return next((copy for copy in cloud_copies() if copy["name"] == name), CLOUD_COPIES[0])
+
+
+def make_copy_restic(copy: dict) -> cloud_backup.Restic:
+    if copy["name"] == "r2":
+        return make_r2_restic(load_r2_config())
+    return make_restic(load_cloud_backup_config())
+
+
+def _copy_failed_since(copy: dict, attempt: datetime) -> bool:
+    last_ok = _parse_utc(get_setting(copy["keys"] + "last_success", ""))
+    return last_ok is None or last_ok < attempt
+
+
 def _set_cloud_job(kind: str, state: str, message: str = "") -> None:
     current = _get_cloud_job()
     job = {"kind": kind, "state": state, "message": message, "updated_at": utc_timestamp()}
@@ -6866,12 +6937,16 @@ def _get_cloud_job() -> dict:
         return {}
 
 
-def _record_cloud_failure(message: str) -> None:
-    set_setting("cloud_backup_last_error", message)
-    set_setting("cloud_backup_last_error_at", utc_timestamp())
+def _record_cloud_failure(message: str, copy: dict = CLOUD_COPIES[0]) -> None:
+    set_setting(copy["keys"] + "last_error", message)
+    set_setting(copy["keys"] + "last_error_at", utc_timestamp())
 
 
-def _cloud_taken_over_by(restic: cloud_backup.Restic) -> dict | None:
+class CloudTakenOver(cloud_backup.CloudBackupError):
+    """Another server backs up now: this one stops, for every copy."""
+
+
+def _cloud_taken_over_by(restic: cloud_backup.Restic, copy: dict = CLOUD_COPIES[0]) -> dict | None:
     """The other server, if the newest backup in the bucket came from a different
     server after this one's last successful backup (someone chose "Use this server")."""
     snapshots = restic.snapshots()
@@ -6883,7 +6958,7 @@ def _cloud_taken_over_by(restic: cloud_backup.Restic) -> dict | None:
         return None
     # Only backups made after this server last backed up, and after it became
     # the backup server, count as another server taking over.
-    since = [t for t in (_parse_utc(get_setting("cloud_backup_last_success", "")),
+    since = [t for t in (_parse_utc(get_setting(copy["keys"] + "last_success", "")),
                          _parse_utc(get_setting("cloud_backup_owner_since", ""))) if t]
     made_at = _parse_utc((newest.get("time") or "")[:19] + "Z")
     if made_at and since and made_at <= max(since):
@@ -6892,16 +6967,20 @@ def _cloud_taken_over_by(restic: cloud_backup.Restic) -> dict | None:
 
 
 def run_cloud_backup() -> dict:
-    """Take a consistent snapshot, upload it encrypted, then apply retention.
+    """Take one consistent snapshot and upload it, encrypted, to each copy (Backblaze,
+    and Cloudflare R2 once connected), then apply retention to each.
 
-    The backup only counts as successful once restic confirms the snapshot and
-    it shows up when listing the bucket. Old backups are only removed after that.
+    A copy only counts as saved once restic confirms the snapshot and it shows up when
+    listing that bucket. Old backups are only removed after that. The run works when
+    any copy was saved; each copy keeps its own last success and error.
     """
     set_setting("cloud_backup_last_attempt", utc_timestamp())
     staging = DATA_DIR / ".cloud-backup-staging"
+    copies = cloud_copies()
+    saved: dict[str, tuple[cloud_backup.Restic, dict, str]] = {}
+    failed: list[tuple[dict, str]] = []
     try:
-        config = load_cloud_backup_config()
-        restic = make_restic(config)
+        load_cloud_backup_config()
         db_size = DB_PATH.stat().st_size if DB_PATH.exists() else 0
         uploads_size = sum(item.stat().st_size for item in UPLOAD_DIR.rglob("*") if item.is_file()) if UPLOAD_DIR.exists() else 0
         free = shutil.disk_usage(DATA_DIR).free
@@ -6912,84 +6991,127 @@ def run_cloud_backup() -> dict:
             )
         if not cloud_backup_owned_here():
             raise cloud_backup.CloudBackupError("Cloud backup is paused on this server: another server does the backups.")
-        taken_over = _cloud_taken_over_by(restic)
-        if taken_over:
-            set_setting("cloud_backup_instance", CLOUD_TAKEN_OVER_PREFIX + taken_over["instance"])
-            set_setting("cloud_backup_paused_reason", "taken_over")
-            raise cloud_backup.CloudBackupError(
-                f"Another server took over cloud backups on {taken_over['time']}, so this server stopped backing up."
-            )
         shutil.rmtree(staging, ignore_errors=True)
         stage_consistent_snapshot(staging)
-        restic.unlock()
-        summary = restic.backup(staging, tags=[f"instance-{this_instance_id()}"])
-        # Older restic versions report a short ID here; the listing has the full one.
-        saved = next((snap for snap in restic.snapshots() if snap.get("id", "").startswith(summary["snapshot_id"])), None)
-        if saved is None:
-            raise cloud_backup.CloudBackupError("The new backup could not be found in the bucket after uploading.")
-        snapshot_id = saved["id"]
+        for copy in copies:
+            try:
+                restic = make_copy_restic(copy)
+                taken_over = _cloud_taken_over_by(restic, copy)
+                if taken_over:
+                    set_setting("cloud_backup_instance", CLOUD_TAKEN_OVER_PREFIX + taken_over["instance"])
+                    set_setting("cloud_backup_paused_reason", "taken_over")
+                    raise CloudTakenOver(
+                        f"Another server took over cloud backups on {taken_over['time']}, so this server stopped backing up."
+                    )
+                restic.unlock()
+                summary = restic.backup(staging, tags=[f"instance-{this_instance_id()}"])
+                # Older restic versions report a short ID here; the listing has the full one.
+                snapshot = next((snap for snap in restic.snapshots() if snap.get("id", "").startswith(summary["snapshot_id"])), None)
+                if snapshot is None:
+                    raise cloud_backup.CloudBackupError("The new backup could not be found in the bucket after uploading.")
+                saved[copy["name"]] = (restic, summary, snapshot["id"])
+            except CloudTakenOver:
+                raise
+            except (cloud_backup.CloudBackupError, RuntimeError, OSError) as exc:
+                # One copy failing doesn't stop the other.
+                _record_cloud_failure(str(exc), copy)
+                failed.append((copy, str(exc)))
     except (cloud_backup.CloudBackupError, RuntimeError, OSError, sqlite3.Error) as exc:
-        _record_cloud_failure(str(exc))
+        for copy in copies:
+            _record_cloud_failure(str(exc), copy)
         return {"ok": False, "error": str(exc)}
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
-    set_setting("cloud_backup_last_success", utc_timestamp())
-    set_setting("cloud_backup_last_snapshot_id", snapshot_id)
-    set_setting("cloud_backup_last_error", "")
-    set_setting("cloud_backup_last_warning", "")
-    warning = _apply_cloud_retention(restic)
-    try:
-        size = restic.stats_bytes()
-        if size is not None:
-            set_setting("cloud_backup_storage_bytes", str(size))
-    except cloud_backup.CloudBackupError:
-        pass
+    warnings = []
+    for copy in copies:
+        if copy["name"] not in saved:
+            continue
+        restic, _summary, snapshot_id = saved[copy["name"]]
+        set_setting(copy["keys"] + "last_success", utc_timestamp())
+        set_setting(copy["keys"] + "last_snapshot_id", snapshot_id)
+        set_setting(copy["keys"] + "last_error", "")
+        set_setting(copy["keys"] + "last_warning", "")
+        warning = _apply_cloud_retention(restic, copy)
+        if warning:
+            warnings.append(warning if len(copies) == 1 else f"{copy['label']}: {warning}")
+        try:
+            size = restic.stats_bytes()
+            if size is not None:
+                set_setting(copy["keys"] + "storage_bytes", str(size))
+        except cloud_backup.CloudBackupError:
+            pass
+    if len(copies) == 1:
+        problems = [error for _copy, error in failed]
+    else:
+        problems = [f"{copy['label']}: {error}" for copy, error in failed]
+    if not saved:
+        return {"ok": False, "error": " ".join(problems)}
+    first = next(copy for copy in copies if copy["name"] in saved)
+    _restic, summary, snapshot_id = saved[first["name"]]
+    if problems:
+        warnings.insert(0, f"Saved to {', '.join(c['label'] for c in copies if c['name'] in saved)}, but not to "
+                           f"{', '.join(copy['label'] for copy, _ in failed)}. " + " ".join(problems))
     return {
         "ok": True,
         "snapshot_id": snapshot_id[:8],
         "uploaded_bytes": summary.get("data_added", 0),
-        "warning": warning,
+        "warning": " ".join(warnings),
+        "message": "Backup finished." + (" " + " ".join(warnings) if warnings else ""),
     }
 
 
-def _apply_cloud_retention(restic: cloud_backup.Restic) -> str:
+def _apply_cloud_retention(restic: cloud_backup.Restic, copy: dict = CLOUD_COPIES[0]) -> str:
     """Forget backups older than the retention window. Only called after a verified backup."""
     days = int(get_setting("cloud_backup_retention_days", "7") or 0)
     if days <= 0:
         return ""
-    last_prune = _parse_utc(get_setting("cloud_backup_last_prune", ""))
+    last_prune = _parse_utc(get_setting(copy["keys"] + "last_prune", ""))
     prune = last_prune is None or utc_now() - last_prune >= timedelta(hours=CLOUD_BACKUP_PRUNE_HOURS)
     try:
         restic.forget(days, prune=prune)
     except cloud_backup.CloudBackupError as exc:
         warning = f"Backup saved, but removing old backups failed: {exc}"
-        set_setting("cloud_backup_last_warning", warning)
+        set_setting(copy["keys"] + "last_warning", warning)
         return warning
     if prune:
-        set_setting("cloud_backup_last_prune", utc_timestamp())
+        set_setting(copy["keys"] + "last_prune", utc_timestamp())
     return ""
 
 
+def _verify_copy(restic: cloud_backup.Restic) -> int:
+    """Check part of the data, then restore the newest backup to a scratch folder. Returns its receipt count."""
+    restic.check(read_data_percent=5)
+    snapshots = restic.snapshots()
+    if not snapshots:
+        raise cloud_backup.CloudBackupError("There are no backups to check yet.")
+    with tempfile.TemporaryDirectory(dir=DATA_DIR, prefix="cloud-verify-") as tmp:
+        restored = restic.restore(snapshots[0], Path(tmp))
+        validate_backup_manifest(restored / "manifest.json")
+        validate_database_file(restored / "firefly_statement.db")
+        return count_upload_files(restored / "uploads")
+
+
 def run_cloud_verify() -> dict:
-    """Check the backups can be read: verify part of the data, then restore the newest one to a scratch folder."""
-    try:
-        restic = make_restic(load_cloud_backup_config())
-        restic.check(read_data_percent=5)
-        snapshots = restic.snapshots()
-        if not snapshots:
-            raise cloud_backup.CloudBackupError("There are no backups to check yet.")
-        with tempfile.TemporaryDirectory(dir=DATA_DIR, prefix="cloud-verify-") as tmp:
-            restored = restic.restore(snapshots[0], Path(tmp))
-            validate_backup_manifest(restored / "manifest.json")
-            validate_database_file(restored / "firefly_statement.db")
-            receipts = count_upload_files(restored / "uploads")
-    except (cloud_backup.CloudBackupError, ValueError, OSError) as exc:
-        return {"ok": False, "error": str(exc)}
-    return {
-        "ok": True,
-        "message": f"Test restore worked: the newest backup opened with your recovery key and has {receipts} receipt files.",
-    }
+    """Check the backups in every copy can be read and opened with the recovery key."""
+    copies = cloud_copies()
+    passed, problems = [], []
+    for copy in copies:
+        try:
+            receipts = _verify_copy(make_copy_restic(copy))
+        except (cloud_backup.CloudBackupError, ValueError, OSError) as exc:
+            problems.append(str(exc) if len(copies) == 1 else f"{copy['label']}: {exc}")
+            continue
+        passed.append((copy, receipts))
+    if problems:
+        return {"ok": False, "error": " ".join(problems)}
+    if len(copies) == 1:
+        message = f"Test restore worked: the newest backup opened with your recovery key and has {passed[0][1]} receipt files."
+    else:
+        message = "Test restore worked for both copies: " + "; ".join(
+            f"{copy['label']} has {receipts} receipt files" for copy, receipts in passed
+        ) + "."
+    return {"ok": True, "message": message}
 
 
 def _run_cloud_job(kind: str) -> dict:
@@ -7035,8 +7157,7 @@ def cloud_backup_due(now: datetime | None = None) -> bool:
     last_attempt = _parse_utc(get_setting("cloud_backup_last_attempt", ""))
     if last_attempt is None:
         return True
-    last_success = _parse_utc(get_setting("cloud_backup_last_success", ""))
-    failed_last_time = last_success is None or last_success < last_attempt
+    failed_last_time = any(_copy_failed_since(copy, last_attempt) for copy in cloud_copies())
     wait = timedelta(hours=interval_h)
     if failed_last_time:
         wait = min(wait, timedelta(minutes=CLOUD_BACKUP_RETRY_MINUTES))
@@ -7097,16 +7218,20 @@ def cloud_backup_alert() -> str:
     interval_h = float(get_setting("cloud_backup_interval_hours", "0.5") or 0)
     if interval_h <= 0:
         return ""
-    last_success = _parse_utc(get_setting("cloud_backup_last_success", ""))
     allowed = timedelta(hours=max(interval_h * 3, 2))
-    if last_success is None:
-        configured_at = _parse_utc(get_setting("cloud_backup_configured_at", ""))
-        if configured_at and utc_now() - configured_at > allowed:
-            return "No cloud backup has worked yet. Check Settings → Cloud Backup."
-        return ""
-    if utc_now() - last_success > allowed:
-        hours = int((utc_now() - last_success).total_seconds() // 3600)
-        return f"Cloud backups have not worked for {hours} hours. Check Settings → Cloud Backup."
+    copies = cloud_copies()
+    for copy in copies:
+        where = "" if len(copies) == 1 else f" to {copy['label']}"
+        last_success = _parse_utc(get_setting(copy["keys"] + "last_success", ""))
+        if last_success is None:
+            started = _parse_utc(get_setting("cloud_backup_configured_at", "")) if copy["name"] == "backblaze" \
+                else _parse_utc(get_setting("cloud_backup_r2_connected_at", ""))
+            if started and utc_now() - started > allowed:
+                return f"No cloud backup{where} has worked yet. Check Settings → Cloud Backup."
+            continue
+        if utc_now() - last_success > allowed:
+            hours = int((utc_now() - last_success).total_seconds() // 3600)
+            return f"Cloud backups{where} have not worked for {hours} hours. Check Settings → Cloud Backup."
     return ""
 
 
@@ -7133,9 +7258,8 @@ def cloud_backup_status() -> dict:
         if last_attempt is None:
             next_run = "within a minute"
         else:
-            last_ok = _parse_utc(last_success)
             wait = timedelta(hours=float(interval))
-            if last_ok is None or last_ok < last_attempt:
+            if any(_copy_failed_since(copy, last_attempt) for copy in cloud_copies()):
                 wait = min(wait, timedelta(minutes=CLOUD_BACKUP_RETRY_MINUTES))
             next_run = local_time((last_attempt + wait).isoformat())
     storage = get_setting("cloud_backup_storage_bytes", "")
@@ -7162,6 +7286,28 @@ def cloud_backup_status() -> dict:
         "job": _get_cloud_job(),
         "job_running": _cloud_job_lock.locked(),
         "alert": cloud_backup_alert(),
+        "r2": r2_copy_status(),
+    }
+
+
+def r2_copy_status() -> dict:
+    """The Cloudflare R2 copy on the Settings page. Contains no secrets."""
+    if not r2_configured():
+        return {"configured": False}
+    last_success = get_setting("cloud_backup_r2_last_success", "")
+    last_error = get_setting("cloud_backup_r2_last_error", "")
+    error_at = _parse_utc(get_setting("cloud_backup_r2_last_error_at", ""))
+    if last_error and error_at and _parse_utc(last_success) and _parse_utc(last_success) > error_at:
+        last_error = ""
+    storage = get_setting("cloud_backup_r2_storage_bytes", "")
+    return {
+        "configured": True,
+        "location": f"{get_setting('cloud_backup_r2_bucket')}/{get_setting('cloud_backup_r2_prefix')}",
+        "last_success": last_success,
+        "last_success_local": local_time(last_success),
+        "last_error": last_error,
+        "last_warning": get_setting("cloud_backup_r2_last_warning", ""),
+        "storage_label": format_file_size(int(storage)) if storage.isdigit() else "",
     }
 
 
@@ -7249,6 +7395,66 @@ def settings_cloud_backup_save():
     return _cloud_settings_redirect()
 
 
+@app.route("/settings/cloud-backup/r2/save", methods=["POST"])
+@super_admin_required
+def settings_cloud_backup_r2_save():
+    """Connect the Cloudflare R2 bucket as a second copy, with the same recovery key."""
+    if not cloud_backup_configured():
+        flash("Set up the Backblaze cloud backup first: the second copy uses its recovery key.", "error")
+        return _cloud_settings_redirect()
+    form = request.form
+    secret = form.get("cloud_backup_r2_secret_key", "").strip() or get_setting("cloud_backup_r2_secret_key", "")
+    try:
+        config = cloud_backup.validate_r2_config(
+            endpoint=form.get("cloud_backup_r2_endpoint", "").strip(),
+            bucket=form.get("cloud_backup_r2_bucket", "").strip(),
+            prefix=form.get("cloud_backup_r2_prefix", "").strip() or get_setting("cloud_backup_prefix", "") or CLOUD_BACKUP_DEFAULT_PREFIX,
+            key_id=form.get("cloud_backup_r2_key_id", "").strip(),
+            secret=secret,
+            recovery_key=get_setting("cloud_backup_recovery_key", ""),
+        )
+        restic = make_r2_restic(config)
+        if restic.exists():
+            restic.snapshots()  # proves the recovery key opens these backups
+            message = f"Connected to the existing backups in Cloudflare R2 ({config.location_label})."
+        else:
+            restic.init()
+            message = f"Connected to Cloudflare R2. Each backup now also goes to {config.location_label}."
+    except cloud_backup.CloudBackupError as exc:
+        flash(str(exc), "error")
+        return _cloud_settings_redirect()
+    db = get_db()
+    for key in R2_STATE_KEYS:
+        db.execute("delete from app_settings where key = ?", (key,))
+    for key, value in {
+        "cloud_backup_r2_host": config.host,
+        "cloud_backup_r2_bucket": config.bucket,
+        "cloud_backup_r2_prefix": config.prefix,
+        "cloud_backup_r2_key_id": config.key_id,
+        "cloud_backup_r2_secret_key": config.app_key,
+        "cloud_backup_r2_connected_at": utc_timestamp(),
+    }.items():
+        db.execute("insert or replace into app_settings(key, value) values (?, ?)", (key, value))
+    db.commit()
+    flash(message + " The next backup sends a copy there.", "success")
+    return _cloud_settings_redirect()
+
+
+@app.route("/settings/cloud-backup/r2/disconnect", methods=["POST"])
+@super_admin_required
+def settings_cloud_backup_r2_disconnect():
+    """Stop the second copy and forget its keys. Backups already in the R2 bucket are not touched."""
+    if _cloud_job_lock.locked():
+        flash("Wait for the current backup to finish first.", "error")
+        return _cloud_settings_redirect()
+    db = get_db()
+    for key in (*R2_CONFIG_KEYS, *R2_STATE_KEYS, "cloud_backup_r2_connected_at"):
+        db.execute("delete from app_settings where key = ?", (key,))
+    db.commit()
+    flash("The Cloudflare R2 copy is turned off. Backups already in that bucket were not deleted.", "success")
+    return _cloud_settings_redirect()
+
+
 @app.route("/settings/cloud-backup/confirm-key", methods=["POST"])
 @super_admin_required
 def settings_cloud_backup_confirm_key():
@@ -7293,7 +7499,9 @@ def settings_cloud_backup_disconnect():
         flash("Wait for the current backup to finish first.", "error")
         return _cloud_settings_redirect()
     db = get_db()
-    for key in (*CLOUD_BACKUP_CONFIG_KEYS, *CLOUD_BACKUP_STATE_KEYS, "cloud_backup_configured_at"):
+    # The R2 copy uses the recovery key being forgotten here, so it goes too.
+    for key in (*CLOUD_BACKUP_CONFIG_KEYS, *CLOUD_BACKUP_STATE_KEYS, "cloud_backup_configured_at",
+                *R2_CONFIG_KEYS, *R2_STATE_KEYS, "cloud_backup_r2_connected_at"):
         db.execute("delete from app_settings where key = ?", (key,))
     db.commit()
     flash("Cloud backup turned off. Backups already in your bucket were not deleted.", "success")
@@ -7333,7 +7541,7 @@ def api_cloud_backup_status():
 @admin_required
 def api_cloud_backup_snapshots():
     try:
-        snapshots = make_restic(load_cloud_backup_config()).snapshots()
+        snapshots = make_copy_restic(cloud_copy(request.args.get("copy"))).snapshots()
     except cloud_backup.CloudBackupError as exc:
         return jsonify({"error": str(exc)}), 502
     return jsonify({
@@ -7357,7 +7565,7 @@ def settings_cloud_backup_download(snapshot_id: str):
     """Download a cloud backup as an ordinary full-backup file (it can be restored with Upload And Restore)."""
     work_dir = Path(tempfile.mkdtemp(dir=DATA_DIR, prefix="cloud-download-"))
     try:
-        restic = make_restic(load_cloud_backup_config())
+        restic = make_copy_restic(cloud_copy(request.args.get("copy")))
         snapshot = _find_cloud_snapshot(restic, snapshot_id)
         restored = restic.restore(snapshot, work_dir / "restore")
         validate_backup_manifest(restored / "manifest.json")
@@ -7388,7 +7596,7 @@ def settings_cloud_backup_restore():
     snapshot_id = request.form.get("snapshot_id", "").strip()
     work_dir = Path(tempfile.mkdtemp(dir=DATA_DIR, prefix="cloud-restore-"))
     try:
-        restic = make_restic(load_cloud_backup_config())
+        restic = make_copy_restic(cloud_copy(request.form.get("copy")))
         snapshot = _find_cloud_snapshot(restic, snapshot_id)
         restored = restic.restore(snapshot, work_dir / "restore")
         validate_backup_manifest(restored / "manifest.json")

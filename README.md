@@ -123,6 +123,7 @@ Open **Settings → Cloud Backup (Backblaze B2)**. The card walks you through cr
 - In the bucket's **Lifecycle Settings**, choose **Keep prior versions for this number of days: 7**. That keeps removed backup pieces for a week as a safety net, then deletes them so storage doesn't grow forever.
 - Admins see a warning at the top of every page when backups stop working or the recovery key hasn't been confirmed.
 - **New server after losing the old one:** install the app, open the same card, enter the same bucket details plus your recovery key, then use **Show Backups → Restore**.
+- **Second copy in Cloudflare R2 (optional, free up to 10 GB):** under **Add a second copy in Cloudflare R2**, paste the bucket's S3 API address and an R2 API token (Object Read & Write, this bucket only). Every backup then also goes to R2, with the same recovery key. If one of the two fails, the other still counts, and Settings shows each one's status. **Show Backups** lets you pick which copy to download or restore from.
 
 Docker installs include restic. For Python installs, install it with `apt install restic` (or from restic.net).
 

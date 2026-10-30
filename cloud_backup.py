@@ -1,17 +1,20 @@
-"""Encrypted offsite backups to Backblaze B2, using restic.
+"""Encrypted offsite backups to Backblaze B2, and optionally a second copy in
+Cloudflare R2, using restic.
 
 restic (https://restic.net) does the encryption, deduplication, integrity
 checks and retention. This module only builds the restic command line, runs
 it with bounded timeouts, and turns its JSON output into plain Python values.
 It knows nothing about Flask; app.py owns settings, scheduling and the UI.
 
-Secrets (the B2 application key and the restic password, which the UI calls
+Secrets (the B2 application key, the R2 secret access key, and the restic password, which the UI calls
 the "recovery key") are passed to restic through environment variables and
 are never logged or included in error messages.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -19,7 +22,10 @@ import shutil
 import subprocess
 import threading
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import ClassVar
+from urllib.parse import quote
 
 import requests
 
@@ -76,8 +82,9 @@ class FileKeepsFailing(CloudBackupError):
         self.reason = reason  # restic's full retry message, for telling a daily-limit refusal apart
 
 
-def run_watched(command: list[str], env: dict, cwd: str | None, timeout: int) -> subprocess.CompletedProcess:
-    """Run restic like subprocess.run, but stop it once Backblaze keeps refusing one file.
+def run_watched(command: list[str], env: dict, cwd: str | None, timeout: int,
+                service: str = "Backblaze", status_page: str = "status.backblaze.com") -> subprocess.CompletedProcess:
+    """Run restic like subprocess.run, but stop it once the storage service keeps refusing one file.
 
     Raises subprocess.TimeoutExpired, or FileKeepsFailing naming the file.
     """
@@ -116,8 +123,8 @@ def run_watched(command: list[str], env: dict, cwd: str | None, timeout: int) ->
     if stuck:
         name, reason = stuck[0]
         raise FileKeepsFailing(
-            f"Backblaze keeps refusing one backup file ({name}): {reason[:120]}. "
-            "This is a problem on Backblaze's side; see status.backblaze.com. "
+            f"{service} keeps refusing one backup file ({name}): {reason[:120]}. "
+            f"This is a problem on {service}'s side; see {status_page}. "
             "Your data on this server is safe.",
             reason,
         )
@@ -140,6 +147,8 @@ class B2Config:
     key_id: str
     app_key: str
     recovery_key: str
+    service: ClassVar[str] = "Backblaze"
+    status_page: ClassVar[str] = "status.backblaze.com"
 
     @property
     def repository(self) -> str:
@@ -209,6 +218,93 @@ def validate_config(region: str, bucket: str, prefix: str, key_id: str, app_key:
     return B2Config(region, bucket, prefix, key_id, app_key, recovery_key)
 
 
+R2_HOST_SUFFIX = ".r2.cloudflarestorage.com"
+# What Cloudflare shows as the bucket's "S3 API" address, with or without the bucket:
+# https://<32-character account id>[.eu].r2.cloudflarestorage.com[/<bucket>]
+_R2_ENDPOINT_RE = re.compile(
+    r"^(?:https?://)?([0-9a-f]{32}(?:\.[a-z]+)?)\.r2\.cloudflarestorage\.com(?:/([a-z0-9][a-z0-9-]{1,61}[a-z0-9]))?/?$"
+)
+_R2_BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
+_R2_KEY_ID_RE = re.compile(r"^[A-Za-z0-9]{16,128}$")
+_R2_SECRET_RE = re.compile(r"^[A-Za-z0-9+/=_-]{16,128}$")
+
+
+@dataclass(frozen=True)
+class R2Config:
+    """A second copy in Cloudflare R2. Field names match B2Config so Restic treats both alike:
+    key_id is the Access Key ID and app_key the Secret Access Key."""
+    host: str
+    bucket: str
+    prefix: str
+    key_id: str
+    app_key: str
+    recovery_key: str
+    service: ClassVar[str] = "Cloudflare R2"
+    status_page: ClassVar[str] = "www.cloudflarestatus.com"
+
+    @property
+    def repository(self) -> str:
+        return f"s3:https://{self.host}/{self.bucket}/{self.prefix}"
+
+    @property
+    def location_label(self) -> str:
+        return f"{self.bucket}/{self.prefix}"
+
+
+def parse_r2_endpoint(value: str) -> tuple[str, str]:
+    """(host, bucket) from the S3 API address on the bucket's page in Cloudflare. bucket may be ""."""
+    match = _R2_ENDPOINT_RE.match((value or "").strip().lower())
+    if not match:
+        raise CloudBackupError(
+            "Paste the S3 API address from your bucket's Settings page in Cloudflare. "
+            "It looks like https://<account id>.r2.cloudflarestorage.com/<bucket>."
+        )
+    return match.group(1) + R2_HOST_SUFFIX, match.group(2) or ""
+
+
+def validate_r2_config(endpoint: str, bucket: str, prefix: str, key_id: str, secret: str, recovery_key: str) -> R2Config:
+    host, found_bucket = parse_r2_endpoint(endpoint)
+    bucket = (bucket or found_bucket).strip().lower()
+    if not _R2_BUCKET_RE.match(bucket):
+        raise CloudBackupError("Bucket name must be 3-63 lowercase letters, numbers or dashes.")
+    if not _PREFIX_RE.match(prefix or ""):
+        raise CloudBackupError("Folder name must start with a letter or number and use only letters, numbers, dots, dashes or underscores.")
+    if not _R2_KEY_ID_RE.match(key_id or ""):
+        raise CloudBackupError("Access Key ID doesn't look right. Copy it from the R2 API token page again.")
+    if not _R2_SECRET_RE.match(secret or ""):
+        raise CloudBackupError("Secret Access Key doesn't look right. Copy it from the R2 API token page again.")
+    if len(recovery_key or "") < 16:
+        raise CloudBackupError("Set up the main cloud backup first: the second copy uses the same recovery key.")
+    return R2Config(host, bucket, prefix, key_id, secret, recovery_key)
+
+
+def sigv4_headers(host: str, path: str, query: dict, key_id: str, secret: str,
+                  region: str = "auto", now: datetime | None = None) -> dict:
+    """AWS Signature Version 4 headers for an empty-body GET (all the R2 key check needs)."""
+    now = now or datetime.now(timezone.utc)
+    amz_date, day = now.strftime("%Y%m%dT%H%M%SZ"), now.strftime("%Y%m%d")
+    payload = hashlib.sha256(b"").hexdigest()
+    canonical_query = "&".join(
+        f"{quote(str(k), safe='-_.~')}={quote(str(v), safe='-_.~')}" for k, v in sorted(query.items())
+    )
+    signed = "host;x-amz-content-sha256;x-amz-date"
+    request = "\n".join([
+        "GET", quote(path, safe="/-_.~"), canonical_query,
+        f"host:{host}\nx-amz-content-sha256:{payload}\nx-amz-date:{amz_date}\n", signed, payload,
+    ])
+    scope = f"{day}/{region}/s3/aws4_request"
+    to_sign = "\n".join(["AWS4-HMAC-SHA256", amz_date, scope, hashlib.sha256(request.encode()).hexdigest()])
+    key = ("AWS4" + secret).encode()
+    for part in (day, region, "s3", "aws4_request"):
+        key = hmac.new(key, part.encode(), hashlib.sha256).digest()
+    signature = hmac.new(key, to_sign.encode(), hashlib.sha256).hexdigest()
+    return {
+        "x-amz-date": amz_date,
+        "x-amz-content-sha256": payload,
+        "Authorization": f"AWS4-HMAC-SHA256 Credential={key_id}/{scope}, SignedHeaders={signed}, Signature={signature}",
+    }
+
+
 def restic_available() -> bool:
     return shutil.which(restic_binary()) is not None
 
@@ -235,6 +331,10 @@ class Restic:
         """
         if self._key_checked:
             return
+        if isinstance(self.config, R2Config):
+            self._check_r2_key()
+            self._key_checked = True
+            return
         try:
             response = requests.get(B2_AUTHORIZE_URL, auth=(self.config.key_id, self.config.app_key), timeout=20)
         except requests.RequestException as exc:
@@ -254,6 +354,29 @@ class Restic:
             raise CloudBackupError(f"This key can't reach the bucket {self.config.bucket}. Check the bucket name.")
         self._key_checked = True
 
+    def _check_r2_key(self) -> None:
+        """List one name in the bucket folder, so a wrong key or bucket is reported at once."""
+        config = self.config
+        query = {"list-type": "2", "max-keys": "1", "prefix": f"{config.prefix}/"}
+        path = f"/{config.bucket}"
+        headers = sigv4_headers(config.host, path, query, config.key_id, config.app_key)
+        try:
+            response = requests.get(f"https://{config.host}{path}", params=query, headers=headers, timeout=20)
+        except requests.RequestException as exc:
+            raise CloudBackupError(
+                "Could not reach Cloudflare R2. Check the S3 API address and this server's internet connection."
+            ) from exc
+        if response.status_code == 200:
+            return
+        if response.status_code == 404 or "NoSuchBucket" in (response.text or ""):
+            raise CloudBackupError(f"Cloudflare R2 has no bucket named {config.bucket} in this account. Check the bucket name.")
+        if response.status_code in (401, 403):
+            raise CloudBackupError(
+                "Cloudflare R2 refused the key. Check the Access Key ID and Secret Access Key, "
+                "and that the token has Object Read & Write for this bucket."
+            )
+        raise CloudBackupError(f"Cloudflare R2 answered with an error ({response.status_code}). Try again in a minute.")
+
     def _env(self) -> dict:
         env = {
             "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
@@ -263,6 +386,12 @@ class Restic:
             "AWS_ACCESS_KEY_ID": self.config.key_id,
             "AWS_SECRET_ACCESS_KEY": self.config.app_key,
         }
+        if isinstance(self.config, R2Config):
+            env["AWS_DEFAULT_REGION"] = "auto"
+        # Windows only: without these restic can't look up addresses or find a temp folder.
+        for name in ("SYSTEMROOT", "TEMP", "TMP"):
+            if os.name == "nt" and os.environ.get(name):
+                env[name] = os.environ[name]
         if self.cache_dir is not None:
             env["RESTIC_CACHE_DIR"] = str(self.cache_dir)
         return env
@@ -278,11 +407,12 @@ class Restic:
             raise CloudBackupError("The restic backup tool is not installed on this server.")
         self.check_key()
         try:
-            proc = run_watched([restic_binary(), *args], self._env(), str(cwd) if cwd else None, timeout)
+            proc = run_watched([restic_binary(), *args], self._env(), str(cwd) if cwd else None, timeout,
+                               self.config.service, self.config.status_page)
         except FileKeepsFailing as exc:
             raise CloudBackupError(CAP_REACHED_MESSAGE if _CAP_RE.search(exc.reason) else self._scrub(str(exc))) from None
         except subprocess.TimeoutExpired as exc:
-            raise CloudBackupError(f"Backblaze did not respond within {timeout // 60} minutes.") from exc
+            raise CloudBackupError(f"{self.config.service} did not respond within {timeout // 60} minutes.") from exc
         if proc.returncode != 0:
             message = self._scrub((proc.stderr or proc.stdout or "").strip())
             lower = message.lower()
@@ -293,7 +423,7 @@ class Restic:
             if any(marker in lower for marker in _WRONG_PASSWORD_MARKERS):
                 raise WrongRecoveryKey("The recovery key does not match the backups in this bucket folder.")
             if "403" in message or "access denied" in lower or "invalidaccesskeyid" in lower or "signaturedoesnotmatch" in lower:
-                raise CloudBackupError("Backblaze refused the key. Check the key ID, application key and bucket name.")
+                raise CloudBackupError(f"{self.config.service} refused the key. Check the key ID, application key and bucket name.")
             last_line = message.splitlines()[-1] if message else "unknown error"
             raise CloudBackupError(f"Backup tool error: {last_line[:300]}")
         return proc.stdout
