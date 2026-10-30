@@ -48,6 +48,22 @@ _WRONG_PASSWORD_MARKERS = ("wrong password", "no key found")
 # After this many tries of the same file it is stopped, with a clear message.
 _RETRY_LINE_RE = re.compile(r"^\s*\w+\(<([^>]+)>.*\) returned error, retrying after [^:]*:\s*(.*)$")
 RETRIES_BEFORE_GIVING_UP = 6
+# Backblaze's daily free limits ("Caps & Alerts"), as its API and S3 errors word them:
+# transaction_cap_exceeded, download_cap_exceeded, "... (Class B) cap exceeded".
+_CAP_RE = re.compile(r"cap[_ ]exceeded", re.IGNORECASE)
+CAP_REACHED_MESSAGE = (
+    "Backblaze's daily free limit has been reached (Caps & Alerts in your Backblaze account), "
+    "so it is refusing for now. Backups work again after Backblaze's daily reset, or sooner if "
+    "you raise the cap there. Your data on this server is safe."
+)
+
+
+def _cap_reached(response) -> bool:
+    try:
+        code = str((response.json() or {}).get("code", ""))
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return bool(_CAP_RE.search(code))
 
 
 class CloudBackupError(Exception):
@@ -55,7 +71,9 @@ class CloudBackupError(Exception):
 
 
 class FileKeepsFailing(CloudBackupError):
-    pass
+    def __init__(self, message: str, reason: str = ""):
+        super().__init__(message)
+        self.reason = reason  # restic's full retry message, for telling a daily-limit refusal apart
 
 
 def run_watched(command: list[str], env: dict, cwd: str | None, timeout: int) -> subprocess.CompletedProcess:
@@ -100,7 +118,8 @@ def run_watched(command: list[str], env: dict, cwd: str | None, timeout: int) ->
         raise FileKeepsFailing(
             f"Backblaze keeps refusing one backup file ({name}): {reason[:120]}. "
             "This is a problem on Backblaze's side; see status.backblaze.com. "
-            "Your data on this server is safe."
+            "Your data on this server is safe.",
+            reason,
         )
     return subprocess.CompletedProcess(command, proc.returncode, "".join(out), "".join(err))
 
@@ -156,6 +175,8 @@ def discover_b2(key_id: str, app_key: str) -> tuple[str, str | None]:
         response = requests.get(B2_AUTHORIZE_URL, auth=(key_id, app_key), timeout=20)
     except requests.RequestException as exc:
         raise CloudBackupError("Could not reach Backblaze. Check this server's internet connection.") from exc
+    if response.status_code != 200 and _cap_reached(response):
+        raise CloudBackupError(CAP_REACHED_MESSAGE)
     if response.status_code == 401:
         raise CloudBackupError("Backblaze didn't accept this Key ID and Application Key. Copy both again.")
     if response.status_code != 200:
@@ -218,6 +239,8 @@ class Restic:
             response = requests.get(B2_AUTHORIZE_URL, auth=(self.config.key_id, self.config.app_key), timeout=20)
         except requests.RequestException as exc:
             raise CloudBackupError("Could not reach Backblaze. Check this server's internet connection.") from exc
+        if response.status_code != 200 and _cap_reached(response):
+            raise CloudBackupError(CAP_REACHED_MESSAGE)
         if response.status_code in (401, 403):
             raise CloudBackupError("Backblaze refused the key. Check the key ID and application key.")
         if response.status_code != 200:
@@ -257,12 +280,14 @@ class Restic:
         try:
             proc = run_watched([restic_binary(), *args], self._env(), str(cwd) if cwd else None, timeout)
         except FileKeepsFailing as exc:
-            raise CloudBackupError(self._scrub(str(exc))) from None
+            raise CloudBackupError(CAP_REACHED_MESSAGE if _CAP_RE.search(exc.reason) else self._scrub(str(exc))) from None
         except subprocess.TimeoutExpired as exc:
             raise CloudBackupError(f"Backblaze did not respond within {timeout // 60} minutes.") from exc
         if proc.returncode != 0:
             message = self._scrub((proc.stderr or proc.stdout or "").strip())
             lower = message.lower()
+            if _CAP_RE.search(message):
+                raise CloudBackupError(CAP_REACHED_MESSAGE)
             if any(marker in lower for marker in _MISSING_REPO_MARKERS):
                 raise RepositoryMissing("No backups exist in this bucket folder yet.")
             if any(marker in lower for marker in _WRONG_PASSWORD_MARKERS):

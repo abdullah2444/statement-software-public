@@ -19,6 +19,9 @@ so write them for the people using the app.
   the checked local backup it always makes (the one it rolls back to). Settings
   → Cloud Backup shows the reason, and the next cloud backup catches up. Before,
   a Backblaze problem stopped every update.
+- When Backblaze refuses because your account's daily free limit is used up
+  (Caps & Alerts in Backblaze), the message now says so and that backups resume
+  after Backblaze's daily reset. Before, it wrongly said Backblaze refused the key.
 
 ## 5.2.21
 

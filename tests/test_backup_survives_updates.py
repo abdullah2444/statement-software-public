@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from unittest.mock import patch
 
 ROOT = Path(__file__).parents[1]
@@ -154,6 +155,59 @@ class StuckFileTests(unittest.TestCase):
                 restic.run(['snapshots'])
         self.assertIn('snapshot/4c58', str(caught.exception))
         self.assertNotIn('SECRETAPPKEY123', str(caught.exception))
+
+
+class DailyLimitTests(unittest.TestCase):
+    """Backblaze's free daily caps ("Caps & Alerts") are told apart from a wrong key."""
+
+    config = cloud_backup.B2Config('us-east-005', 'acme-backups', 'p', 'KEYID12345', 'SECRETAPPKEY123', 'RECOVERY-KEY-VALUE')
+
+    def answer(self, status, code):
+        response = unittest.mock.Mock(status_code=status)
+        response.json.return_value = {'status': status, 'code': code, 'message': 'Cap exceeded.'}
+        return response
+
+    def assert_daily_limit(self, exc):
+        self.assertIn('daily free limit', str(exc))
+        self.assertNotIn('refused the key', str(exc))
+
+    def test_key_check_reports_the_daily_limit(self):
+        with patch('cloud_backup.requests.get', return_value=self.answer(403, 'transaction_cap_exceeded')):
+            with self.assertRaises(cloud_backup.CloudBackupError) as caught:
+                cloud_backup.Restic(self.config).check_key()
+        self.assert_daily_limit(caught.exception)
+        with patch('cloud_backup.requests.get', return_value=self.answer(403, 'transaction_cap_exceeded')):
+            with self.assertRaises(cloud_backup.CloudBackupError) as caught:
+                cloud_backup.discover_b2('KEYID12345', 'SECRETAPPKEY123')
+        self.assert_daily_limit(caught.exception)
+        # A real wrong key still says so.
+        with patch('cloud_backup.requests.get', return_value=self.answer(401, 'bad_auth_token')):
+            with self.assertRaisesRegex(cloud_backup.CloudBackupError, 'refused the key'):
+                cloud_backup.Restic(self.config).check_key()
+
+    def test_restic_error_with_the_daily_limit(self):
+        restic = cloud_backup.Restic(self.config)
+        restic._key_checked = True
+        refused = cloud_backup.subprocess.CompletedProcess(
+            [], 1, '', 'Fatal: unable to open config file: Stat: 403 Access Denied: Cannot download file, '
+                       'download bandwidth or transaction (Class B) cap exceeded.\n')
+        with patch('cloud_backup.restic_available', return_value=True), \
+                patch('cloud_backup.run_watched', return_value=refused):
+            with self.assertRaises(cloud_backup.CloudBackupError) as caught:
+                restic.run(['snapshots'])
+        self.assert_daily_limit(caught.exception)
+
+    def test_restic_retrying_because_of_the_daily_limit(self):
+        restic = cloud_backup.Restic(self.config)
+        restic._key_checked = True
+        stuck = cloud_backup.FileKeepsFailing(
+            'Backblaze keeps refusing one backup file (snapshot/4c58): Access Denied.',
+            'Access Denied: Cannot download file, download bandwidth or transaction (Class B) cap exceeded.')
+        with patch('cloud_backup.restic_available', return_value=True), \
+                patch('cloud_backup.run_watched', side_effect=stuck):
+            with self.assertRaises(cloud_backup.CloudBackupError) as caught:
+                restic.run(['snapshots'])
+        self.assert_daily_limit(caught.exception)
 
 
 if __name__ == '__main__':
