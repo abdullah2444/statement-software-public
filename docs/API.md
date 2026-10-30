@@ -120,6 +120,8 @@ Important response groups:
 - `stats`: all client statement balances.
 - `company_status`: the final owner/company balance used by the web UI.
 - `exchange_rate_summary.display_rate`: the USD/CNY rate used for approximate RMB display.
+- `exchange_rate_summary.rate_in_use`: which rate that is: `manual` (typed by an admin), `live`, or `latest` (the newest exchange, only while neither is set).
+- `client_split`: clients you hold money for (`held`) and clients who owe you (`owed`), kept apart instead of netted. Each side has `usd`, `cny`, `rmb` (at `display_rate`, or null without a rate) and `count`. A client goes on one side by their whole balance at `display_rate`; with no rate, each currency is sorted on its own.
 
 Do **not** calculate owner net RMB as only:
 
@@ -232,6 +234,15 @@ curl -X POST http://localhost:18451/api/v1/clients/1/entries \
 | `travel_expense` | Travel (hotels, flights, trains, taxis) |
 | `internal_transfer` | Internal Transfer |
 | `fx_transfer` | Currency Exchange |
+
+Auto commission (`POST /entries/{entry_id}/commission`) takes `percentage`, and
+optionally `commission_date`, `note`, `add_to_company_profit` and
+`profit_expense_account_id`. A commission counts as company profit by default, in
+the company's own expense account. Send `"add_to_company_profit": false` to leave
+it out. If you leave the flag out and the account can't take the currency, the
+commission is still made and the reply has `company_profit_note` saying why; if you
+send the flag as true, that case is refused with 400. The reply always says
+`added_to_company_profit`.
 
 Upload an image:
 

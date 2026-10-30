@@ -79,24 +79,35 @@
         </dl>
         <div class="pos-fx">
           <p class="pos-fx-title">USD &rarr; CNY rate</p>
+          {#- The rate in use is marked; admins type their own rate right here. -#}
           <dl>
-            <div class="{{ 'is-active' if fx_summary.fx_source == 'live' and fx_summary.live_rate is not none }}">
+            <div class="{{ 'is-active' if fx_summary.rate_in_use == 'manual' }}" id="fx-manual-row">
+              <dt>My rate</dt>
+              <dd><span>{{ "{:,.4f}".format(fx_summary.manual_rate) if fx_summary.manual_rate is not none else 'Not set' }}</span>
+                {% if is_admin() %}<button type="button" class="pos-refresh" data-open="fx-manual-form" data-tip="Type your rate" aria-label="Type your rate">{{ icon('edit') }}</button>{% endif %}</dd>
+            </div>
+            <div class="{{ 'is-active' if fx_summary.rate_in_use == 'live' }}">
               <dt>Live</dt>
               <dd><span id="live-fx-value">{{ "{:,.4f}".format(fx_summary.live_rate) if fx_summary.live_rate is not none else '—' }}</span>
                 <button type="button" class="pos-refresh" id="fx-refresh-btn" data-tip="Get today's rate" aria-label="Get today's rate">{{ icon('refresh') }}</button></dd>
             </div>
-            <div class="{{ 'is-active' if fx_summary.fx_source != 'live' or fx_summary.live_rate is none }}">
-              <dt>Average</dt>
-              <dd>{{ "{:,.4f}".format(fx_summary.average_rate) if fx_summary.average_rate is not none else '—' }}</dd>
-            </div>
-            <div>
-              <dt>Latest pair</dt>
+            <div class="{{ 'is-active' if fx_summary.rate_in_use == 'latest' }}">
+              <dt>Latest exchange</dt>
               <dd>{{ "{:,.4f}".format(fx_summary.latest_rate) if fx_summary.latest_rate is not none else '—' }}</dd>
             </div>
           </dl>
+          {% if is_admin() %}
+          <form method="post" action="{{ url_for('set_manual_fx_rate') }}" class="pos-fx-form" id="fx-manual-form" hidden>
+            {{ csrf_input() }}
+            <label>1 USD =<input type="number" name="fx_manual_rate" step="0.0001" min="0.0001" inputmode="decimal" required
+                   value="{{ '%.4f'|format(fx_summary.manual_rate or fx_summary.live_rate or 0) if (fx_summary.manual_rate or fx_summary.live_rate) }}" placeholder="7.1500">RMB</label>
+            <button type="submit" class="button">Save</button>
+            <button type="button" class="button ghost" data-close="fx-manual-form">Cancel</button>
+          </form>
+          {% endif %}
           <p class="pos-fx-note">
-            {% if fx_summary.live_rate_date %}Live rate from {{ fx_summary.live_rate_date|local_time }}{% else %}Live rate not fetched yet{% endif %}
-            {% if fx_summary.count > 0 %}&middot; average of {{ fx_summary.count }} exchange{{ 's' if fx_summary.count != 1 }}{% endif %}
+            {% if fx_summary.manual_rate_date %}My rate set {{ fx_summary.manual_rate_date|local_time }}{% else %}My rate not set yet{% endif %}
+            &middot; {% if fx_summary.live_rate_date %}live from {{ fx_summary.live_rate_date|local_time }}{% else %}live not fetched yet{% endif %}
           </p>
         </div>
       </section>
@@ -257,6 +268,21 @@
             <p>{{ clients|length }} client{{ 's' if clients|length != 1 }} &middot; net balance of every statement</p>
           </div>
           {{ totals(stats.total_usd_balance, stats.total_cny_balance) }}
+          {#- The net above hides who owes whom, so both sides are shown on their own. -#}
+          <dl class="clients-split">
+            {% for key, label in (('held', 'You hold for clients'), ('owed', 'Clients owe you')) %}
+            {% set side = client_split[key] %}
+            <div class="is-{{ key }}">
+              <dt>{{ label }} <span>&middot; {{ side.count }} client{{ 's' if side.count != 1 }}</span></dt>
+              {% if side.rmb is not none %}
+              <dd class="{{ 'is-neg' if key == 'owed' and side.rmb|abs >= 0.005 }}">&#8776; {{ amt(side.rmb|abs, 'CNY') }}</dd>
+              <dd class="clients-split-parts">{{ amt(side.usd) }} &middot; {{ amt(side.cny, 'CNY') }}</dd>
+              {% else %}
+              <dd class="{{ 'is-neg' if key == 'owed' and (side.usd|abs >= 0.005 or side.cny|abs >= 0.005) }}">{{ amt(side.usd|abs) }} &middot; {{ amt(side.cny|abs, 'CNY') }}</dd>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </dl>
         </header>
 
         <div class="clients-toolbar">

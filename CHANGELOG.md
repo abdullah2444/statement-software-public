@@ -4,6 +4,32 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.20
+
+**Your own exchange rate**
+- The rate box on the dashboard now has **My rate**. An admin presses the pencil,
+  types 1 USD = ? RMB and saves. Every ≈ RMB figure then uses it: Company
+  position, the client totals, each client's Approx Total and the phone view.
+- It shows the date it was set, so an old rate is easy to spot. The live rate and
+  your latest exchange are still shown next to it for reference.
+- The average of every exchange since the start is gone. Settings → Exchange rate
+  lets you choose **My rate** or **Live rate**; if the one you choose isn't set
+  yet, the other one is used.
+- This only changes how totals are shown. Saved entries never change.
+
+**Clients: who owes you and whose money you hold**
+- The Clients card on the dashboard now shows **You hold for clients** and
+  **Clients owe you** separately, each in ≈ RMB with the USD and RMB parts.
+  Before, both were added into one net number, so a big deposit could hide a
+  big debt. The net total and Company position are the same as before.
+
+**Auto commission counts as company profit**
+- The Auto commission form now has **Add to company profit**, ticked, with your
+  company account already chosen. Untick it for a commission that shouldn't
+  count. Commissions made before this update don't change.
+- If that account doesn't hold the commission's currency, the commission is
+  still made and a message says it wasn't added to company profit.
+
 ## 5.2.19
 
 **Orders inside a statement**

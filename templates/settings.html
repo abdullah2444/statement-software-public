@@ -529,15 +529,22 @@
           {{ csrf_input() }}
           <input type="hidden" name="section" value="exchange-rate">
           <h2>Exchange rate</h2>
-          <p>Choose which rate to use for Approx Total (RMB) calculations on the dashboard.</p>
+          <p>The USD to RMB rate used for every ≈ RMB figure: the dashboard, each client's Approx Total and the phone view. Saved entries never change.</p>
 
           <div class="settings-field">
-            <label for="fx_rate_source">Rate Source</label>
+            <label for="fx_rate_source">Rate to use</label>
             <select id="fx_rate_source" name="fx_rate_source">
-              <option value="live" {% if fx_rate_source == 'live' %}selected{% endif %}>Live API Rate</option>
-              <option value="average" {% if fx_rate_source == 'average' %}selected{% endif %}>Average Historical Rate</option>
+              <option value="manual" {% if fx_rate_source == 'manual' %}selected{% endif %}>My rate (typed in)</option>
+              <option value="live" {% if fx_rate_source == 'live' %}selected{% endif %}>Live rate from the internet</option>
             </select>
-            <div class="field-hint">Live: fetched from exchange rate API on demand. Average: calculated from all recorded exchanges.</div>
+            <div class="field-hint">If the one you choose isn't set yet, the other one is used.</div>
+          </div>
+
+          <div class="settings-field">
+            <label for="fx_manual_rate">My rate (1 USD = ? RMB)</label>
+            <input type="number" id="fx_manual_rate" name="fx_manual_rate" step="0.0001" min="0.0001" inputmode="decimal"
+                   value="{{ '%.4f'|format(fx_manual_rate) if fx_manual_rate else '' }}" placeholder="7.1500">
+            <div class="field-hint">{% if fx_manual_rate_updated_at %}Set {{ fx_manual_rate_updated_at|local_time }}.{% else %}Not set yet.{% endif %} Admins can also change it from the dashboard.</div>
           </div>
 
           <div class="settings-field">

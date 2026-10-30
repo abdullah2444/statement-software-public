@@ -1391,6 +1391,23 @@
                     <span>Note</span>
                     <input type="text" name="note" placeholder="Commission - source description">
                   </label>
+                  {% if commission_expense_accounts %}
+                  <div class="edit-wide">
+                    <label class="checkline">
+                      <input type="checkbox" name="add_to_company_profit" value="1" checked>
+                      <span>Add to company profit</span>
+                    </label>
+                    <label>
+                      <span>Expense Account</span>
+                      <select name="profit_expense_account_id">
+                        <option value="">Choose expense account</option>
+                        {% for account in commission_expense_accounts %}
+                        <option value="{{ account.id }}" {% if account.id == default_profit_account_id %}selected{% endif %}>{{ account.name }}{% if account.currency_label %} ({{ account.currency_label }}){% endif %}</option>
+                        {% endfor %}
+                      </select>
+                    </label>
+                  </div>
+                  {% endif %}
                   <div class="edit-actions">
                     <button class="button secondary" type="submit">Create Commission</button>
                     <a class="button ghost" href="#table-top" data-commission-cancel>Cancel</a>

@@ -186,6 +186,8 @@ paths:
                 percentage: {type: number}
                 commission_date: {type: string, format: date}
                 note: {type: string}
+                add_to_company_profit: {type: boolean, default: true}
+                profit_expense_account_id: {type: integer}
       responses:
         "201": {$ref: "#/components/responses/Ok"}
   /clients/{client_id}/exchange:
