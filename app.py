@@ -1451,6 +1451,7 @@ WEB_AUDIT_ACTIONS = {
     "quick_submit_delete": ("delete_quick_submit", "quick_submit"),
     "api_link_transfer": ("link_transfer", "statement_entry"),
     "api_fx_refresh": ("refresh_fx_rate", "app_setting"),
+    "set_manual_fx_rate": ("set_manual_fx_rate", "app_setting"),
     "settings_save": ("update_settings", "app_setting"),
     "settings_updates_check": ("check_software_updates", "software_update"),
     "settings_updates_install": ("request_software_update", "software_update"),
@@ -2739,13 +2740,28 @@ def commission_description(source_description: str, note: str | None) -> str:
     return f"Commission - {clean_source}" if clean_source else "Commission"
 
 
+def commission_profit_account(
+    db: sqlite3.Connection, account_id: int | None, currency: str
+) -> tuple[int | None, str | None]:
+    """The company account a new commission counts in as profit, or why it can't."""
+    try:
+        account = validate_profit_expense_selection(
+            db, enabled=True, account_id=account_id, category_hint="commission", currency=currency
+        )
+    except ValueError as exc:
+        return None, str(exc)
+    return int(account["id"]), None
+
+
 def create_commission_entry(
     db: sqlite3.Connection,
     source_entry: sqlite3.Row,
     entry_date: str,
     percentage_raw: object,
     note: str | None = None,
+    profit_account_id: int | None = None,
 ) -> tuple[sqlite3.Row, float]:
+    """The commission row; with profit_account_id it also counts as company profit there."""
     percentage = parse_commission_percentage(percentage_raw)
     amount = calculate_commission_amount(source_entry["amount"], percentage)
     description = commission_description(source_entry["description"], note)
@@ -2767,7 +2783,12 @@ def create_commission_entry(
         ),
     )
     created_id = cursor.lastrowid
+    profit_accounts: set[int] = set()
+    if profit_account_id:
+        profit_accounts = sync_statement_profit_entry(db, created_id, enabled=True, account_id=profit_account_id)
     resequence_client_entries(source_entry["client_id"])
+    for account_id in sorted(profit_accounts):
+        resequence_expense_entries(account_id)
     created = db.execute("select * from statement_entries where id = ?", (created_id,)).fetchone()
     if created is None:
         raise ValueError("Commission entry could not be created.")
@@ -3096,25 +3117,104 @@ def exchange_rate_summary() -> dict:
     ).fetchall()
     rates = [float(row["exchange_rate"]) for row in rows if row["exchange_rate"] is not None]
     latest = rows[0] if rows else None
+    # Kept for API readers only; the dashboard no longer shows or uses it.
     average_rate = (sum(rates) / len(rates)) if rates else None
-    fx_source = get_setting("fx_rate_source", "live")
-    stored_live = get_setting("fx_live_rate", "")
-    live_rate = float(stored_live) if stored_live else None
-    live_rate_date = get_setting("fx_live_rate_updated_at", "")
-    display_rate = (live_rate if fx_source == "live" and live_rate else None) or average_rate
+    latest_rate = float(latest["exchange_rate"]) if latest and latest["exchange_rate"] is not None else None
+    fx_source = fx_rate_source()
+    live_rate = stored_fx_rate("fx_live_rate")
+    manual_rate = stored_fx_rate("fx_manual_rate")
+    # The chosen rate; while it isn't set yet, the other one, then the latest exchange.
+    choices = {"manual": manual_rate, "live": live_rate, "latest": latest_rate}
+    order = ("manual", "live", "latest") if fx_source == "manual" else ("live", "manual", "latest")
+    rate_in_use = next((name for name in order if choices[name]), None)
     return {
         "count": len(rows),
-        "latest_rate": float(latest["exchange_rate"]) if latest and latest["exchange_rate"] is not None else None,
+        "latest_rate": latest_rate,
         "latest_date": latest["entry_date"] if latest else "",
         "average_rate": average_rate,
         "live_rate": live_rate,
-        "live_rate_date": live_rate_date,
-        "display_rate": display_rate,
+        "live_rate_date": get_setting("fx_live_rate_updated_at", ""),
+        "manual_rate": manual_rate,
+        "manual_rate_date": get_setting("fx_manual_rate_updated_at", ""),
+        "display_rate": choices[rate_in_use] if rate_in_use else None,
+        "rate_in_use": rate_in_use,
         "fx_source": fx_source,
     }
 
 
-def company_status(stats: dict, bank_tots: dict, sup_tots: dict) -> dict:
+FX_RATE_SOURCES = ("manual", "live")
+MAX_FX_RATE = 1000.0  # USD -> RMB is about 7; this only stops typos
+
+
+def fx_rate_source() -> str:
+    """Which rate turns USD into ≈ RMB: "manual" (typed by an admin) or "live"."""
+    # Older versions offered "average"; the typed rate takes its place.
+    return "live" if get_setting("fx_rate_source", "live") == "live" else "manual"
+
+
+def stored_fx_rate(key: str) -> float | None:
+    try:
+        rate = float(get_setting(key, "") or 0)
+    except ValueError:
+        return None
+    return rate if math.isfinite(rate) and rate > 0 else None
+
+
+def parse_fx_rate(raw: object) -> float:
+    try:
+        rate = float(str(raw).strip().replace(",", ""))
+    except ValueError:
+        rate = math.nan
+    if not math.isfinite(rate) or rate <= 0 or rate > MAX_FX_RATE:
+        raise ValueError("Type the rate as a number, like 7.15.")
+    return rate
+
+
+def save_manual_fx_rate(db: sqlite3.Connection, rate: float) -> None:
+    """The admin's own rate, used from now on for every ≈ RMB figure."""
+    for key, value in (
+        ("fx_manual_rate", repr(rate)),
+        ("fx_manual_rate_updated_at", utc_timestamp()),
+        ("fx_rate_source", "manual"),
+    ):
+        db.execute("insert or replace into app_settings(key, value) values (?, ?)", (key, value))
+
+
+def client_balance_split(clients: list[dict], rate: float | None) -> dict:
+    """Money you hold for clients and money clients owe you, kept apart instead of netted.
+
+    Each client goes on one side by their whole balance (USD at the rate plus RMB).
+    With no rate, each currency is sorted on its own.
+    """
+    split = {side: {"usd": 0.0, "cny": 0.0, "count": 0} for side in ("held", "owed")}
+    for client in clients:
+        usd = round(float(client["usd_balance"]), 2)
+        cny = round(float(client["cny_balance"]), 2)
+        if rate:
+            total = usd * rate + cny
+            if abs(total) < 0.005:
+                continue
+            side = split["held" if total > 0 else "owed"]
+            side["usd"] += usd
+            side["cny"] += cny
+            side["count"] += 1
+            continue
+        sides = set()
+        for key, value in (("usd", usd), ("cny", cny)):
+            if abs(value) >= 0.005:
+                name = "held" if value > 0 else "owed"
+                split[name][key] += value
+                sides.add(name)
+        for name in sides:
+            split[name]["count"] += 1
+    for side in split.values():
+        side["usd"] = round(side["usd"], 2) + 0.0
+        side["cny"] = round(side["cny"], 2) + 0.0
+        side["rmb"] = round(side["usd"] * rate + side["cny"], 2) + 0.0 if rate else None
+    return split
+
+
+def company_status(stats: dict, bank_tots: dict, sup_tots: dict, split: dict | None = None) -> dict:
     # Company balance = bank cash - net client balances - supplier debt.
     # Client balances are stored as IN - OUT, so a negative balance means
     # clients owe you money and should increase company balance.
@@ -3124,8 +3224,13 @@ def company_status(stats: dict, bank_tots: dict, sup_tots: dict) -> dict:
     stmt_cny = stats["total_cny_balance"]
     sup_usd = sup_tots["total_usd"]
     sup_cny = sup_tots["total_cny"]
-    receivable_usd = max(-stmt_usd, 0)
-    receivable_cny = max(-stmt_cny, 0)
+    # What clients owe, not netted against money held for other clients.
+    if split is not None:
+        receivable_usd = -split["owed"]["usd"] + 0.0
+        receivable_cny = -split["owed"]["cny"] + 0.0
+    else:
+        receivable_usd = max(-stmt_usd, 0)
+        receivable_cny = max(-stmt_cny, 0)
     balance_usd = bank_usd - stmt_usd - sup_usd
     balance_cny = bank_cny - stmt_cny - sup_cny
     usd_state = "positive" if balance_usd > 0.005 else "negative" if balance_usd < -0.005 else "zero"
@@ -3166,16 +3271,19 @@ def render_index(error: str | None = None) -> str:
     bank_tots = bank_balance_totals(balances)
     sup_tots = supplier_balance_totals(suppliers)
     fx_summary = exchange_rate_summary()
+    clients = client_list()
+    split = client_balance_split(clients, fx_summary["display_rate"])
     return render_template(
         "index.html",
-        clients=client_list(),
+        clients=clients,
         groups=grouped_client_list(),
         stats=stats,
+        client_split=split,
         bank_balances=balances,
         bank_totals=bank_tots,
         suppliers=suppliers,
         supplier_totals=sup_tots,
-        status=company_status(stats, bank_tots, sup_tots),
+        status=company_status(stats, bank_tots, sup_tots, split),
         fx_summary=fx_summary,
         expense_accounts=expense_dashboard_data(),
         error=error,
@@ -4725,13 +4833,25 @@ def create_commission(client_id: int):
 
     percentage_raw = request.form.get("percentage", "").strip()
     note = request.form.get("note", "").strip()
+    # The box is ticked by default. If the account can't take this currency, the
+    # commission is still made and the message says why it isn't in company profit.
+    profit_account_id, profit_problem = None, None
+    if request.form.get("add_to_company_profit") == "1":
+        profit_account_id, profit_problem = commission_profit_account(
+            db, request.form.get("profit_expense_account_id", type=int), source_entry["currency"]
+        )
     try:
-        create_commission_entry(db, source_entry, commission_date, percentage_raw, note)
+        create_commission_entry(db, source_entry, commission_date, percentage_raw, note, profit_account_id)
     except ValueError as exc:
         flash(str(exc), "error")
         return redirect(_return_url(client_id, source_anchor))
 
-    flash("Commission entry created.", "success")
+    if profit_problem:
+        flash(f"Commission entry created, but not added to company profit: {profit_problem}", "error")
+    elif profit_account_id:
+        flash("Commission entry created and added to company profit.", "success")
+    else:
+        flash("Commission entry created.", "success")
     return redirect(_return_url(client_id, source_anchor))
 
 
@@ -6216,6 +6336,22 @@ def api_fx_refresh():
     return jsonify({"rate": rate, "source": source, "updated_at": ts})
 
 
+@app.route("/fx-rate/manual", methods=["POST"])
+@admin_required
+def set_manual_fx_rate():
+    """The rate box on the dashboard: an admin types the USD -> RMB rate to use."""
+    try:
+        rate = parse_fx_rate(request.form.get("fx_manual_rate", ""))
+    except ValueError as exc:
+        flash(f"{exc} Nothing was saved.", "error")
+        return redirect(url_for("index"))
+    db = get_db()
+    save_manual_fx_rate(db, rate)
+    db.commit()
+    flash(f"Your rate is saved: 1 USD = {rate:,.4f} RMB. Every ≈ RMB figure now uses it.", "success")
+    return redirect(url_for("index"))
+
+
 @app.route("/settings", methods=["GET"])
 def settings_page():
     return render_settings_page()
@@ -6282,9 +6418,11 @@ def render_settings_page(revealed_recovery_key: str = ""):
             time_zone_default=DEFAULT_TIME_ZONE,
             time_zones=sorted(_time_zone_names or zoneinfo.available_timezones()),
             time_zone_now=local_now().strftime("%Y-%m-%d %H:%M"),
-            fx_rate_source=get_setting("fx_rate_source", "live"),
+            fx_rate_source=fx_rate_source(),
             fx_live_rate=get_setting("fx_live_rate", ""),
             fx_live_rate_updated_at=get_setting("fx_live_rate_updated_at", ""),
+            fx_manual_rate=stored_fx_rate("fx_manual_rate"),
+            fx_manual_rate_updated_at=get_setting("fx_manual_rate_updated_at", ""),
             updates=software_update_status(),
             cloud_region=get_setting("cloud_backup_region", ""),
             cloud_bucket=get_setting("cloud_backup_bucket", ""),
@@ -6333,7 +6471,7 @@ def render_settings_page(revealed_recovery_key: str = ""):
 def settings_save():
     if not is_super_admin() and (
         request.form.get("section") != "login-screen"
-        or any(request.form.get(key) for key in ("openrouter_api_key", "openrouter_model", "fx_rate_source", "ai_features_form", "time_zone"))
+        or any(request.form.get(key) for key in ("openrouter_api_key", "openrouter_model", "fx_rate_source", "fx_manual_rate", "ai_features_form", "time_zone"))
     ):
         abort(403)
     db = get_db()
@@ -6345,7 +6483,18 @@ def settings_save():
         _openrouter_models_cache.clear()
     if model:
         db.execute("insert or replace into app_settings(key, value) values (?, ?)", ("openrouter_model", model))
-    if fx_source in ("live", "average"):
+    manual_rate_raw = request.form.get("fx_manual_rate", "").strip()
+    if manual_rate_raw:
+        try:
+            manual_rate = parse_fx_rate(manual_rate_raw)
+            # The form shows the saved rate; only a changed one gets a new "Set" date.
+            if round(manual_rate, 4) != round(stored_fx_rate("fx_manual_rate") or 0, 4):
+                save_manual_fx_rate(db, manual_rate)
+        except ValueError as exc:
+            db.rollback()
+            flash(f"{exc} Nothing was saved.", "error")
+            return redirect(url_for("settings_page") + "#exchange-rate")
+    if fx_source in FX_RATE_SOURCES:
         db.execute("insert or replace into app_settings(key, value) values (?, ?)", ("fx_rate_source", fx_source))
     time_zone = request.form.get("time_zone", "").strip()
     if time_zone:
@@ -8473,7 +8622,8 @@ def api_dashboard():
     bank_tots = bank_balance_totals(balances)
     sup_tots = supplier_balance_totals(suppliers)
     fx = exchange_rate_summary()
-    status = company_status(stats, bank_tots, sup_tots)
+    split = client_balance_split(client_list(), fx["display_rate"])
+    status = company_status(stats, bank_tots, sup_tots, split)
     return jsonify({
         "stats": stats,
         "bank_balances": balances,
@@ -8482,6 +8632,7 @@ def api_dashboard():
         "supplier_totals": sup_tots,
         "exchange_rate_summary": fx,
         "company_status": status,
+        "client_split": split,
     })
 
 
@@ -8692,9 +8843,11 @@ def api_v1_settings():
         return _api_error("Client portal access cannot view app settings.", 403)
     raw_key = get_openrouter_api_key()
     return jsonify({
-        "fx_rate_source": get_setting("fx_rate_source", "live"),
+        "fx_rate_source": fx_rate_source(),
         "fx_live_rate": get_setting("fx_live_rate", ""),
         "fx_live_rate_updated_at": get_setting("fx_live_rate_updated_at", ""),
+        "fx_manual_rate": get_setting("fx_manual_rate", ""),
+        "fx_manual_rate_updated_at": get_setting("fx_manual_rate_updated_at", ""),
         "openrouter_configured": bool(raw_key),
         "openrouter_model": get_openrouter_model(),
         "ai_features": {key: ai_feature_enabled(key) for key in AI_FEATURES},
@@ -9777,6 +9930,20 @@ def api_create_commission(entry_id):
     if percentage_raw in (None, ""):
         return jsonify({"error": "percentage is required"}), 400
     note = (data.get("note") or data.get("description") or "").strip()
+    # Like the web form, a commission counts as company profit unless the caller
+    # says add_to_company_profit: false. Without an account, the company's own is used.
+    asked_for_profit = "add_to_company_profit" in data
+    profit_account_id, profit_problem = None, None
+    if not asked_for_profit or parse_bool_flag(data.get("add_to_company_profit")):
+        try:
+            wanted_account = parse_optional_int(data.get("profit_expense_account_id"), "profit_expense_account_id")
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        if wanted_account is None:
+            wanted_account = default_profit_expense_account_id(expense_account_options(db))
+        profit_account_id, profit_problem = commission_profit_account(db, wanted_account, source_entry["currency"])
+        if profit_problem and asked_for_profit:
+            return jsonify({"error": profit_problem}), 400
     try:
         created, percentage = create_commission_entry(
             db,
@@ -9784,6 +9951,7 @@ def api_create_commission(entry_id):
             commission_date,
             percentage_raw,
             note,
+            profit_account_id,
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -9800,7 +9968,10 @@ def api_create_commission(entry_id):
         },
         {"action": "delete_entry", "entry_id": created["id"], "client_id": client_id},
     )
-    return jsonify({"ok": True, "entry": entry_data, "percentage": percentage}), 201
+    result = {"ok": True, "entry": entry_data, "percentage": percentage, "added_to_company_profit": bool(profit_account_id)}
+    if profit_problem:
+        result["company_profit_note"] = f"Not added to company profit: {profit_problem}"
+    return jsonify(result), 201
 
 
 @api_route("/api/v1/bank-balances", methods=["POST"], endpoint="api_add_bank_balance")

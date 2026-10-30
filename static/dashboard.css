@@ -232,6 +232,23 @@
 .pos-refresh.is-busy svg { animation: pos-spin 0.8s linear infinite; }
 @keyframes pos-spin { to { transform: rotate(360deg); } }
 .pos-fx-note { margin: 0; font-size: 0.75rem; color: rgba(255, 255, 255, 0.55); }
+.pos-fx-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 10px; }
+.pos-fx-form[hidden] { display: none; }
+.pos-fx-form label { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: rgba(255, 255, 255, 0.75); }
+.dash .pos-fx-form input {
+  width: 96px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.dash .pos-fx-form .button { min-height: 32px; padding: 4px 12px; }
+.dash .pos-fx-form .button.ghost { color: rgba(255, 255, 255, 0.8); border-color: rgba(255, 255, 255, 0.25); background: transparent; }
 
 /* -- Money cards: bank, suppliers, expenses --------------- */
 
@@ -395,6 +412,18 @@
 }
 .clients-head .acct-title h2 { font-size: 1.2rem; }
 .clients-head .mini-totals { flex: 0 1 460px; margin: 0; }
+.clients-split {
+  flex: 1 1 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+.clients-split > div { min-width: 0; padding: 10px 12px; border: 1px solid #e4ebec; border-radius: 10px; }
+.clients-split dt { font-size: 0.78rem; font-weight: 600; color: var(--muted); }
+.clients-split dt span { font-weight: 400; }
+.clients-split dd { margin: 3px 0 0; font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.clients-split .clients-split-parts { margin-top: 2px; font-size: 0.78rem; font-weight: 500; color: var(--muted); }
 
 .clients-toolbar {
   display: flex;
@@ -727,6 +756,7 @@ body.group-mode .clients-table .group-check { display: block; }
   .mini-totals > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 12px; }
   .mini-totals > div + div { border-left: 0; border-top: 1px solid #e4ebec; }
   .mini-totals dd { margin: 0; font-size: 0.95rem; }
+  .clients-split { grid-template-columns: 1fr; }
   .acct-row { padding-left: 14px; }
   .acct-row .icon-btn { opacity: 1; }
   .dash .acct-form input,
