@@ -6718,24 +6718,59 @@ def generate_recovery_key() -> str:
     return "-".join(raw[i:i + 4] for i in range(0, len(raw), 4))
 
 
-# Each installation has its own id, kept next to the database but never inside a
-# backup. Cloud backup runs only on the server whose id is saved in the settings,
-# so restoring a backup onto another machine doesn't start a second server
-# backing up into the same bucket.
-INSTANCE_ID_FILE = DATA_DIR / "instance-id"
+# Each installation has its own id, never inside a backup. Cloud backup runs only
+# on the server whose id is saved in the settings, so restoring a backup onto
+# another machine doesn't start a second server backing up into the same bucket.
+# The id lives in the backups folder, which is kept on the server: an update
+# replaces the app's container, and anything kept only there is lost.
+INSTANCE_ID_FILE = BACKUP_DIR / ".instance-id"
+OLD_INSTANCE_ID_FILE = DATA_DIR / "instance-id"  # before 5.2.22; lost with the container
 CLOUD_OWNER_MARKER = "cloud_backup_owner_v1"
 CLOUD_TAKEN_OVER_PREFIX = "other:"
+_INSTANCE_ID_RE = re.compile(r"[0-9a-f]{12}")
+
+
+def _read_instance_id(path: Path) -> str:
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return value if _INSTANCE_ID_RE.fullmatch(value) else ""
+
+
+def _owner_id_kept_by_update() -> str:
+    """The backup owner's id, when the update that installed this version shows
+    this server was that owner: before switching, it made the cloud backup, and
+    only the owner does. Versions before 5.2.22 lost the id with each update."""
+    status = _read_updater_json("status.json", {})
+    if not isinstance(status, dict) or parse_version(str(status.get("target", ""))) != parse_version(APP_VERSION):
+        return ""
+    run_id = re.sub(r"[^A-Za-z0-9-]", "", str(status.get("id", "")))
+    try:
+        log = (UPDATER_DIR / "logs" / f"{run_id}.log").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    if not run_id or not re.search(r"Recovery backup .*, cloud backup [0-9a-f]+\s*$", log, re.M):
+        return ""
+    try:
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        try:
+            row = conn.execute("select value from app_settings where key = 'cloud_backup_instance'").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return ""
+    owner = row[0] if row else ""
+    return owner if _INSTANCE_ID_RE.fullmatch(owner) else ""
 
 
 def this_instance_id() -> str:
-    try:
-        value = INSTANCE_ID_FILE.read_text(encoding="utf-8").strip()
-    except OSError:
-        value = ""
-    if not re.fullmatch(r"[0-9a-f]{12}", value):
-        value = uuid.uuid4().hex[:12]
-        INSTANCE_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
-        INSTANCE_ID_FILE.write_text(value, encoding="utf-8")
+    value = _read_instance_id(INSTANCE_ID_FILE)
+    if value:
+        return value
+    value = _read_instance_id(OLD_INSTANCE_ID_FILE) or _owner_id_kept_by_update() or uuid.uuid4().hex[:12]
+    INSTANCE_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    INSTANCE_ID_FILE.write_text(value, encoding="utf-8")
     return value
 
 
@@ -6808,9 +6843,11 @@ def load_cloud_backup_config() -> cloud_backup.B2Config:
 
 
 def make_restic(config: cloud_backup.B2Config) -> cloud_backup.Restic:
+    # Kept on the server, so after an update restic doesn't have to read every old
+    # backup record from Backblaze again (one it couldn't read stopped an update).
     return cloud_backup.Restic(
         config,
-        cache_dir=DATA_DIR / ".restic-cache",
+        cache_dir=BACKUP_DIR / ".restic-cache",
         repository=CLOUD_BACKUP_REPOSITORY_OVERRIDE or None,
     )
 

@@ -4,6 +4,25 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.22
+
+**Cloud backup no longer gets in the way of updates**
+- Updates now keep the cloud backup's settings on the server. Before, each
+  update forgot them: cloud backup said "another server does the backups" until
+  someone clicked **Use this server**, and the backup tool had to read every old
+  backup again from Backblaze.
+- If Backblaze can't serve a file, the cloud backup now stops within about a
+  minute and says which file and that it's Backblaze's problem (see
+  status.backblaze.com). Before, it waited 5 minutes and only said "Backblaze
+  did not respond".
+- If only the cloud backup fails during an update, the update now goes on with
+  the checked local backup it always makes (the one it rolls back to). Settings
+  → Cloud Backup shows the reason, and the next cloud backup catches up. Before,
+  a Backblaze problem stopped every update.
+- When Backblaze refuses because your account's daily free limit is used up
+  (Caps & Alerts in Backblaze), the message now says so and that backups resume
+  after Backblaze's daily reset. Before, it wrongly said Backblaze refused the key.
+
 ## 5.2.21
 
 **Grouped clients count as one in "Clients owe you"**

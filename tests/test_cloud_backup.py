@@ -160,7 +160,7 @@ class CloudBackupTests(unittest.TestCase):
     def test_wrong_key_fails_fast_before_restic(self):
         config = cloud_backup.B2Config("us-east-005", "acme-backups", "p", "KEYID12345", "SECRETAPPKEY123", "RECOVERY-KEY-VALUE")
         with patch("cloud_backup.restic_available", return_value=True), \
-             patch("cloud_backup.subprocess.run") as run:
+             patch("cloud_backup.run_watched") as run:
             with patch("cloud_backup.requests.get", return_value=self.b2_answer([], status=401)):
                 with self.assertRaisesRegex(cloud_backup.CloudBackupError, "refused the key"):
                     cloud_backup.Restic(config).run(["snapshots"])

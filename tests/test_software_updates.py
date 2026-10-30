@@ -5,6 +5,7 @@ The host updater itself is tested in test_statement_updater.py.
 
 import importlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -14,6 +15,7 @@ import tempfile
 import threading
 import unittest
 import unittest.mock
+from contextlib import redirect_stdout
 from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -345,13 +347,31 @@ class SoftwareUpdateTests(unittest.TestCase):
                 db.execute("delete from app_settings where key like 'cloud_backup_%'")
                 db.commit()
 
-    def test_recovery_backup_fails_when_cloud_backup_fails(self):
+    def test_recovery_backup_goes_on_when_only_the_cloud_backup_fails(self):
         helper = importlib.import_module("update_helper")
-        before = set(self.module.BACKUP_DIR.glob("*"))
+        before = set(self.module.BACKUP_DIR.glob("*.tar.gz"))
         with patch.object(self.module, "cloud_backup_active", return_value=True), \
-                patch.object(self.module, "run_cloud_backup", return_value={"ok": False, "error": "Backblaze refused the key."}):
-            self.assertEqual(helper.main(["update_helper.py", "backup", "x"]), 1)
-        self.assertEqual(set(self.module.BACKUP_DIR.glob("*")), before)
+                patch.object(self.module, "run_cloud_backup", return_value={"ok": False, "error": "Backblaze keeps refusing one backup file."}):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(helper.main(["update_helper.py", "backup", "x"]), 0)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["cloud_snapshot"], "")
+        self.assertIn("only the local backup was made", result["cloud_warning"])
+        made = set(self.module.BACKUP_DIR.glob("*.tar.gz")) - before
+        self.assertEqual([path.name for path in made], [result["name"]])
+        for path in made:
+            path.unlink()
+
+        # A scheduled cloud backup that never finishes doesn't hold the update up either.
+        with patch.object(self.module, "cloud_backup_active", return_value=True), \
+                patch.object(helper, "_wait_for_cloud_job", side_effect=RuntimeError("A cloud backup has been running for too long.")):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(helper.main(["update_helper.py", "backup", "x"]), 0)
+        self.assertIn("running for too long", json.loads(out.getvalue())["cloud_warning"])
+        for path in set(self.module.BACKUP_DIR.glob("*.tar.gz")) - before:
+            path.unlink()
 
     def test_damaged_recovery_backup_is_rejected(self):
         helper = importlib.import_module("update_helper")
