@@ -5363,17 +5363,93 @@ def _statement_export_data(
     return client, rows
 
 
+def currency_label(code: str) -> str:
+    """The name clients know a currency by in exports: RMB for CNY."""
+    return "RMB" if code == "CNY" else code
+
+
+def balance_note(value: float) -> str:
+    """Who owes whom, from the company's side: a positive balance is the client's money we hold."""
+    if value > 0.004:
+        return "we hold this for you"
+    if value < -0.004:
+        return "you owe us"
+    return "settled"
+
+
+def _display_date(value) -> str:
+    parsed = _parse_export_date(value)
+    return f"{parsed.day} {parsed:%b %Y}" if parsed else ""
+
+
+def statement_export_summary(rows: list[dict]) -> dict:
+    """What the PDF and Excel show above and below a statement's rows."""
+    dates = [d for d in (_parse_export_date(row["entry_date"]) for row in rows) if d]
+    totals = {
+        currency: {
+            direction: sum(float(row["amount"]) for row in rows
+                           if row["currency"] == currency and row["direction"] == direction)
+            for direction in ("IN", "OUT")
+        }
+        for currency in ("USD", "CNY")
+    }
+    final_usd = float(rows[-1]["running_usd"]) if rows else 0.0
+    final_cny = float(rows[-1]["running_cny"]) if rows else 0.0
+    overall = None
+    rates = exchange_rate_summary()
+    rate = rates["display_rate"]
+    if rate and abs(final_usd) > 0.004 and abs(final_cny) > 0.004:
+        rate_date = {
+            "manual": rates["manual_rate_date"],
+            "live": rates["live_rate_date"],
+            "latest": rates["latest_date"],
+        }[rates["rate_in_use"]]
+        total = round(final_usd + final_cny / rate, 2)
+        amount = money_with_symbol_filter((abs(total), "USD"))
+        if abs(total) < 0.005:
+            text = "settled"
+        else:
+            text = f"you owe us {amount}" if total < 0 else f"we hold {amount} for you"
+        overall = {
+            "usd": total,
+            "text": text,
+            "rate": rate,
+            "rate_date": _display_date(rate_date),
+        }
+    return {
+        "date_from": _display_date(min(dates)) if dates else "",
+        "date_to": _display_date(max(dates)) if dates else "",
+        "count": len(rows),
+        "totals": totals,
+        "final_usd": final_usd,
+        "final_cny": final_cny,
+        "usd_note": balance_note(final_usd),
+        "cny_note": balance_note(final_cny),
+        "overall": overall,
+    }
+
+
+def mark_exchange_pairs(rows: list[dict]) -> list[dict]:
+    """Copies of the rows, with the two lines of one exchange marked "first" and "second"."""
+    marked = [{**row, "pair": ""} for row in rows]
+    for before, after in zip(marked, marked[1:]):
+        group = (before.get("transfer_group") or "").strip()
+        if group and group == (after.get("transfer_group") or "").strip() and not before["pair"]:
+            before["pair"], after["pair"] = "first", "second"
+    return marked
+
+
 def _statement_pdf_response(client: sqlite3.Row, rows: list[dict]):
-    final_usd = rows[-1]["running_usd"] if rows else 0.0
-    final_cny = rows[-1]["running_cny"] if rows else 0.0
+    summary = statement_export_summary(rows)
     html_string = render_template(
         "pdf.html",
         brand=pdf_branding(),
         client=client,
-        rows=rows,
+        rows=mark_exchange_pairs(rows),
         generated_date=local_today().isoformat(),
-        final_usd=final_usd,
-        final_cny=final_cny,
+        final_usd=summary["final_usd"],
+        final_cny=summary["final_cny"],
+        summary=summary,
     )
     pdf_bytes = render_pdf_bytes(html_string)
     filename = f"{client['name'].replace(' ', '_')}_Statement.pdf"
@@ -5411,123 +5487,123 @@ def _parse_export_date(value):
         return None
 
 
+XLSX_HEADER_FILL = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+XLSX_TOTAL_FILL = PatternFill(start_color="F1F1F1", end_color="F1F1F1", fill_type="solid")
+XLSX_BORDER = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
+XLSX_DATE_FMT = "yyyy-mm-dd"
+
+
+def xlsx_money_format(code: str, red_negative: bool = False) -> str:
+    symbol = currency_symbol(code)
+    positive = f'"{symbol}"#,##0.00' if symbol else "#,##0.00"
+    return f'{positive};[Red]-{positive}' if red_negative else positive
+
+
+def _xlsx_header_rows(ws, title: str, lines: list[str], headers: list[str]) -> int:
+    """Title, summary lines, a blank row, then the column headings. Returns the heading row."""
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+    xlsx_text(ws.cell(row=1, column=1, value=title)).font = Font(bold=True, size=14)
+    for offset, line in enumerate(lines, start=2):
+        xlsx_text(ws.cell(row=offset, column=1, value=line)).font = Font(size=10)
+    header_row = len(lines) + 3
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=header_row, column=col_idx, value=header)
+        cell.font = Font(bold=True, size=10)
+        cell.fill = XLSX_HEADER_FILL
+        cell.border = XLSX_BORDER
+        cell.alignment = Alignment(horizontal="center")
+    return header_row
+
+
+def _xlsx_finish(ws, header_row: int, last_row: int, widths: list[int]) -> None:
+    """Column widths, frozen headings, filter buttons, and a page setup that prints well."""
+    for i, width in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+    ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
+    ws.auto_filter.ref = f"A{header_row}:{get_column_letter(len(widths))}{max(last_row, header_row)}"
+    ws.print_title_rows = f"{header_row}:{header_row}"
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.oddFooter.center.text = "Page &P of &N"
+
+
+def _xlsx_totals_row(ws, row: int, first: int, last: int, sum_columns: list[int], label_span: int, width: int) -> None:
+    xlsx_text(ws.cell(row=row, column=1, value="Totals"))
+    for col in range(1, width + 1):
+        cell = ws.cell(row=row, column=col)
+        cell.font = Font(bold=True)
+        cell.fill = XLSX_TOTAL_FILL
+        cell.border = XLSX_BORDER
+    if label_span > 1:
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=label_span)
+    for col in sum_columns:
+        letter = get_column_letter(col)
+        ws.cell(row=row, column=col, value=f"=SUM({letter}{first}:{letter}{last})")
+
+
 def _statement_xlsx_response(client: sqlite3.Row, rows: list[dict]):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Main"
+    summary = statement_export_summary(rows)
 
-    header_font = Font(bold=True, size=14)
-    col_font = Font(bold=True, size=10)
-    col_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
-    thin_border = Border(
-        left=Side(style="thin"),
-        right=Side(style="thin"),
-        top=Side(style="thin"),
-        bottom=Side(style="thin"),
-    )
-    cny_symbol = currency_symbol("CNY")
-    money_fmt_usd = '"$"#,##0.00'
-    money_fmt_cny = f"{cny_symbol}#,##0.00"
-    date_fmt = "yyyy-mm-dd"
-    rate_fmt = "0.0000"
-    neg_usd = '"$"#,##0.00;[Red]\\-"$"#,##0.00'
-    neg_cny = f"{cny_symbol}#,##0.00;[Red]\\-{cny_symbol}#,##0.00"
-
-    ws.merge_cells("A1:K1")
-    ws["A1"] = f"{client['name']} Statement"
-    xlsx_text(ws["A1"]).font = header_font
-
-    headers = [
-        "No.",
-        "Log",
-        "Date",
-        "In $",
-        "Out $",
-        f"in {cny_symbol}",
-        f"out {cny_symbol}",
-        "Balance $",
-        f"Balance {cny_symbol}",
-        "Rate in",
-        "Rate out",
+    lines = [
+        "Statement"
+        + (f" · {summary['date_from']} – {summary['date_to']}" if summary["date_from"] else "")
+        + f" · {summary['count']} entries",
+        f"USD: {money_with_symbol_filter((abs(summary['final_usd']), 'USD'))} — {summary['usd_note']}",
+        f"RMB: {money_with_symbol_filter((abs(summary['final_cny']), 'CNY'))} — {summary['cny_note']}",
     ]
-    for col_idx, header in enumerate(headers, start=1):
-        cell = ws.cell(row=2, column=col_idx, value=header)
-        cell.font = col_font
-        cell.fill = col_fill
-        cell.border = thin_border
-        cell.alignment = Alignment(horizontal="center")
+    if summary["overall"]:
+        overall = summary["overall"]
+        lines.append(
+            f"Overall: {overall['text']}"
+            f" (RMB converted at {overall['rate']:.4f}"
+            + (f", rate of {overall['rate_date']})" if overall["rate_date"] else ")")
+        )
+    headers = ["Date", "No.", "Description", "USD In", "USD Out", "RMB In", "RMB Out",
+               "USD Balance", "RMB Balance", "Rate"]
+    header_row = _xlsx_header_rows(ws, f"{client['name']} Statement", lines, headers)
 
-    data_row = 3
+    usd_fmt, cny_fmt = xlsx_money_format("USD"), xlsx_money_format("CNY")
+    formats = [XLSX_DATE_FMT, None, None, usd_fmt, usd_fmt, cny_fmt, cny_fmt,
+               xlsx_money_format("USD", True), xlsx_money_format("CNY", True), "0.0000"]
+    r = header_row
     for row in rows:
-        r = data_row
+        r += 1
         amount = float(row["amount"])
-        currency = row["currency"]
-        direction = row["direction"]
-        exchange_rate = row.get("exchange_rate")
-
-        ws.cell(row=r, column=1, value=row["source_no"]).border = thin_border
-        xlsx_text(ws.cell(row=r, column=2, value=row["description"])).border = thin_border
-
-        date_cell = ws.cell(row=r, column=3)
-        date_cell.border = thin_border
+        currency, direction = row["currency"], row["direction"]
         parsed_date = _parse_export_date(row["entry_date"])
-        if parsed_date is not None:
-            date_cell.value = parsed_date
-            date_cell.number_format = date_fmt
-        else:
-            date_cell.value = row["entry_date"]
-
-        in_usd_cell = ws.cell(row=r, column=4)
-        in_usd_cell.border = thin_border
-        if currency == "USD" and direction == "IN":
-            in_usd_cell.value = amount
-            in_usd_cell.number_format = money_fmt_usd
-
-        out_usd_cell = ws.cell(row=r, column=5)
-        out_usd_cell.border = thin_border
-        if currency == "USD" and direction == "OUT":
-            out_usd_cell.value = amount
-            out_usd_cell.number_format = money_fmt_usd
-
-        in_cny_cell = ws.cell(row=r, column=6)
-        in_cny_cell.border = thin_border
-        if currency == "CNY" and direction == "IN":
-            in_cny_cell.value = amount
-            in_cny_cell.number_format = money_fmt_cny
-
-        out_cny_cell = ws.cell(row=r, column=7)
-        out_cny_cell.border = thin_border
-        if currency == "CNY" and direction == "OUT":
-            out_cny_cell.value = amount
-            out_cny_cell.number_format = money_fmt_cny
-
-        bal_usd_cell = ws.cell(row=r, column=8, value=row["running_usd"])
-        bal_usd_cell.border = thin_border
-        bal_usd_cell.number_format = neg_usd
-
-        bal_cny_cell = ws.cell(row=r, column=9, value=row["running_cny"])
-        bal_cny_cell.border = thin_border
-        bal_cny_cell.number_format = neg_cny
-
-        rate_in_cell = ws.cell(row=r, column=10)
-        rate_in_cell.border = thin_border
-        if exchange_rate and direction == "IN":
-            rate_in_cell.value = exchange_rate
-            rate_in_cell.number_format = rate_fmt
-
-        rate_out_cell = ws.cell(row=r, column=11)
-        rate_out_cell.border = thin_border
-        if exchange_rate and direction == "OUT":
-            rate_out_cell.value = exchange_rate
-            rate_out_cell.number_format = rate_fmt
-
-        data_row += 1
-
-    col_widths = [6, 45, 14, 14, 14, 14, 14, 16, 16, 12, 12]
-    for i, width in enumerate(col_widths, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = width
-
-    ws.freeze_panes = "A3"
+        values = [
+            parsed_date if parsed_date is not None else row["entry_date"],
+            row["source_no"],
+            row["description"],
+            amount if (currency, direction) == ("USD", "IN") else None,
+            amount if (currency, direction) == ("USD", "OUT") else None,
+            amount if (currency, direction) == ("CNY", "IN") else None,
+            amount if (currency, direction) == ("CNY", "OUT") else None,
+            row["running_usd"],
+            row["running_cny"],
+            row.get("exchange_rate") or None,
+        ]
+        for col, (value, fmt) in enumerate(zip(values, formats), start=1):
+            cell = ws.cell(row=r, column=col, value=value)
+            if col == 3:
+                xlsx_text(cell)
+            cell.border = XLSX_BORDER
+            if fmt and value is not None and not (col == 1 and parsed_date is None):
+                cell.number_format = fmt
+    last_data_row = r
+    if rows:
+        _xlsx_totals_row(ws, r + 1, header_row + 1, last_data_row, [4, 5, 6, 7], 3, len(headers))
+        for col, fmt in zip(range(4, 10), formats[3:9]):
+            ws.cell(row=r + 1, column=col).number_format = fmt
+        ws.cell(row=r + 1, column=8, value=f"=D{r + 1}-E{r + 1}")
+        ws.cell(row=r + 1, column=9, value=f"=F{r + 1}-G{r + 1}")
+    _xlsx_finish(ws, header_row, last_data_row, [12, 6, 45, 14, 14, 14, 14, 16, 16, 10])
 
     output = io.BytesIO()
     wb.save(output)
@@ -5572,81 +5648,52 @@ def _expense_xlsx_response(account: sqlite3.Row, currencies: list[str], rows: li
     ws = wb.active
     ws.title = "Expenses"
 
-    header_font = Font(bold=True, size=14)
-    col_font = Font(bold=True, size=10)
-    col_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
-    thin_border = Border(
-        left=Side(style="thin"), right=Side(style="thin"),
-        top=Side(style="thin"), bottom=Side(style="thin"),
-    )
-    money_fmt = "#,##0.00"
-    date_fmt = "yyyy-mm-dd"
-
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4 + len(currencies) * 3)
-    ws["A1"] = f"{account['name']} - Expense Report"
-    xlsx_text(ws["A1"]).font = header_font
-
-    headers = ["No.", "Date", "Description", "Category"]
+    dates = [d for d in (_parse_export_date(row["entry_date"]) for row in rows) if d]
+    line = "Expense report"
+    if dates:
+        line += f" · {_display_date(min(dates))} – {_display_date(max(dates))}"
+    line += f" · {len(rows)} entries"
+    headers = ["Date", "No.", "Description", "Category"]
     for currency in currencies:
-        symbol = currency_symbol(currency)
-        headers.extend([f"{symbol} In", f"{symbol} Out", f"{symbol} Balance"])
+        label = currency_label(currency)
+        headers.extend([f"{label} In", f"{label} Out", f"{label} Balance"])
+    header_row = _xlsx_header_rows(ws, f"{account['name']} - Expense Report", [line], headers)
 
-    for col_idx, header in enumerate(headers, start=1):
-        cell = ws.cell(row=2, column=col_idx, value=header)
-        cell.font = col_font
-        cell.fill = col_fill
-        cell.border = thin_border
-        cell.alignment = Alignment(horizontal="center")
-
-    data_row = 3
+    categories = dict(EXPENSE_CATEGORIES)
+    r = header_row
     for row in rows:
-        r = data_row
-        ws.cell(row=r, column=1, value=row["seq_no"]).border = thin_border
-        date_cell = ws.cell(row=r, column=2)
-        date_cell.border = thin_border
+        r += 1
         parsed_date = _parse_export_date(row["entry_date"])
+        date_cell = ws.cell(row=r, column=1, value=parsed_date if parsed_date is not None else row["entry_date"])
         if parsed_date is not None:
-            date_cell.value = parsed_date
-            date_cell.number_format = date_fmt
-        else:
-            date_cell.value = row["entry_date"]
-        xlsx_text(ws.cell(row=r, column=3, value=row["description"])).border = thin_border
-
-        category_label = row["category"]
-        for code, label in EXPENSE_CATEGORIES:
-            if code == row["category"]:
-                category_label = label
-                break
-        xlsx_text(ws.cell(row=r, column=4, value=category_label)).border = thin_border
-
-        col_offset = 5
+            date_cell.number_format = XLSX_DATE_FMT
+        ws.cell(row=r, column=2, value=row["seq_no"])
+        xlsx_text(ws.cell(row=r, column=3, value=row["description"]))
+        xlsx_text(ws.cell(row=r, column=4, value=categories.get(row["category"], row["category"])))
+        col = 5
         for currency in currencies:
-            in_cell = ws.cell(row=r, column=col_offset)
-            in_cell.border = thin_border
-            if row["currency"] == currency and row["direction"] == "IN":
-                in_cell.value = float(row["amount"])
-                in_cell.number_format = money_fmt
-
-            out_cell = ws.cell(row=r, column=col_offset + 1)
-            out_cell.border = thin_border
-            if row["currency"] == currency and row["direction"] == "OUT":
-                out_cell.value = float(row["amount"])
-                out_cell.number_format = money_fmt
-
-            bal_cell = ws.cell(row=r, column=col_offset + 2)
-            bal_cell.border = thin_border
-            bal_cell.value = row["running_balances"].get(currency, 0.0)
-            bal_cell.number_format = money_fmt
-
-            col_offset += 3
-
-        data_row += 1
-
-    col_widths = [6, 14, 40, 14] + [14, 14, 16] * len(currencies)
-    for i, width in enumerate(col_widths, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = width
-
-    ws.freeze_panes = "A3"
+            if row["currency"] == currency:
+                amount_col = col if row["direction"] == "IN" else col + 1
+                cell = ws.cell(row=r, column=amount_col, value=float(row["amount"]))
+                cell.number_format = xlsx_money_format(currency)
+            balance = ws.cell(row=r, column=col + 2, value=row["running_balances"].get(currency, 0.0))
+            balance.number_format = xlsx_money_format(currency, True)
+            col += 3
+        for c in range(1, len(headers) + 1):
+            ws.cell(row=r, column=c).border = XLSX_BORDER
+    last_data_row = r
+    if rows:
+        total_row = r + 1
+        sums = [c for i in range(len(currencies)) for c in (5 + i * 3, 6 + i * 3)]
+        _xlsx_totals_row(ws, total_row, header_row + 1, last_data_row, sums, 4, len(headers))
+        for i, currency in enumerate(currencies):
+            col = 5 + i * 3
+            first, second = get_column_letter(col), get_column_letter(col + 1)
+            ws.cell(row=total_row, column=col + 2, value=f"={first}{total_row}-{second}{total_row}")
+            for c, fmt in ((col, xlsx_money_format(currency)), (col + 1, xlsx_money_format(currency)),
+                           (col + 2, xlsx_money_format(currency, True))):
+                ws.cell(row=total_row, column=c).number_format = fmt
+    _xlsx_finish(ws, header_row, last_data_row, [12, 6, 40, 14] + [14, 14, 16] * len(currencies))
 
     output = io.BytesIO()
     wb.save(output)
