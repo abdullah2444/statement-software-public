@@ -28,7 +28,7 @@
 
       body {
         font-family: "DejaVu Sans", Arial, Helvetica, sans-serif;
-        font-size: 7pt;
+        font-size: 8.5pt;
         color: #1a1a1a;
         line-height: 1.3;
         border-top: 0.3mm solid #333;
@@ -64,7 +64,7 @@
       }
 
       .client-sub {
-        font-size: 7pt;
+        font-size: 8pt;
         color: #666;
         margin-top: 0.5mm;
       }
@@ -76,14 +76,18 @@
         padding: 2.5mm 4mm;
         background: #f5f5f5;
         border-left: 1mm solid #333;
-        font-size: 7pt;
+        font-size: 8.5pt;
         color: #333;
+        flex-wrap: wrap;
       }
 
       .summary-item strong {
-        font-size: 8pt;
+        font-size: 9.5pt;
         color: #1a1a1a;
       }
+
+      .summary-item .note { color: #666; font-size: 7.5pt; }
+      .summary-strip.overall { margin-top: -2.5mm; }
 
       .summary-item .neg { color: #c33; }
       .summary-item .zero { color: #999; }
@@ -92,7 +96,7 @@
       table {
         width: 100%;
         border-collapse: collapse;
-        font-size: 6pt;
+        font-size: 8pt;
         border: 0.5px solid #999;
       }
 
@@ -105,25 +109,27 @@
       th {
         background: #333;
         color: #fff;
-        font-size: 5.5pt;
+        font-size: 7pt;
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.04em;
         text-align: left;
-        padding: 2.5mm 2mm;
+        padding: 2mm 1.5mm;
         border: 0.5px solid #999;
       }
 
       td {
-        padding: 1.5mm 2mm;
+        padding: 1.3mm 1.5mm;
         border: 0.5px solid #ddd;
         vertical-align: top;
       }
 
-      .c-no    { text-align: center; }
+      .c-date  { white-space: nowrap; }
+      .c-no    { text-align: center; width: 8mm; }
       .c-amt   { text-align: right; }
       .c-bal   { text-align: right; font-weight: 600; }
-      .c-rate  { text-align: right; }
+      .c-rate  { text-align: right; width: 13mm; }
+      .c-amt, .c-bal { white-space: nowrap; }
 
       th.c-amt, th.c-bal, th.c-rate { text-align: right; }
       th.c-no { text-align: center; }
@@ -133,6 +139,21 @@
       }
 
       tbody tr { break-inside: avoid; }
+
+      /* A footer group would repeat on every page, so the totals are a last body group. */
+
+      /* The two lines of one exchange (dollars out, RMB in) read as a pair. */
+      tbody tr.ex td { background: #eef4ff; }
+      tbody tr.ex td:first-child { border-left: 0.8mm solid #3b6fd8; }
+      tbody tr.ex-first td { border-bottom-color: #eef4ff; }
+      tbody tr.ex-second { break-before: avoid; }
+      .pair-mark { color: #3b6fd8; }
+
+      tbody.totals td {
+        background: #f1f1f1;
+        font-weight: 700;
+        border-top: 0.4mm solid #333;
+      }
 
       .neg { color: #c33; }
       .zero { color: #999; }
@@ -162,35 +183,46 @@
 
     <div class="client-bar">
       <div class="client-name">{{ client.name }}</div>
-      <div class="client-sub">Statement &mdash; {{ rows|length }} entries</div>
+      <div class="client-sub">Statement{% if summary and summary.date_from %} &middot; {{ summary.date_from }} &ndash; {{ summary.date_to }}{% endif %} &middot; {{ rows|length }} entries</div>
     </div>
 
     <div class="summary-strip">
+      {% if summary %}
+      <div class="summary-item">USD: <strong class="{% if final_usd < 0 %}neg{% elif final_usd == 0 %}zero{% endif %}">{{ (final_usd|abs, 'USD')|money_with_symbol }}</strong> <span class="note">{{ summary.usd_note }}</span></div>
+      <div class="summary-item">RMB: <strong class="{% if final_cny < 0 %}neg{% elif final_cny == 0 %}zero{% endif %}">{{ (final_cny|abs, 'CNY')|money_with_symbol }}</strong> <span class="note">{{ summary.cny_note }}</span></div>
+      {% else %}
       <div class="summary-item">USD Balance: <strong class="{% if final_usd < 0 %}neg{% elif final_usd == 0 %}zero{% endif %}">{{ (final_usd, 'USD')|money_with_symbol }}</strong></div>
-      <div class="summary-item">CNY Balance: <strong class="{% if final_cny < 0 %}neg{% elif final_cny == 0 %}zero{% endif %}">{{ (final_cny, 'CNY')|money_with_symbol }}</strong></div>
+      <div class="summary-item">RMB Balance: <strong class="{% if final_cny < 0 %}neg{% elif final_cny == 0 %}zero{% endif %}">{{ (final_cny, 'CNY')|money_with_symbol }}</strong></div>
+      {% endif %}
     </div>
+    {% if summary and summary.overall %}
+    <div class="summary-strip overall">
+      <div class="summary-item">Overall: <strong class="{% if summary.overall.usd < 0 %}neg{% endif %}">{{ summary.overall.text }}</strong></div>
+      <div class="summary-item"><span class="note">RMB converted at {{ '%.4f'|format(summary.overall.rate) }}{% if summary.overall.rate_date %} (rate of {{ summary.overall.rate_date }}){% endif %}</span></div>
+    </div>
+    {% endif %}
 
     <table>
       <thead>
         <tr>
-          <th>Date</th>
-          <th class="c-no">#</th>
+          <th class="c-date">Date</th>
+          <th class="c-no">No.</th>
           <th>Description</th>
           <th class="c-amt">USD In</th>
           <th class="c-amt">USD Out</th>
           <th class="c-amt">RMB In</th>
           <th class="c-amt">RMB Out</th>
-          <th class="c-bal">USD Bal</th>
-          <th class="c-bal">CNY Bal</th>
+          <th class="c-bal">USD Balance</th>
+          <th class="c-bal">RMB Balance</th>
           <th class="c-rate">Rate</th>
         </tr>
       </thead>
       <tbody>
         {% for row in rows %}
-        <tr>
-          <td>{{ row.entry_date }}</td>
+        <tr{% if row.pair %} class="ex ex-{{ row.pair }}"{% endif %}>
+          <td class="c-date">{{ row.entry_date }}</td>
           <td class="c-no">{{ row.source_no }}</td>
-          <td class="c-desc">{{ row.description }}</td>
+          <td class="c-desc">{% if row.pair == 'second' %}<span class="pair-mark">&#8627;</span> {% endif %}{{ row.description }}</td>
           <td class="c-amt money-in">{% if row.currency == 'USD' and row.direction == 'IN' %}{{ (row.amount, 'USD')|money_with_symbol }}{% endif %}</td>
           <td class="c-amt">{% if row.currency == 'USD' and row.direction == 'OUT' %}{{ (row.amount, 'USD')|money_with_symbol }}{% endif %}</td>
           <td class="c-amt money-in">{% if row.currency == 'CNY' and row.direction == 'IN' %}{{ (row.amount, 'CNY')|money_with_symbol }}{% endif %}</td>
@@ -201,6 +233,20 @@
         </tr>
         {% endfor %}
       </tbody>
+      {% if summary and rows %}
+      <tbody class="totals">
+        <tr>
+          <td colspan="3">Totals</td>
+          <td class="c-amt">{{ (summary.totals.USD.IN, 'USD')|money_with_symbol }}</td>
+          <td class="c-amt">{{ (summary.totals.USD.OUT, 'USD')|money_with_symbol }}</td>
+          <td class="c-amt">{{ (summary.totals.CNY.IN, 'CNY')|money_with_symbol }}</td>
+          <td class="c-amt">{{ (summary.totals.CNY.OUT, 'CNY')|money_with_symbol }}</td>
+          <td class="c-bal {% if final_usd < 0 %}neg{% endif %}">{{ (final_usd, 'USD')|money_with_symbol }}</td>
+          <td class="c-bal {% if final_cny < 0 %}neg{% endif %}">{{ (final_cny, 'CNY')|money_with_symbol }}</td>
+          <td></td>
+        </tr>
+      </tbody>
+      {% endif %}
     </table>
 
     <div class="footer-line">

@@ -4,6 +4,23 @@ Each version here becomes a release on GitHub. The notes under a version are
 what admins see in Settings → Software Updates before they click Update Now,
 so write them for the people using the app.
 
+## 5.2.24
+
+**Clearer statement and expense exports (Excel and PDF)**
+- Statements now show the period they cover (for example 2 Aug 2026 – 18 Oct
+  2026) and a **Totals** row with money in and out for USD and RMB.
+- Each balance says who owes whom: "we hold this for you" or "you owe us".
+- When a client has both a USD and an RMB balance, an **Overall** line shows
+  the combined position in USD at your rate from Settings, with that rate printed.
+- Excel and PDF use the same column names and order: Date, No., Description,
+  USD In/Out, RMB In/Out, USD Balance, RMB Balance, Rate (one Rate column).
+- Excel: filter buttons on every heading, and it prints landscape on the page
+  width with the headings repeated on each page and page numbers.
+- The expense Excel gets currency signs, red negative balances, totals, the
+  date range and the same print setup.
+- PDF: bigger, easier-to-read text, and the two lines of a currency exchange
+  are shaded together so they read as one exchange.
+
 ## 5.2.23
 
 **A second backup copy in Cloudflare R2**
